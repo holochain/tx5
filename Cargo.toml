@@ -6,4 +6,5 @@ members = [
   "crates/tx4-signal-core",
 #  "crates/tx4-signal-srv",
 #  "crates/tx4-signal-cli",
+  "crates/tx4-demo",
 ]

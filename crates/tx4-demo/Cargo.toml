@@ -1,0 +1,20 @@
+[package]
+name = "tx4-demo"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+tx4-go-pion = { path = "../tx4-go-pion" }
+tx4-signal-core = { path = "../tx4-signal-core" }
+lair_keystore_api = "0.2.0"
+lair_keystore = "0.2.0"
+parking_lot = "0.12.1"
+rand = "0.8.5"
+rand-utf8 ="0.0.1"
+serde = { version = "1.0.136", features = [ "derive", "rc" ] }
+serde_json = { version = "1.0.82", features = [ "preserve_order" ] }
+sodoken = "0.0.4"
+tokio = { version = "1.20.0", features = [ "full" ] }
+tracing = { version = "0.1.34" }
+tracing-subscriber = { version = "0.3.11", features = [ "env-filter" ] }
+url = "2.2.2"

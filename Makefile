@@ -20,11 +20,15 @@ publish:
 		tx4-signal-core) \
 			export MANIFEST="./crates/tx4-signal-core/Cargo.toml"; \
 			;; \
+		tx4-demo) \
+			export MANIFEST="./crates/tx4-demo/Cargo.toml"; \
+			;; \
 		*) \
 			echo "USAGE: make publish crate=tx4-core"; \
 			echo "USAGE: make publish crate=tx4-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx4-go-pion"; \
 			echo "USAGE: make publish crate=tx4-signal-core"; \
+			echo "USAGE: make publish crate=tx4-demo"; \
 			exit 1; \
 			;; \
 	esac; \
@@ -47,6 +51,7 @@ docs: tools
 	cargo readme -r crates/tx4-go-pion-sys -o README.md
 	cargo readme -r crates/tx4-go-pion -o README.md
 	cargo readme -r crates/tx4-signal-core -o README.md
+	cargo readme -r crates/tx4-demo -o README.md
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 tools: tool_rust tool_fmt tool_clippy tool_readme

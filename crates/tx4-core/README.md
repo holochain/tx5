@@ -1,6 +1,6 @@
-# tx4 - Holochain WebRTC P2P Communication Ecosystem
+# tx4-core
 
-- :warning: This code is new and should not yet be considered secure for production use!
+Holochain WebRTC P2P Communication Ecosystem Core Types.
 
 [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
 [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)
@@ -9,7 +9,4 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
-## Crates Managed Within This Monorepo
-
-- [tx4-go-pion-sys](crates/tx4-go-pion-sys) - Rust bindings to the go pion webrtc library.
-- [tx4-go-pion](crates/tx4-go-pion) - Higher level rust bindings to the go pion webrtc library.
+License: MIT OR Apache-2.0

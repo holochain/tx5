@@ -8,6 +8,9 @@ all: test
 
 publish:
 	@case "$(crate)" in \
+		tx4-core) \
+			export MANIFEST="./crates/tx4-core/Cargo.toml"; \
+			;; \
 		tx4-go-pion-sys) \
 			export MANIFEST="./crates/tx4-go-pion-sys/Cargo.toml"; \
 			;; \
@@ -15,6 +18,7 @@ publish:
 			export MANIFEST="./crates/tx4-go-pion/Cargo.toml"; \
 			;; \
 		*) \
+			echo "USAGE: make publish crate=tx4-core"; \
 			echo "USAGE: make publish crate=tx4-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx4-go-pion"; \
 			exit 1; \
@@ -35,6 +39,7 @@ static: docs tools
 	cargo clippy
 
 docs: tools
+	cargo readme -r crates/tx4-core -o README.md
 	cargo readme -r crates/tx4-go-pion-sys -o README.md
 	cargo readme -r crates/tx4-go-pion -o README.md
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi

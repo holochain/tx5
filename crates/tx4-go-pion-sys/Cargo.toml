@@ -2,7 +2,7 @@
 name = "tx4-go-pion-sys"
 version = "0.0.1"
 edition = "2021"
-description = "Rust bindings to the go pion webrtc library"
+description = "Low level rust bindings to the go pion webrtc library"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/holochain/tx4"
 documentation = "https://docs.rs/tx4-go-pion-sys"

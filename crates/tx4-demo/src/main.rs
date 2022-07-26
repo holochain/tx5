@@ -27,7 +27,7 @@ mod lair;
 
 mod state;
 
-mod con;
+mod con_;
 
 mod core;
 

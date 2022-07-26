@@ -140,7 +140,7 @@ async fn core_task(
                     // this is an "outgoing" connection,
                     // that is, the one that will make the webrtc "offer".
                     let is_out = true;
-                    let con = con::Con::new(
+                    let con = con_::Con::new(
                         core.clone(),
                         state.clone(),
                         id.clone(),
@@ -204,7 +204,7 @@ async fn core_task(
                         // that is, the one that accepts the webrtc "offer",
                         // then creates the webrtc "answer".
                         let is_out = false;
-                        let con = con::Con::new(
+                        let con = con_::Con::new(
                             core.clone(),
                             state.clone(),
                             id.clone(),

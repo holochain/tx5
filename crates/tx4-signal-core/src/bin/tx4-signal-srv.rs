@@ -10,19 +10,19 @@ type Result<T> = std::result::Result<T, String>;
 
 #[derive(Debug, Parser)]
 #[clap(
-    name = "hc-rtc-sig-srv",
+    name = "tx4-signal-srv",
     version,
     about = "Holochain Webrtc Signal Server"
 )]
 struct Opt {
-    /// Initialize a new hc-rtc-sig-srv.json configuration file
+    /// Initialize a new tx4-signal-srv.json configuration file
     /// (as specified by --config).
     /// Will abort if it already exists.
     #[clap(short, long)]
     init: bool,
 
-    /// Configuration file to use for running the hc-rtc-sig-srv.
-    /// Defaults to `$user_config_dir_path$/hc-rtc-sig-srv.json`.
+    /// Configuration file to use for running the tx4-signal-srv.
+    /// Defaults to `$user_config_dir_path$/tx4-signal-srv.json`.
     #[clap(short, long)]
     config: Option<std::path::PathBuf>,
 }
@@ -157,7 +157,7 @@ async fn main_err() -> Result<()> {
             config.push(".");
             config
         });
-        config.push("hc-rtc-sig-srv.json");
+        config.push("tx4-signal-srv.json");
         opt.config = Some(config);
     }
 
@@ -170,7 +170,7 @@ async fn main_err() -> Result<()> {
     let srv = srv_builder.build().await.map_err(|e| format!("{:?}", e))?;
 
     println!(
-        "#hc-rtc-sig-srv LISTEN#\n{}\n#hc-rtc-sig-srv START#",
+        "#tx4-signal-srv LISTEN#\n{}\n#tx4-signal-srv START#",
         srv.local_addr(),
     );
 

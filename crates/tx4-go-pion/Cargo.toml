@@ -1,0 +1,16 @@
+[package]
+name = "tx4-go-pion"
+version = "0.0.1"
+edition = "2021"
+description = "Rust bindings to the go pion webrtc library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/holochain/go-pion-webrtc-rs"
+documentation = "https://docs.rs/go-pion-webrtc"
+authors = [ "Holochain Core Dev Team <devcore@holochain.org>" ]
+keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
+categories = ["network-programming"]
+
+[dependencies]
+tx4-go-pion-sys = { version = "0.0.1", path = "../tx4-go-pion-sys" }
+once_cell = "1.13.0"
+parking_lot = "0.12.1"

@@ -9,10 +9,12 @@ pub struct Lair {
 pub async fn load(config: Arc<config::Config>) -> Result<Lair> {
     tracing::info!("Starting in-process lair instance...");
 
-    let store_factory =
-        lair_keystore::create_sql_pool_factory(config.lair_config.store_file.clone());
+    let store_factory = lair_keystore::create_sql_pool_factory(
+        config.lair_config.store_file.clone(),
+    );
 
-    let passphrase = sodoken::BufRead::new_no_lock(config.lair_passphrase.as_bytes());
+    let passphrase =
+        sodoken::BufRead::new_no_lock(config.lair_passphrase.as_bytes());
 
     let keystore = PwHashLimits::Interactive
         .with_exec(|| {
@@ -28,7 +30,9 @@ pub async fn load(config: Arc<config::Config>) -> Result<Lair> {
 
     let mut tag_ok = false;
 
-    if let Ok(LairEntryInfo::Seed { .. }) = lair_client.get_entry(config.lair_tag.clone()).await {
+    if let Ok(LairEntryInfo::Seed { .. }) =
+        lair_client.get_entry(config.lair_tag.clone()).await
+    {
         tag_ok = true;
     }
 

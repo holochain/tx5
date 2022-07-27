@@ -94,6 +94,18 @@ impl Error {
         }
         .into()
     }
+
+    /// Construct a new Tx4 core error instance with input as additional info.
+    pub fn str<S>(s: S) -> std::io::Error
+    where
+        S: Into<String>,
+    {
+        Self {
+            id: "Error".into(),
+            info: s.into(),
+        }
+        .into()
+    }
 }
 
 impl std::fmt::Display for Error {

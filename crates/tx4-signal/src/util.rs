@@ -42,7 +42,9 @@ impl Term {
     }
 
     /// Returns a future that will resolve when termination is triggered.
-    pub fn on_term(&self) -> impl std::future::Future<Output = ()> + 'static + Send {
+    pub fn on_term(
+        &self,
+    ) -> impl std::future::Future<Output = ()> + 'static + Send {
         let l = self.sig.listen();
         let term = self.term.clone();
         async move {

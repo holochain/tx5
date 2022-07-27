@@ -7,7 +7,9 @@ use lair_keystore_api::prelude::*;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio_rustls::TlsStream<tokio::net::TcpStream>>;
+type Socket = tokio_tungstenite::WebSocketStream<
+    tokio_rustls::TlsStream<tokio::net::TcpStream>,
+>;
 
 /// A message received from the remote.
 #[derive(Debug)]
@@ -185,7 +187,12 @@ impl Cli {
     }
 
     /// Make a webrtc offer to a remote peer.
-    pub async fn offer<S>(&mut self, rem_id: &Id, rem_pk: &Id, offer: &S) -> Result<()>
+    pub async fn offer<S>(
+        &mut self,
+        rem_id: &Id,
+        rem_pk: &Id,
+        offer: &S,
+    ) -> Result<()>
     where
         S: ?Sized + serde::Serialize,
     {
@@ -194,7 +201,12 @@ impl Cli {
     }
 
     /// Send a webrtc answer to a remote peer.
-    pub async fn answer<S>(&mut self, rem_id: &Id, rem_pk: &Id, answer: &S) -> Result<()>
+    pub async fn answer<S>(
+        &mut self,
+        rem_id: &Id,
+        rem_pk: &Id,
+        answer: &S,
+    ) -> Result<()>
     where
         S: ?Sized + serde::Serialize,
     {
@@ -203,7 +215,12 @@ impl Cli {
     }
 
     /// Send a webrtc ice candidate to a remote peer.
-    pub async fn ice<S>(&mut self, rem_id: &Id, rem_pk: &Id, ice: &S) -> Result<()>
+    pub async fn ice<S>(
+        &mut self,
+        rem_id: &Id,
+        rem_pk: &Id,
+        ice: &S,
+    ) -> Result<()>
     where
         S: ?Sized + serde::Serialize,
     {
@@ -226,17 +243,30 @@ impl Cli {
 
     // -- private -- //
 
-    async fn send(&mut self, rem_id: &Id, rem_pk: &Id, kind: u8, data: &[u8]) -> Result<()> {
+    async fn send(
+        &mut self,
+        rem_id: &Id,
+        rem_pk: &Id,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<()> {
         let mut msg = Vec::with_capacity(1 + data.len());
         msg.push(kind);
         msg.extend_from_slice(data);
 
         let (nonce, cipher) = self
             .lair_client
-            .crypto_box_xsalsa_by_pub_key((&*self.loc_pk).into(), rem_pk.into(), None, msg.into())
+            .crypto_box_xsalsa_by_pub_key(
+                (&*self.loc_pk).into(),
+                rem_pk.into(),
+                None,
+                msg.into(),
+            )
             .await?;
 
-        let mut out = Vec::with_capacity(FORWARD.len() + 32 + 32 + nonce.len() + cipher.len());
+        let mut out = Vec::with_capacity(
+            FORWARD.len() + 32 + 32 + nonce.len() + cipher.len(),
+        );
         out.extend_from_slice(FORWARD);
         out.extend_from_slice(rem_id);
         out.extend_from_slice(&*self.loc_pk);
@@ -282,79 +312,60 @@ impl Cli {
 
         tracing::debug!(?x25519_pub);
 
-        if url.scheme() != "hc-rtc-sig" {
+        if url.scheme() != "wss" {
             return Err(Error::err(format!(
-                "invalid scheme, expected \"hc-rtc-sig\", got {:?}",
+                "invalid scheme, expected \"wss\", got {:?}",
                 url.scheme()
             )));
         }
 
-        let mut path_iter = url.path().split('/');
-
-        let cert_digest = match path_iter.next() {
-            Some(digest_b64) => match base64::decode_config(digest_b64, base64::URL_SAFE_NO_PAD) {
-                Ok(digest) => {
-                    if digest.len() != 32 {
-                        return Err(Error::id("InvalidUrlCertDigestLen"));
-                    }
-                    digest
-                }
-                Err(e) => return Err(Error::err(e)),
-            },
-            None => return Err(Error::id("InvalidUrlCertDigest")),
+        let host = match url.host_str() {
+            None => return Err(Error::id("InvalidHost")),
+            Some(host) => host,
         };
+
+        let port = url.port().unwrap_or(443);
 
         let mut err_list = Vec::new();
         let mut result_socket = None;
 
-        'connect_loop: for addr in path_iter {
-            for addr in tokio::net::lookup_host(addr).await? {
-                tracing::debug!(?addr, "try connect");
+        'connect_loop: for addr in
+            tokio::net::lookup_host(format!("{}:{}", host, port)).await?
+        {
+            tracing::debug!(?addr, "try connect");
 
-                let socket = match tokio::net::TcpStream::connect(addr).await {
-                    Ok(socket) => socket,
-                    Err(err) => {
-                        err_list.push(err);
-                        continue;
-                    }
-                };
-
-                let socket = match tcp_configure(socket) {
-                    Ok(socket) => socket,
-                    Err(err) => {
-                        err_list.push(err);
-                        continue;
-                    }
-                };
-
-                let name = "stub".try_into().unwrap();
-
-                let socket: tokio_rustls::TlsStream<tokio::net::TcpStream> =
-                    match tokio_rustls::TlsConnector::from(tls.cli.clone())
-                        .connect(name, socket)
-                        .await
-                    {
-                        Ok(socket) => socket.into(),
-                        Err(err) => {
-                            err_list.push(err);
-                            continue;
-                        }
-                    };
-
-                let remote_id = match hash_cert(&socket) {
-                    Ok(remote_id) => remote_id,
-                    Err(err) => {
-                        err_list.push(err);
-                        continue;
-                    }
-                };
-
-                if **remote_id != cert_digest {
-                    err_list.push(Error::id("InvalidRemoteCert"));
+            let socket = match tokio::net::TcpStream::connect(addr).await {
+                Ok(socket) => socket,
+                Err(err) => {
+                    err_list.push(err);
                     continue;
                 }
+            };
 
-                let (socket, _rsp) = match tokio_tungstenite::client_async_with_config(
+            let socket = match tcp_configure(socket) {
+                Ok(socket) => socket,
+                Err(err) => {
+                    err_list.push(err);
+                    continue;
+                }
+            };
+
+            let name = "stub".try_into().unwrap();
+
+            let socket: tokio_rustls::TlsStream<tokio::net::TcpStream> =
+                match tokio_rustls::TlsConnector::from(tls.cli.clone())
+                    .connect(name, socket)
+                    .await
+                {
+                    Ok(socket) => socket.into(),
+                    Err(err) => {
+                        err_list.push(err);
+                        continue;
+                    }
+                };
+
+            let (socket, _rsp) =
+                match tokio_tungstenite::client_async_with_config(
                     "wss://stub",
                     socket,
                     Some(WS_CONFIG),
@@ -369,9 +380,8 @@ impl Cli {
                     }
                 };
 
-                result_socket = Some(socket);
-                break 'connect_loop;
-            }
+            result_socket = Some(socket);
+            break 'connect_loop;
         }
 
         let socket = match result_socket {
@@ -387,7 +397,8 @@ impl Cli {
                     return Err(Error::id("InvalidHello"));
                 }
                 let id = Id::from_slice(&data[4..36])?;
-                let ice: serde_json::Value = serde_json::from_slice(&data[36..])?;
+                let ice: serde_json::Value =
+                    serde_json::from_slice(&data[36..])?;
                 tracing::debug!(?id, %ice);
                 (id, ice)
             }
@@ -397,7 +408,12 @@ impl Cli {
         let con_term = util::Term::new("con_term", None);
 
         con_term.spawn_err(
-            con_recv_task(stream, lair_client.clone(), x25519_pub.clone(), recv_cb),
+            con_recv_task(
+                stream,
+                lair_client.clone(),
+                x25519_pub.clone(),
+                recv_cb,
+            ),
             |err| {
                 tracing::debug!("ConRecvError: {:?}", err);
             },
@@ -477,7 +493,8 @@ async fn con_recv_task(
             .await?;
         match msg[0] {
             OFFER => {
-                let offer: serde_json::Value = serde_json::from_slice(&msg[1..])?;
+                let offer: serde_json::Value =
+                    serde_json::from_slice(&msg[1..])?;
                 let offer = SigMessage::Offer {
                     rem_id,
                     rem_pk,
@@ -486,7 +503,8 @@ async fn con_recv_task(
                 recv_cb(offer);
             }
             ANSWER => {
-                let answer: serde_json::Value = serde_json::from_slice(&msg[1..])?;
+                let answer: serde_json::Value =
+                    serde_json::from_slice(&msg[1..])?;
                 let answer = SigMessage::Answer {
                     rem_id,
                     rem_pk,
@@ -509,18 +527,4 @@ async fn con_recv_task(
 
     // always error on end so our term is called
     Err(Error::id("ConClose"))
-}
-
-fn hash_cert(socket: &tokio_rustls::TlsStream<tokio::net::TcpStream>) -> Result<Arc<Id>> {
-    let (_, c) = socket.get_ref();
-    if let Some(chain) = c.peer_certificates() {
-        if !chain.is_empty() {
-            use sha2::Digest;
-            let mut digest = sha2::Sha256::new();
-            digest.update(&chain[0].0);
-            let digest = Arc::new(Id(digest.finalize().into()));
-            return Ok(digest);
-        }
-    }
-    Err(Error::id("InvalidPeerCert"))
 }

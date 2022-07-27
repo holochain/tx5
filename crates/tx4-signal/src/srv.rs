@@ -9,13 +9,15 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio_rustls::TlsStream<tokio::net::TcpStream>>;
+type Socket = tokio_tungstenite::WebSocketStream<
+    tokio_rustls::TlsStream<tokio::net::TcpStream>,
+>;
 
 /// Builder for constructing a Srv instance.
 #[derive(Debug)]
 pub struct SrvBuilder {
+    port: u16,
     tls: Option<tls::TlsConfig>,
-    bind: Vec<(std::net::SocketAddr, String, u16)>,
     ice_servers: String,
     allow_demo: bool,
 }
@@ -23,8 +25,8 @@ pub struct SrvBuilder {
 impl Default for SrvBuilder {
     fn default() -> Self {
         Self {
+            port: 8443,
             tls: None,
-            bind: Vec::new(),
             ice_servers: "[]".to_string(),
             allow_demo: false,
         }
@@ -32,6 +34,17 @@ impl Default for SrvBuilder {
 }
 
 impl SrvBuilder {
+    /// Set the port to bind.
+    pub fn set_port(&mut self, port: u16) {
+        self.port = port;
+    }
+
+    /// Apply a port to bind.
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.set_port(port);
+        self
+    }
+
     /// Set the TlsConfig.
     pub fn set_tls(&mut self, tls: tls::TlsConfig) {
         self.tls = Some(tls);
@@ -40,17 +53,6 @@ impl SrvBuilder {
     /// Apply a TlsConfig.
     pub fn with_tls(mut self, tls: tls::TlsConfig) -> Self {
         self.set_tls(tls);
-        self
-    }
-
-    /// Set a bind point.
-    pub fn add_bind(&mut self, iface: std::net::SocketAddr, host: String, port: u16) {
-        self.bind.push((iface, host, port));
-    }
-
-    /// Apply a bind point.
-    pub fn with_bind(mut self, iface: std::net::SocketAddr, host: String, port: u16) -> Self {
-        self.add_bind(iface, host, port);
         self
     }
 
@@ -85,7 +87,7 @@ impl SrvBuilder {
 /// Server-side connection type.
 pub struct Srv {
     srv_term: util::Term,
-    addr: url::Url,
+    bound_port: u16,
 }
 
 impl Drop for Srv {
@@ -105,9 +107,9 @@ impl Srv {
         self.srv_term.term();
     }
 
-    /// Get the local addr to which this Srv instance was bound.
-    pub fn local_addr(&self) -> &url::Url {
-        &self.addr
+    /// Get the port that was bound.
+    pub fn bound_port(&self) -> u16 {
+        self.bound_port
     }
 
     // -- private -- //
@@ -116,8 +118,8 @@ impl Srv {
         tracing::info!(config=?builder, "start server");
 
         let SrvBuilder {
+            port,
             tls,
-            bind,
             ice_servers,
             allow_demo,
         } = builder;
@@ -128,49 +130,56 @@ impl Srv {
             None => return Err(Error::id("TlsRequired")),
         };
 
-        let mut bound = Vec::new();
         let srv_term = util::Term::new("srv_term", None);
 
         let con_map = ConMap::new();
 
         let ip_limit = IpLimit::new();
 
-        for (iface, host, mut port) in bind {
-            let listener = tokio::net::TcpListener::bind(iface).await?;
-            let addr = listener.local_addr()?;
-            if port == 0 {
-                port = addr.port();
+        let listener = tokio::task::spawn_blocking(move || {
+            let socket = socket2::Socket::new(
+                socket2::Domain::IPV6,
+                socket2::Type::STREAM,
+                None,
+            )?;
+            {
+                // not safe on windows, allows port-jacking
+                #[cfg(not(windows))]
+                socket.set_reuse_address(true)?;
             }
-            bound.push(format!("{}:{}", host, port));
-
-            srv_term.spawn_err(
-                listener_task(
-                    tls.clone(),
-                    srv_term.clone(),
-                    listener,
-                    ice.clone(),
-                    ip_limit.clone(),
-                    con_map.clone(),
-                    allow_demo,
-                ),
-                |err| {
-                    tracing::debug!(?err, "ListenerClosed");
-                },
+            socket.set_only_v6(false)?;
+            socket.set_nonblocking(true)?;
+            let address = std::net::SocketAddr::new(
+                std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(),
+                port,
             );
-        }
+            socket.bind(&address.into())?;
+            socket.listen(128)?;
+            tokio::net::TcpListener::from_std(socket.into())
+        })
+        .await??;
 
-        if bound.is_empty() {
-            return Err(Error::id("BindingRequired"));
-        }
+        let bound_port = listener.local_addr()?.port();
 
-        let id = tls.cert_digest().to_b64();
+        srv_term.spawn_err(
+            listener_task(
+                tls.clone(),
+                srv_term.clone(),
+                listener,
+                ice.clone(),
+                ip_limit.clone(),
+                con_map.clone(),
+                allow_demo,
+            ),
+            |err| {
+                tracing::debug!(?err, "ListenerClosed");
+            },
+        );
 
-        let addr = format!("hc-rtc-sig:{}/{}", id, bound.join("/"));
-        let addr = url::Url::parse(&addr).map_err(Error::err)?;
-
-        tracing::info!(%addr, "running");
-
-        Ok(Self { addr, srv_term })
+        Ok(Self {
+            srv_term,
+            bound_port,
+        })
     }
 }
 
@@ -226,11 +235,13 @@ async fn listener_task(
             return Err(Error::id("IpLimitReached"));
         }
 
-        let id: sodoken::BufWriteSized<32> = sodoken::BufWriteSized::new_no_lock();
+        let id: sodoken::BufWriteSized<32> =
+            sodoken::BufWriteSized::new_no_lock();
         sodoken::random::bytes_buf(id.clone()).await?;
         let id = id.read_lock().to_vec().into_boxed_slice();
 
-        let (con_hnd_send, con_hnd_recv) = tokio::sync::mpsc::unbounded_channel();
+        let (con_hnd_send, con_hnd_recv) =
+            tokio::sync::mpsc::unbounded_channel();
 
         con_map.insert(id.clone(), con_hnd_send);
 
@@ -290,9 +301,10 @@ async fn con_task(
             .accept(socket)
             .await?
             .into();
-    let socket: Socket = tokio_tungstenite::accept_async_with_config(socket, Some(WS_CONFIG))
-        .await
-        .map_err(Error::err)?;
+    let socket: Socket =
+        tokio_tungstenite::accept_async_with_config(socket, Some(WS_CONFIG))
+            .await
+            .map_err(Error::err)?;
     let (sink, stream) = socket.split();
 
     let mut con = Con {

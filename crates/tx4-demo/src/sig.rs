@@ -145,43 +145,52 @@ async fn sig_task(
                     }
                 }
                 SigCmd::SendOffer(id, offer) => {
-                    let offer: serde_json::Value = match serde_json::from_str(&offer) {
-                        Err(err) => {
-                            tracing::warn!(?err);
-                            continue; // just the local loop
-                        }
-                        Ok(offer) => offer,
-                    };
+                    let offer: serde_json::Value =
+                        match serde_json::from_str(&offer) {
+                            Err(err) => {
+                                tracing::warn!(?err);
+                                continue; // just the local loop
+                            }
+                            Ok(offer) => offer,
+                        };
 
-                    if let Err(err) = sig_cli.offer(&id.rem_id, &id.rem_pk, &offer).await {
+                    if let Err(err) =
+                        sig_cli.offer(&id.rem_id, &id.rem_pk, &offer).await
+                    {
                         tracing::warn!(?err);
                         continue 'sig_top;
                     }
                 }
                 SigCmd::SendAnswer(id, answer) => {
-                    let answer: serde_json::Value = match serde_json::from_str(&answer) {
-                        Err(err) => {
-                            tracing::warn!(?err);
-                            continue; // just the local loop
-                        }
-                        Ok(answer) => answer,
-                    };
+                    let answer: serde_json::Value =
+                        match serde_json::from_str(&answer) {
+                            Err(err) => {
+                                tracing::warn!(?err);
+                                continue; // just the local loop
+                            }
+                            Ok(answer) => answer,
+                        };
 
-                    if let Err(err) = sig_cli.answer(&id.rem_id, &id.rem_pk, &answer).await {
+                    if let Err(err) =
+                        sig_cli.answer(&id.rem_id, &id.rem_pk, &answer).await
+                    {
                         tracing::warn!(?err);
                         continue 'sig_top;
                     }
                 }
                 SigCmd::SendICE(id, ice) => {
-                    let ice: serde_json::Value = match serde_json::from_str(&ice) {
-                        Err(err) => {
-                            tracing::warn!(?err);
-                            continue; // just the local loop
-                        }
-                        Ok(ice) => ice,
-                    };
+                    let ice: serde_json::Value =
+                        match serde_json::from_str(&ice) {
+                            Err(err) => {
+                                tracing::warn!(?err);
+                                continue; // just the local loop
+                            }
+                            Ok(ice) => ice,
+                        };
 
-                    if let Err(err) = sig_cli.ice(&id.rem_id, &id.rem_pk, &ice).await {
+                    if let Err(err) =
+                        sig_cli.ice(&id.rem_id, &id.rem_pk, &ice).await
+                    {
                         tracing::warn!(?err);
                         continue 'sig_top;
                     }

@@ -6,7 +6,9 @@ use std::sync::Arc;
 type Result<T> = std::result::Result<T, std::io::Error>;
 
 /// Tx3 helper until `std::io::Error::other()` is stablized
-pub fn other_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(error: E) -> std::io::Error {
+pub fn other_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
+    error: E,
+) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, error)
 }
 
@@ -38,7 +40,9 @@ async fn main() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(
             tracing_subscriber::filter::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
+                .with_default_directive(
+                    tracing_subscriber::filter::LevelFilter::INFO.into(),
+                )
                 .from_env_lossy(),
         )
         .with_file(true)
@@ -58,7 +62,8 @@ async fn main_err() -> Result<()> {
 
     let lair = lair::load(config.clone()).await?;
 
-    let core = core::Core::new(config.friendly_name.clone(), config.shoutout.clone());
+    let core =
+        core::Core::new(config.friendly_name.clone(), config.shoutout.clone());
 
     sig::Sig::spawn_to_core(config.clone(), lair, core).await?;
 

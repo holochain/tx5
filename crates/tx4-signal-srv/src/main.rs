@@ -72,34 +72,6 @@ macro_rules! jsdoc {
     };
 }
 
-jsdoc! { Binding {
-    [
-        (), local_interface,
-        std::net::SocketAddr, ("0.0.0.0:0".parse().unwrap()),
-        hb1, "#localInterface", "`ip:port` of local interface to bind",
-    ],
-    [
-        (), wan_host,
-        String, (Default::default()),
-        hb2, "#wanHost", "wan host to publish in url",
-    ],
-    [
-        (), wan_port,
-        u16, (Default::default()),
-        hb3, "#wanPort", "wan port to publish in url",
-    ],
-    [
-        (), enabled,
-        bool, (true),
-        hb4, "#enabled", "`true` if this interface should be bound",
-    ],
-    [
-        (#[serde(default, skip_deserialization)]), notes,
-        Vec<String>, (Default::default()),
-        hb5, "#notes", "unparsed user information about this interface",
-    ],
-}}
-
 #[doc(hidden)]
 const ICE_SERVERS: &str = r#"[
     {
@@ -124,19 +96,19 @@ const ICE_SERVERS: &str = r#"[
 
 jsdoc! { Config {
     [
-        (), binding_list,
-        Vec<Binding>, (Default::default()),
-        hc1, "#bindingList", "list of local interfaces to bind",
+        (), port,
+        u16, (8443),
+        hc1, "#port", "port to bind",
     ],
     [
-        (), tls_cert_der_b64,
-        String, (Default::default()),
-        hc2, "#tlsCertDerB64", "base64 DER TLS certificate",
+        (), tls_cert_pem,
+        tls::Pem, (tls::Pem(Default::default())),
+        hc2, "#tlsCertPem", "PEM encoded TLS certificate",
     ],
     [
-        (), tls_cert_pk_der_b64,
-        String, (Default::default()),
-        hc3, "#tlsCertPkDerB64", "base64 DER TLS certificate private key",
+        (), tls_cert_pk_pem,
+        tls::Pem, (tls::Pem(Default::default())),
+        hc3, "#tlsCertPkPem", "PEM encoded TLS certificate private key",
     ],
     [
         (), ice_servers,
@@ -145,7 +117,7 @@ jsdoc! { Config {
     ],
     [
         (), demo,
-        bool, (false),
+        bool, (true),
         hc5, "#demo", "enable demo broadcasting as a stand-in for bootstrapping",
     ],
 }}
@@ -154,7 +126,9 @@ jsdoc! { Config {
 #[tokio::main(flavor = "multi_thread")]
 pub async fn main() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::filter::EnvFilter::from_default_env(),
+        )
         .with_file(true)
         .with_line_number(true)
         .finish();
@@ -185,12 +159,9 @@ async fn main_err() -> Result<()> {
 
     let srv_builder = read_config(opt).await?;
 
-    let srv = srv_builder.build().await?;
+    let _srv = srv_builder.build().await?;
 
-    println!(
-        "#tx4-signal-srv LISTEN#\n{}\n#tx4-signal-srv START#",
-        srv.local_addr(),
-    );
+    println!("#tx4-signal-srv START#");
 
     futures::future::pending().await
 }
@@ -203,15 +174,16 @@ async fn read_config(opt: Opt) -> Result<tx4_signal::srv::SrvBuilder> {
 
     let config = opt.config.as_ref().unwrap();
 
-    let mut file = match tokio::fs::OpenOptions::new().read(true).open(config).await {
-        Err(err) => {
-            return Err(Error::err(format!(
-                "Failed to open config file {:?}: {:?}",
-                config, err,
-            )))
-        }
-        Ok(file) => file,
-    };
+    let mut file =
+        match tokio::fs::OpenOptions::new().read(true).open(config).await {
+            Err(err) => {
+                return Err(Error::err(format!(
+                    "Failed to open config file {:?}: {:?}",
+                    config, err,
+                )))
+            }
+            Ok(file) => file,
+        };
 
     let perms = match file.metadata().await {
         Err(err) => {
@@ -260,36 +232,16 @@ async fn read_config(opt: Opt) -> Result<tx4_signal::srv::SrvBuilder> {
     };
 
     let Config {
-        binding_list,
-        tls_cert_der_b64,
-        tls_cert_pk_der_b64,
+        port,
+        tls_cert_pem,
+        tls_cert_pk_pem,
         ice_servers,
         demo,
         ..
     } = conf;
 
-    let tls_cert_der = match base64::decode(&tls_cert_der_b64) {
-        Err(err) => {
-            return Err(Error::err(format!(
-                "Failed to parse config file {:?}: {:?}",
-                config, err,
-            )))
-        }
-        Ok(cert) => tls::TlsCertDer(cert.into_boxed_slice()),
-    };
-
-    let tls_cert_pk_der = match base64::decode(&tls_cert_pk_der_b64) {
-        Err(err) => {
-            return Err(Error::err(format!(
-                "Failed to parse config file {:?}: {:?}",
-                config, err,
-            )))
-        }
-        Ok(pk) => tls::TlsPkDer(pk.into_boxed_slice()),
-    };
-
     let tls = match tls::TlsConfigBuilder::default()
-        .with_cert(tls_cert_der, tls_cert_pk_der)
+        .with_cert(tls_cert_pem, tls_cert_pk_pem)
         .build()
     {
         Err(err) => {
@@ -301,17 +253,11 @@ async fn read_config(opt: Opt) -> Result<tx4_signal::srv::SrvBuilder> {
         Ok(tls) => tls,
     };
 
-    let mut srv_builder = tx4_signal::srv::SrvBuilder::default()
+    let srv_builder = tx4_signal::srv::SrvBuilder::default()
+        .with_port(port)
         .with_tls(tls)
         .with_ice_servers(serde_json::to_string(&ice_servers).unwrap())
         .with_allow_demo(demo);
-
-    for binding in binding_list {
-        if !binding.enabled {
-            continue;
-        }
-        srv_builder.add_bind(binding.local_interface, binding.wan_host, binding.wan_port);
-    }
 
     Ok(srv_builder)
 }
@@ -337,82 +283,13 @@ async fn run_init(opt: Opt) -> Result<()> {
         Ok(file) => file,
     };
 
-    let (cert_r, cert_r_pk) = tls::gen_tls_cert_pair().unwrap();
-    let cert = base64::encode(&cert_r.0);
-    let cert_pk = base64::encode(&cert_r_pk.0);
+    let (cert, cert_pk) = tls::tls_self_signed()?;
 
-    let mut config = Config {
-        tls_cert_der_b64: cert,
-        tls_cert_pk_der_b64: cert_pk,
+    let config = Config {
+        tls_cert_pem: cert,
+        tls_cert_pk_pem: cert_pk,
         ..Default::default()
     };
-
-    let mut found_v4 = false;
-    let mut found_v6 = false;
-
-    use rand::Rng;
-    let port = rand::thread_rng().gen_range(32768..60999);
-    for iface in get_if_addrs::get_if_addrs()? {
-        let ip = iface.ip();
-        let is_loopback = ip.is_loopback();
-        let is_global = ip.ext_is_global();
-        let mut enabled = !is_loopback;
-        let mut notes = Vec::new();
-        notes.push(format!("iface: {}", iface.name));
-        if is_loopback {
-            notes.push("loopback: disabled".into());
-        }
-        if is_global {
-            notes.push("global: directly addressable".into());
-        }
-        if !is_loopback && !is_global {
-            notes.push("private: configure port-forwarding, update host".into());
-        }
-        match ip {
-            std::net::IpAddr::V4(ip) => {
-                if !is_loopback {
-                    if found_v4 {
-                        enabled = false;
-                        notes.push("multiple v4: disabled".into());
-                    } else {
-                        found_v4 = true;
-                        notes.push("first_v4: enabled".into());
-                    }
-                }
-                config.binding_list.push(Binding {
-                    local_interface: std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-                        ip, port,
-                    )),
-                    wan_host: ip.to_string(),
-                    wan_port: port,
-                    enabled,
-                    notes,
-                    ..Default::default()
-                });
-            }
-            std::net::IpAddr::V6(ip) => {
-                if !is_loopback {
-                    if found_v6 {
-                        enabled = false;
-                        notes.push("multiple v6: disabled".into());
-                    } else {
-                        found_v6 = true;
-                        notes.push("first_v6: enabled".into());
-                    }
-                }
-                config.binding_list.push(Binding {
-                    local_interface: std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
-                        ip, port, 0, 0,
-                    )),
-                    wan_host: format!("[{}]", ip),
-                    wan_port: port,
-                    enabled,
-                    notes,
-                    ..Default::default()
-                });
-            }
-        }
-    }
 
     let mut config = serde_json::to_string_pretty(&config).unwrap();
     config.push('\n');
@@ -455,58 +332,4 @@ async fn run_init(opt: Opt) -> Result<()> {
     println!("# hc-rtc-sig-srv wrote {:?} #", config_fn);
 
     Ok(())
-}
-
-#[doc(hidden)]
-trait IpAddrExt {
-    fn ext_is_global(&self) -> bool;
-}
-
-impl IpAddrExt for std::net::IpAddr {
-    #[inline]
-    fn ext_is_global(&self) -> bool {
-        match self {
-            std::net::IpAddr::V4(a) => a.ext_is_global(),
-            std::net::IpAddr::V6(a) => a.ext_is_global(),
-        }
-    }
-}
-
-impl IpAddrExt for std::net::Ipv4Addr {
-    #[inline]
-    fn ext_is_global(&self) -> bool {
-        if u32::from_be_bytes(self.octets()) == 0xc0000009
-            || u32::from_be_bytes(self.octets()) == 0xc000000a
-        {
-            return true;
-        }
-        !self.is_private()
-            && !self.is_loopback()
-            && !self.is_link_local()
-            && !self.is_broadcast()
-            && !self.is_documentation()
-            // is_shared()
-            && !(self.octets()[0] == 100 && (self.octets()[1] & 0b1100_0000 == 0b0100_0000))
-            && !(self.octets()[0] == 192 && self.octets()[1] == 0 && self.octets()[2] == 0)
-            // is_reserved()
-            && !(self.octets()[0] & 240 == 240 && !self.is_broadcast())
-            // is_benchmarking()
-            && !(self.octets()[0] == 198 && (self.octets()[1] & 0xfe) == 18)
-            && self.octets()[0] != 0
-    }
-}
-
-impl IpAddrExt for std::net::Ipv6Addr {
-    #[inline]
-    fn ext_is_global(&self) -> bool {
-        !self.is_multicast()
-            && !self.is_loopback()
-            //&& !self.is_unicast_link_local()
-            && !((self.segments()[0] & 0xffc0) == 0xfe80)
-            //&& !self.is_unique_local()
-            && !((self.segments()[0] & 0xfe00) == 0xfc00)
-            && !self.is_unspecified()
-            //&& !self.is_documentation()
-            && !((self.segments()[0] == 0x2001) && (self.segments()[1] == 0xdb8))
-    }
 }

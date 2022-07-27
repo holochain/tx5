@@ -20,13 +20,16 @@ use once_cell::sync::Lazy;
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
-const LIB_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dylib"));
+const LIB_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dylib"));
 
 #[cfg(target_os = "windows")]
-const LIB_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dll"));
+const LIB_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dll"));
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-const LIB_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
+const LIB_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
 
 /// Constants
 pub mod constants;
@@ -88,7 +91,8 @@ struct LibInner {
 impl LibInner {
     unsafe fn priv_new() -> Self {
         use std::io::Write;
-        let mut file = tempfile::NamedTempFile::new().expect("failed to open temp file");
+        let mut file =
+            tempfile::NamedTempFile::new().expect("failed to open temp file");
 
         // TODO set some perms?
 
@@ -101,7 +105,8 @@ impl LibInner {
         // TODO - keep file open as a security mitigation?
         let temp_path = file.into_temp_path();
 
-        let lib = libloading::Library::new(&temp_path).expect("failed to load shared");
+        let lib = libloading::Library::new(&temp_path)
+            .expect("failed to load shared");
 
         LibInnerBuilder {
             _temp_path: temp_path,
@@ -200,7 +205,8 @@ impl Api {
 
             let evt = match event_type {
                 TY_ERR => {
-                    let err = std::slice::from_raw_parts(slot_b as *const u8, slot_c);
+                    let err =
+                        std::slice::from_raw_parts(slot_b as *const u8, slot_c);
                     let err = Error {
                         code: slot_a,
                         error: String::from_utf8_lossy(err).to_string(),
@@ -208,8 +214,10 @@ impl Api {
                     Event::Error(err)
                 }
                 TY_PEER_CON_ON_ICE_CANDIDATE => {
-                    let candidate = std::slice::from_raw_parts(slot_b as *const u8, slot_c);
-                    let candidate = String::from_utf8_lossy(candidate).to_string();
+                    let candidate =
+                        std::slice::from_raw_parts(slot_b as *const u8, slot_c);
+                    let candidate =
+                        String::from_utf8_lossy(candidate).to_string();
                     Event::PeerConICECandidate {
                         peer_con_id: slot_a,
                         candidate,
@@ -244,7 +252,8 @@ impl Api {
         let cb: DynCb = Box::new(Arc::new(cb));
         let cb = Box::into_raw(cb);
 
-        let prev_usr = self.0.borrow_on_event()(Some(on_event_cb), cb as *mut _);
+        let prev_usr =
+            self.0.borrow_on_event()(Some(on_event_cb), cb as *mut _);
 
         if !prev_usr.is_null() {
             let closure: DynCb = Box::from_raw(prev_usr as *mut _);
@@ -269,7 +278,9 @@ impl Api {
         cb: Cb,
     ) -> Result<R>
     where
-        Cb: FnOnce(Result<(ResponseType, SlotA, SlotB, SlotC, SlotD)>) -> Result<R>,
+        Cb: FnOnce(
+            Result<(ResponseType, SlotA, SlotB, SlotC, SlotD)>,
+        ) -> Result<R>,
     {
         let mut out = Err("not called".to_string().into());
         self.call_inner(
@@ -306,7 +317,8 @@ impl Api {
     ) where
         Cb: 'a + FnOnce(ResponseType, SlotA, SlotB, SlotC, SlotD),
     {
-        type DynCb<'a> = Box<Box<dyn FnOnce(ResponseType, SlotA, SlotB, SlotC, SlotD) + 'a>>;
+        type DynCb<'a> =
+            Box<Box<dyn FnOnce(ResponseType, SlotA, SlotB, SlotC, SlotD) + 'a>>;
 
         unsafe extern "C" fn call_cb(
             response_usr: *mut libc::c_void,
@@ -347,7 +359,15 @@ impl Api {
 
     #[inline]
     pub unsafe fn buffer_free(&self, id: BufferId) {
-        self.0.borrow_call()(TY_BUFFER_FREE, id, 0, 0, 0, None, std::ptr::null_mut());
+        self.0.borrow_call()(
+            TY_BUFFER_FREE,
+            id,
+            0,
+            0,
+            0,
+            None,
+            std::ptr::null_mut(),
+        );
     }
 
     #[inline]
@@ -369,7 +389,11 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn buffer_reserve(&self, id: BufferId, add: usize) -> Result<()> {
+    pub unsafe fn buffer_reserve(
+        &self,
+        id: BufferId,
+        add: usize,
+    ) -> Result<()> {
         self.call(TY_BUFFER_RESERVE, id, add, 0, 0, |r| match r {
             Ok((_t, _a, _b, _c, _d)) => Ok(()),
             Err(e) => Err(e),
@@ -392,7 +416,12 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn buffer_read<Cb, R>(&self, id: BufferId, len: usize, cb: Cb) -> Result<R>
+    pub unsafe fn buffer_read<Cb, R>(
+        &self,
+        id: BufferId,
+        len: usize,
+        cb: Cb,
+    ) -> Result<R>
     where
         Cb: FnOnce(Result<&mut [u8]>) -> Result<R>,
     {
@@ -421,7 +450,15 @@ impl Api {
 
     #[inline]
     pub unsafe fn peer_con_free(&self, id: PeerConId) {
-        self.0.borrow_call()(TY_PEER_CON_FREE, id, 0, 0, 0, None, std::ptr::null_mut());
+        self.0.borrow_call()(
+            TY_PEER_CON_FREE,
+            id,
+            0,
+            0,
+            0,
+            None,
+            std::ptr::null_mut(),
+        );
     }
 
     #[inline]
@@ -473,7 +510,11 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn peer_con_set_local_desc(&self, id: PeerConId, json: &str) -> Result<()> {
+    pub unsafe fn peer_con_set_local_desc(
+        &self,
+        id: PeerConId,
+        json: &str,
+    ) -> Result<()> {
         let len = json.as_bytes().len();
         let data = json.as_bytes().as_ptr() as usize;
 
@@ -484,7 +525,11 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn peer_con_set_rem_desc(&self, id: PeerConId, json: &str) -> Result<()> {
+    pub unsafe fn peer_con_set_rem_desc(
+        &self,
+        id: PeerConId,
+        json: &str,
+    ) -> Result<()> {
         let len = json.as_bytes().len();
         let data = json.as_bytes().as_ptr() as usize;
 
@@ -495,7 +540,11 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn peer_con_add_ice_candidate(&self, id: PeerConId, json: &str) -> Result<()> {
+    pub unsafe fn peer_con_add_ice_candidate(
+        &self,
+        id: PeerConId,
+        json: &str,
+    ) -> Result<()> {
         let len = json.as_bytes().len();
         let data = json.as_bytes().as_ptr() as usize;
 
@@ -547,11 +596,22 @@ impl Api {
 
     #[inline]
     pub unsafe fn data_chan_free(&self, id: DataChanId) {
-        self.0.borrow_call()(TY_DATA_CHAN_FREE, id, 0, 0, 0, None, std::ptr::null_mut());
+        self.0.borrow_call()(
+            TY_DATA_CHAN_FREE,
+            id,
+            0,
+            0,
+            0,
+            None,
+            std::ptr::null_mut(),
+        );
     }
 
     #[inline]
-    pub unsafe fn data_chan_ready_state(&self, id: DataChanId) -> Result<usize> {
+    pub unsafe fn data_chan_ready_state(
+        &self,
+        id: DataChanId,
+    ) -> Result<usize> {
         self.call(TY_DATA_CHAN_READY_STATE, id, 0, 0, 0, |r| match r {
             Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
@@ -559,7 +619,11 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn data_chan_send(&self, id: DataChanId, buffer_id: BufferId) -> Result<()> {
+    pub unsafe fn data_chan_send(
+        &self,
+        id: DataChanId,
+        buffer_id: BufferId,
+    ) -> Result<()> {
         self.call(TY_DATA_CHAN_SEND, id, buffer_id, 0, 0, |r| match r {
             Ok((_t, _a, _b, _c, _d)) => Ok(()),
             Err(e) => Err(e),

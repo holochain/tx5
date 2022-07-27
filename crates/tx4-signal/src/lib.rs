@@ -77,7 +77,8 @@ impl Id {
 
     /// Decode a base64 encoded Id.
     pub fn from_b64(s: &str) -> Result<Arc<Self>> {
-        let v = base64::decode_config(s, base64::URL_SAFE_NO_PAD).map_err(Error::err)?;
+        let v = base64::decode_config(s, base64::URL_SAFE_NO_PAD)
+            .map_err(Error::err)?;
         Self::from_slice(&v)
     }
 
@@ -118,7 +119,9 @@ pub(crate) static WS_CONFIG: WebSocketConfig = WebSocketConfig {
     accept_unmasked_frames: false,
 };
 
-pub(crate) fn tcp_configure(socket: tokio::net::TcpStream) -> Result<tokio::net::TcpStream> {
+pub(crate) fn tcp_configure(
+    socket: tokio::net::TcpStream,
+) -> Result<tokio::net::TcpStream> {
     let socket = socket.into_std()?;
     let socket = socket2::Socket::from(socket);
 
@@ -171,7 +174,9 @@ mod tests {
 
     fn init_tracing() {
         let subscriber = tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
+            .with_env_filter(
+                tracing_subscriber::filter::EnvFilter::from_default_env(),
+            )
             .with_file(true)
             .with_line_number(true)
             .finish();
@@ -184,13 +189,15 @@ mod tests {
     }
 
     impl Test {
-        pub async fn new<Cb>(srv_addr: url::Url, recv_cb: Cb) -> Self
+        pub async fn new<Cb>(port: u16, recv_cb: Cb) -> Self
         where
             Cb: FnMut(cli::SigMessage) + 'static + Send,
         {
             let passphrase = sodoken::BufRead::new_no_lock(b"test-passphrase");
             let keystore_config = PwHashLimits::Minimum
-                .with_exec(|| LairServerConfigInner::new("/", passphrase.clone()))
+                .with_exec(|| {
+                    LairServerConfigInner::new("/", passphrase.clone())
+                })
                 .await
                 .unwrap();
 
@@ -198,7 +205,8 @@ mod tests {
                 .with_exec(|| {
                     lair_keystore_api::in_proc_keystore::InProcKeystore::new(
                         Arc::new(keystore_config),
-                        lair_keystore_api::mem_store::create_mem_store_factory(),
+                        lair_keystore_api::mem_store::create_mem_store_factory(
+                        ),
                         passphrase,
                     )
                 })
@@ -206,18 +214,28 @@ mod tests {
                 .unwrap();
 
             let lair_client = keystore.new_client().await.unwrap();
-            let tag: Arc<str> = rand_utf8::rand_utf8(&mut rand::thread_rng(), 32).into();
+            let tag: Arc<str> =
+                rand_utf8::rand_utf8(&mut rand::thread_rng(), 32).into();
 
             lair_client
                 .new_seed(tag.clone(), None, false)
                 .await
                 .unwrap();
 
+            let tls = tls::TlsConfigBuilder::default()
+                .with_danger_no_server_verify(true)
+                .build()
+                .unwrap();
+
             let cli = cli::Cli::builder()
+                .with_tls(tls)
                 .with_lair_client(lair_client)
                 .with_lair_tag(tag)
                 .with_recv_cb(recv_cb)
-                .with_url(srv_addr)
+                .with_url(
+                    url::Url::parse(&format!("wss://127.0.0.1:{}", port))
+                        .unwrap(),
+                )
                 .build()
                 .await
                 .unwrap();
@@ -233,22 +251,21 @@ mod tests {
     async fn sanity() {
         init_tracing();
 
-        let (cert, key) = tls::gen_tls_cert_pair().unwrap();
+        let (cert, key) = tls::tls_self_signed().unwrap();
         let tls = tls::TlsConfigBuilder::default()
             .with_cert(cert, key)
             .build()
             .unwrap();
         let srv = srv::Srv::builder()
+            .with_port(0)
             .with_tls(tls)
-            .with_bind("127.0.0.1:0".parse().unwrap(), "127.0.0.1".into(), 0)
-            .with_bind("[::1]:0".parse().unwrap(), "[::1]".into(), 0)
             .with_ice_servers(ICE_SERVERS.to_string())
             .with_allow_demo(true)
             .build()
             .await
             .unwrap();
-
-        let srv_addr = srv.local_addr().clone();
+        let bound_port = srv.bound_port();
+        tracing::info!(?bound_port);
 
         #[derive(Debug)]
         enum In {
@@ -260,7 +277,7 @@ mod tests {
 
         let mut cli1 = {
             let in_send = in_send.clone();
-            Test::new(srv_addr.clone(), move |msg| {
+            Test::new(bound_port, move |msg| {
                 in_send.send(In::Cli1(msg)).unwrap();
             })
             .await
@@ -270,7 +287,7 @@ mod tests {
         let cli1_pk = pk_from_addr(&cli1_addr).unwrap();
         tracing::info!(?cli1_sig_id, ?cli1_pk);
 
-        let mut cli2 = Test::new(srv_addr, move |msg| {
+        let mut cli2 = Test::new(bound_port, move |msg| {
             in_send.send(In::Cli2(msg)).unwrap();
         })
         .await;

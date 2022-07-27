@@ -45,9 +45,11 @@ pub(crate) fn unregister_data_chan_evt_cb(id: usize) {
     MANAGER.lock().data_chan.remove(&id);
 }
 
-pub(crate) type PeerConEvtCb = Arc<dyn Fn(PeerConnectionEvent) + 'static + Send + Sync>;
+pub(crate) type PeerConEvtCb =
+    Arc<dyn Fn(PeerConnectionEvent) + 'static + Send + Sync>;
 
-pub(crate) type DataChanEvtCb = Arc<dyn Fn(DataChannelEvent) + 'static + Send + Sync>;
+pub(crate) type DataChanEvtCb =
+    Arc<dyn Fn(DataChannelEvent) + 'static + Send + Sync>;
 
 static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
     unsafe {
@@ -61,7 +63,8 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 peer_con_id,
                 candidate,
             } => {
-                let maybe_cb = MANAGER.lock().peer_con.get(&peer_con_id).cloned();
+                let maybe_cb =
+                    MANAGER.lock().peer_con.get(&peer_con_id).cloned();
                 if let Some(cb) = maybe_cb {
                     cb(PeerConnectionEvent::ICECandidate(candidate));
                 }
@@ -74,7 +77,8 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 peer_con_id,
                 data_chan_id,
             } => {
-                let maybe_cb = MANAGER.lock().peer_con.get(&peer_con_id).cloned();
+                let maybe_cb =
+                    MANAGER.lock().peer_con.get(&peer_con_id).cloned();
                 if let Some(cb) = maybe_cb {
                     cb(PeerConnectionEvent::DataChannel(DataChannelSeed(
                         data_chan_id,
@@ -82,13 +86,15 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 }
             }
             SysEvent::DataChanClose(data_chan_id) => {
-                let maybe_cb = MANAGER.lock().data_chan.get(&data_chan_id).cloned();
+                let maybe_cb =
+                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
                 if let Some(cb) = maybe_cb {
                     cb(DataChannelEvent::Close)
                 }
             }
             SysEvent::DataChanOpen(data_chan_id) => {
-                let maybe_cb = MANAGER.lock().data_chan.get(&data_chan_id).cloned();
+                let maybe_cb =
+                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
                 if let Some(cb) = maybe_cb {
                     cb(DataChannelEvent::Open)
                 }
@@ -97,7 +103,8 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 data_chan_id,
                 buffer_id,
             } => {
-                let maybe_cb = MANAGER.lock().data_chan.get(&data_chan_id).cloned();
+                let maybe_cb =
+                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
                 if let Some(cb) = maybe_cb {
                     cb(DataChannelEvent::Message(GoBuf(buffer_id)))
                 }

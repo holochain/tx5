@@ -1,12 +1,22 @@
+#![deny(missing_docs)]
 #![deny(warnings)]
 #![deny(unsafe_code)]
 // these are copied out of std-lib nightly... rather leave them as-is
 #![allow(clippy::nonminimal_bool)]
 
-use clap::Parser;
-use tx4_signal_core::tls;
+//! Holochain webrtc signal server.
+//!
+//! [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
+//! [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)
+//! [![Chat](https://img.shields.io/badge/chat-chat%2eholochain%2enet-blue.svg?style=flat-square)](https://chat.holochain.org)
+//!
+//! [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+//! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
-type Result<T> = std::result::Result<T, String>;
+#![doc = include_str!("docs/srv_help.md")]
+
+use clap::Parser;
+use tx4_signal_core::*;
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -14,6 +24,7 @@ type Result<T> = std::result::Result<T, String>;
     version,
     about = "Holochain Webrtc Signal Server"
 )]
+#[doc(hidden)]
 struct Opt {
     /// Initialize a new tx4-signal-srv.json configuration file
     /// (as specified by --config).
@@ -27,13 +38,16 @@ struct Opt {
     config: Option<std::path::PathBuf>,
 }
 
+#[doc(hidden)]
 macro_rules! jsdoc {
     ($n:ident {$(
         [($($rne:tt)*), $rn:ident, $rt:ty, ($rd:expr), $dn:ident, $jn:literal, $d:literal,],
     )*}) => {
+        /// tx4-signal-srv config
         #[derive(serde::Serialize, serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         #[non_exhaustive]
+        #[doc(hidden)]
         pub struct $n {$(
             #[serde(default, skip_deserializing)]
             #[serde(rename = $jn)]
@@ -43,6 +57,7 @@ macro_rules! jsdoc {
 
         $(
             #[allow(non_upper_case_globals)]
+            #[doc(hidden)]
             const $dn: &'static str = $d;
         )*
 
@@ -85,6 +100,7 @@ jsdoc! { Binding {
     ],
 }}
 
+#[doc(hidden)]
 const ICE_SERVERS: &str = r#"[
     {
       "urls": ["stun:openrelay.metered.ca:80"]
@@ -134,8 +150,9 @@ jsdoc! { Config {
     ],
 }}
 
+/// Main executable entrypoint.
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
+pub async fn main() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .with_file(true)
@@ -149,6 +166,7 @@ async fn main() {
     }
 }
 
+#[doc(hidden)]
 async fn main_err() -> Result<()> {
     let mut opt = Opt::parse();
     if opt.config.is_none() {
@@ -167,7 +185,7 @@ async fn main_err() -> Result<()> {
 
     let srv_builder = read_config(opt).await?;
 
-    let srv = srv_builder.build().await.map_err(|e| format!("{:?}", e))?;
+    let srv = srv_builder.build().await?;
 
     println!(
         "#tx4-signal-srv LISTEN#\n{}\n#tx4-signal-srv START#",
@@ -177,6 +195,7 @@ async fn main_err() -> Result<()> {
     futures::future::pending().await
 }
 
+#[doc(hidden)]
 async fn read_config(opt: Opt) -> Result<tx4_signal_core::srv::SrvBuilder> {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -186,56 +205,56 @@ async fn read_config(opt: Opt) -> Result<tx4_signal_core::srv::SrvBuilder> {
 
     let mut file = match tokio::fs::OpenOptions::new().read(true).open(config).await {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to open config file {:?}: {:?}",
                 config, err,
-            ))
+            )))
         }
         Ok(file) => file,
     };
 
     let perms = match file.metadata().await {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to load config file metadata {:?}: {:?}",
                 config, err
-            ))
+            )))
         }
         Ok(perms) => perms.permissions(),
     };
 
     if !perms.readonly() {
-        return Err(format!(
+        return Err(Error::err(format!(
             "Refusing to run with writable config file {:?}",
             config
-        ));
+        )));
     }
 
     #[cfg(unix)]
     {
         let mode = perms.mode() & 0o777;
         if mode != 0o400 {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Refusing to run with config file not set to mode 0o400 {:?} 0o{:o}",
                 config, mode,
-            ));
+            )));
         }
     }
 
     let mut conf = String::new();
     if let Err(err) = file.read_to_string(&mut conf).await {
-        return Err(format!(
+        return Err(Error::err(format!(
             "Failed to read config file {:?}: {:?}",
             config, err,
-        ));
+        )));
     }
 
     let conf: Config = match serde_json::from_str(&conf) {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to parse config file {:?}: {:?}",
                 config, err,
-            ))
+            )))
         }
         Ok(res) => res,
     };
@@ -251,20 +270,20 @@ async fn read_config(opt: Opt) -> Result<tx4_signal_core::srv::SrvBuilder> {
 
     let tls_cert_der = match base64::decode(&tls_cert_der_b64) {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to parse config file {:?}: {:?}",
                 config, err,
-            ))
+            )))
         }
         Ok(cert) => tls::TlsCertDer(cert.into_boxed_slice()),
     };
 
     let tls_cert_pk_der = match base64::decode(&tls_cert_pk_der_b64) {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to parse config file {:?}: {:?}",
                 config, err,
-            ))
+            )))
         }
         Ok(pk) => tls::TlsPkDer(pk.into_boxed_slice()),
     };
@@ -274,10 +293,10 @@ async fn read_config(opt: Opt) -> Result<tx4_signal_core::srv::SrvBuilder> {
         .build()
     {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to build TlsConfig from config file {:?}: {:?}",
                 config, err,
-            ))
+            )))
         }
         Ok(tls) => tls,
     };
@@ -297,6 +316,7 @@ async fn read_config(opt: Opt) -> Result<tx4_signal_core::srv::SrvBuilder> {
     Ok(srv_builder)
 }
 
+#[doc(hidden)]
 async fn run_init(opt: Opt) -> Result<()> {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -309,10 +329,10 @@ async fn run_init(opt: Opt) -> Result<()> {
     file.write(true);
     let mut file = match file.open(config_fn).await {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to create config file {:?}: {:?}",
                 config_fn, err,
-            ))
+            )))
         }
         Ok(file) => file,
     };
@@ -332,7 +352,7 @@ async fn run_init(opt: Opt) -> Result<()> {
 
     use rand::Rng;
     let port = rand::thread_rng().gen_range(32768..60999);
-    for iface in get_if_addrs::get_if_addrs().map_err(|e| format!("{:?}", e))? {
+    for iface in get_if_addrs::get_if_addrs()? {
         let ip = iface.ip();
         let is_loopback = ip.is_loopback();
         let is_global = ip.ext_is_global();
@@ -398,18 +418,18 @@ async fn run_init(opt: Opt) -> Result<()> {
     config.push('\n');
 
     if let Err(err) = file.write_all(config.as_bytes()).await {
-        return Err(format!(
+        return Err(Error::err(format!(
             "Failed to initialize config file {:?}: {:?}",
             config_fn, err
-        ));
+        )));
     };
 
     let mut perms = match file.metadata().await {
         Err(err) => {
-            return Err(format!(
+            return Err(Error::err(format!(
                 "Failed to load config file metadata {:?}: {:?}",
                 config_fn, err,
-            ))
+            )))
         }
         Ok(perms) => perms.permissions(),
     };
@@ -419,14 +439,17 @@ async fn run_init(opt: Opt) -> Result<()> {
     perms.set_mode(0o400);
 
     if let Err(err) = file.set_permissions(perms).await {
-        return Err(format!(
+        return Err(Error::err(format!(
             "Failed to set config file permissions {:?}: {:?}",
             config_fn, err,
-        ));
+        )));
     }
 
     if let Err(err) = file.shutdown().await {
-        return Err(format!("Failed to flush/close config file: {:?}", err));
+        return Err(Error::err(format!(
+            "Failed to flush/close config file: {:?}",
+            err
+        )));
     }
 
     println!("# hc-rtc-sig-srv wrote {:?} #", config_fn);
@@ -434,6 +457,7 @@ async fn run_init(opt: Opt) -> Result<()> {
     Ok(())
 }
 
+#[doc(hidden)]
 trait IpAddrExt {
     fn ext_is_global(&self) -> bool;
 }

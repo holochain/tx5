@@ -12,8 +12,6 @@
 //! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 //!
 
-#![doc = include_str!("docs/srv_help.md")]
-
 #[doc(inline)]
 pub use tx4_core::*;
 

@@ -55,11 +55,16 @@ static: docs tools
 	cargo clippy
 
 docs: tools
+	printf '### The `tx4-signal-srv` executable\n`tx4-signal-srv --help`\n```text\n' > crates/tx4-signal-srv/src/docs/srv_help.md
+	cargo run --manifest-path crates/tx4-signal-srv/Cargo.toml -- --help >> crates/tx4-signal-srv/src/docs/srv_help.md
+	printf '\n```\n' >> crates/tx4-signal-srv/src/docs/srv_help.md
+	cargo readme -r crates/tx4-signal-srv -o README.md
+	printf '\n' >> crates/tx4-signal-srv/README.md
+	cat crates/tx4-signal-srv/src/docs/srv_help.md >> crates/tx4-signal-srv/README.md
 	cargo readme -r crates/tx4-core -o README.md
 	cargo readme -r crates/tx4-go-pion-sys -o README.md
 	cargo readme -r crates/tx4-go-pion -o README.md
 	cargo readme -r crates/tx4-signal-core -o README.md
-	cargo readme -r crates/tx4-signal-srv -o README.md
 	cargo readme -r crates/tx4-signal-cli -o README.md
 	cargo readme -r crates/tx4-demo -o README.md
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi

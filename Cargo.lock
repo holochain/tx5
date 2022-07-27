@@ -2061,6 +2061,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber 0.3.15",
+ "tx4-signal-core",
  "url",
 ]
 

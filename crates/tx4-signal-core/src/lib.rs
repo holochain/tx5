@@ -14,7 +14,9 @@
 
 #![doc = include_str!("docs/srv_help.md")]
 
-use std::io::Result;
+#[doc(inline)]
+pub use tx4_core::*;
+
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
@@ -68,7 +70,7 @@ impl Id {
     /// Load from a slice.
     pub fn from_slice(s: &[u8]) -> Result<Arc<Self>> {
         if s.len() != 32 {
-            return Err(other_err("InvalidIdLength"));
+            return Err(Error::id("InvalidIdLength"));
         }
         let mut out = [0; 32];
         out.copy_from_slice(s);
@@ -77,7 +79,7 @@ impl Id {
 
     /// Decode a base64 encoded Id.
     pub fn from_b64(s: &str) -> Result<Arc<Self>> {
-        let v = base64::decode_config(s, base64::URL_SAFE_NO_PAD).map_err(other_err)?;
+        let v = base64::decode_config(s, base64::URL_SAFE_NO_PAD).map_err(Error::err)?;
         Self::from_slice(&v)
     }
 
@@ -91,11 +93,6 @@ const HELLO: &[u8] = b"hrsH";
 const FORWARD: &[u8] = b"hrsF";
 const DEMO: &[u8] = b"hrsD";
 
-/// Tx3 helper until `std::io::Error::other()` is stablized
-pub fn other_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(error: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, error)
-}
-
 /// Extract a signal id from an hc-rtc-sig client address url.
 pub fn signal_id_from_addr(addr: &url::Url) -> Result<Arc<Id>> {
     for (k, v) in addr.query_pairs() {
@@ -103,7 +100,7 @@ pub fn signal_id_from_addr(addr: &url::Url) -> Result<Arc<Id>> {
             return Id::from_b64(&v);
         }
     }
-    Err(other_err("InvalidUrl"))
+    Err(Error::id("InvalidUrl"))
 }
 
 /// Extract an x25519 pk from an hc-rtc-sig client address url.
@@ -113,7 +110,7 @@ pub fn pk_from_addr(addr: &url::Url) -> Result<Arc<Id>> {
             return Id::from_b64(&v);
         }
     }
-    Err(other_err("InvalidUrl"))
+    Err(Error::id("InvalidUrl"))
 }
 
 pub(crate) static WS_CONFIG: WebSocketConfig = WebSocketConfig {

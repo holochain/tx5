@@ -1971,7 +1971,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx4-signal-cli"
+version = "0.0.1"
+dependencies = [
+ "base64",
+ "clap 3.2.15",
+ "dirs",
+ "event-listener",
+ "futures",
+ "get_if_addrs",
+ "lair_keystore_api",
+ "once_cell",
+ "parking_lot 0.12.1",
+ "rand",
+ "rand-utf8",
+ "rcgen 0.9.3",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2",
+ "sodoken",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber 0.3.15",
+ "url",
+]
+
+[[package]]
 name = "tx4-signal-core"
+version = "0.0.1"
+dependencies = [
+ "base64",
+ "clap 3.2.15",
+ "dirs",
+ "event-listener",
+ "futures",
+ "get_if_addrs",
+ "lair_keystore_api",
+ "once_cell",
+ "parking_lot 0.12.1",
+ "rand",
+ "rand-utf8",
+ "rcgen 0.9.3",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2",
+ "sodoken",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber 0.3.15",
+ "tx4-core",
+ "url",
+]
+
+[[package]]
+name = "tx4-signal-srv"
 version = "0.0.1"
 dependencies = [
  "base64",

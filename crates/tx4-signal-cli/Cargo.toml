@@ -1,7 +1,7 @@
 [package]
-name = "tx4-signal-core"
+name = "tx4-signal-cli"
 version = "0.0.1"
-description = "holochain webrtc signal server / client core types"
+description = "holochain webrtc signal client"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/holochain/tx4"
 documentation = "https://docs.rs/tx4-signal-core"
@@ -35,5 +35,4 @@ tokio-rustls = { version = "0.23.3", default-features = false }
 tokio-tungstenite = { version = "0.17.1", default-features = false }
 tracing = { version = "0.1.34", default-features = false }
 tracing-subscriber = { version = "0.3.11", features = [ "env-filter" ] }
-tx4-core = { version = "0.0.1", path = "../tx4-core" }
 url = { version = "2.2.2", default-features = false }

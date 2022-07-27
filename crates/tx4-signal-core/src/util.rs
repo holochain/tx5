@@ -62,7 +62,7 @@ impl Term {
         let on_term_fut = self.on_term();
         tokio::task::spawn(async move {
             if let Err(err) = tokio::select! {
-                _ = on_term_fut => Err(other_err(term_note)),
+                _ = on_term_fut => Err(Error::err(term_note)),
                 r = f => r,
             } {
                 if let Some(e) = e {
@@ -103,8 +103,8 @@ impl Term {
         let term2_fut = term2.on_term();
         tokio::task::spawn(async move {
             if let Err(err) = tokio::select! {
-                _ = term1_fut => Err(other_err(term_note1)),
-                _ = term2_fut => Err(other_err(term_note2)),
+                _ = term1_fut => Err(Error::err(term_note1)),
+                _ = term2_fut => Err(Error::err(term_note2)),
                 r = f => r,
             } {
                 if let Some(e) = e {

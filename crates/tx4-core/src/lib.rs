@@ -11,20 +11,30 @@
 //! [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 //! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
-/// Tx4 core error type
+/// Tx4 core error type.
 pub struct Error {
-    /// Error name / identifier
-    pub name: String,
+    /// Error identifier.
+    pub id: String,
 
-    /// Additional error information
+    /// Additional error information.
     pub info: String,
+}
+
+impl From<()> for Error {
+    #[inline]
+    fn from(_: ()) -> Self {
+        Self {
+            id: "Error".into(),
+            info: String::default(),
+        }
+    }
 }
 
 impl From<String> for Error {
     #[inline]
-    fn from(s: String) -> Self {
+    fn from(id: String) -> Self {
         Self {
-            name: s,
+            id,
             info: String::default(),
         }
     }
@@ -32,8 +42,8 @@ impl From<String> for Error {
 
 impl From<&str> for Error {
     #[inline]
-    fn from(s: &str) -> Self {
-        s.to_string().into()
+    fn from(id: &str) -> Self {
+        id.to_string().into()
     }
 }
 
@@ -44,34 +54,51 @@ impl From<Error> for std::io::Error {
     }
 }
 
-impl Error {
-    /// Construct a new Tx4 core error instance
-    pub fn new<N>(n: N) -> Self
-    where
-        N: Into<String>,
-    {
+impl From<std::io::Error> for Error {
+    #[inline]
+    fn from(e: std::io::Error) -> Self {
+        let info = e.to_string();
+        if let Some(e) = e.into_inner() {
+            if let Ok(e) = e.downcast::<Error>() {
+                return *e;
+            }
+        }
         Self {
-            name: n.into(),
-            info: String::default(),
+            id: "Error".into(),
+            info,
         }
     }
+}
 
-    /// Construct a new Tx4 core error instance
-    pub fn new_info<N, I>(n: N, i: I) -> Self
+impl Error {
+    /// Construct a new Tx4 core error instance with input as an identifier.
+    pub fn id<T>(t: T) -> std::io::Error
     where
-        N: Into<String>,
-        I: Into<String>,
+        T: Into<String>,
     {
         Self {
-            name: n.into(),
-            info: i.into(),
+            id: t.into(),
+            info: String::default(),
         }
+        .into()
+    }
+
+    /// Construct a new Tx4 core error instance with input as additional info.
+    pub fn err<E>(e: E) -> std::io::Error
+    where
+        E: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        Self {
+            id: "Error".into(),
+            info: e.into().to_string(),
+        }
+        .into()
     }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.name)?;
+        f.write_str(&self.id)?;
         if !self.info.is_empty() {
             f.write_str(": ")?;
             f.write_str(&self.info)?;
@@ -82,32 +109,32 @@ impl std::fmt::Display for Error {
 
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
+        std::fmt::Display::fmt(self, f)
     }
 }
 
 impl std::error::Error for Error {}
 
-/// Extension trait to extract a name from a Tx4 core error type
+/// Extension trait to extract a name from a Tx4 core error type.
 pub trait ErrorExt {
-    /// Get the "name" identifier of this error type,
-    /// or the string representation
-    fn name(&self) -> std::borrow::Cow<'_, str>;
+    /// Get the identifier of this error type,
+    /// or the string representation.
+    fn id(&self) -> std::borrow::Cow<'_, str>;
 }
 
 impl ErrorExt for Error {
     #[inline]
-    fn name(&self) -> std::borrow::Cow<'_, str> {
-        (&self.name).into()
+    fn id(&self) -> std::borrow::Cow<'_, str> {
+        (&self.id).into()
     }
 }
 
 impl ErrorExt for std::io::Error {
     #[inline]
-    fn name(&self) -> std::borrow::Cow<'_, str> {
+    fn id(&self) -> std::borrow::Cow<'_, str> {
         match self.get_ref() {
             Some(r) => match r.downcast_ref::<Error>() {
-                Some(r) => (&r.name).into(),
+                Some(r) => (&r.id).into(),
                 None => r.to_string().into(),
             },
             None => self.to_string().into(),
@@ -115,5 +142,5 @@ impl ErrorExt for std::io::Error {
     }
 }
 
-/// Tx4 core result type
-pub type Result<T> = std::result::Result<T, std::io::Error>;
+#[doc(inline)]
+pub use std::io::Result;

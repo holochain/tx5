@@ -221,7 +221,7 @@ impl Cli {
         self.sink
             .send(Message::Binary(out))
             .await
-            .map_err(other_err)
+            .map_err(Error::err)
     }
 
     // -- private -- //
@@ -246,7 +246,7 @@ impl Cli {
         self.sink
             .send(Message::Binary(out))
             .await
-            .map_err(other_err)
+            .map_err(Error::err)
     }
 
     async fn priv_build(builder: CliBuilder) -> Result<Self> {
@@ -260,30 +260,30 @@ impl Cli {
 
         let lair_client = match lair_client {
             Some(lair_client) => lair_client,
-            None => return Err(other_err("LairClientRequired")),
+            None => return Err(Error::id("LairClientRequired")),
         };
 
         let lair_tag = match lair_tag {
             Some(lair_tag) => lair_tag,
-            None => return Err(other_err("LairTagRequired")),
+            None => return Err(Error::id("LairTagRequired")),
         };
 
         let mut url = match url {
             Some(url) => url,
-            None => return Err(other_err("UrlRequired")),
+            None => return Err(Error::id("UrlRequired")),
         };
 
         let x25519_pub = match lair_client.get_entry(lair_tag).await {
             Ok(LairEntryInfo::Seed { tag: _, seed_info }) => {
                 Id::from_slice(&*seed_info.x25519_pub_key.0)?
             }
-            _ => return Err(other_err("lair_tag invalid seed")),
+            _ => return Err(Error::err("lair_tag invalid seed")),
         };
 
         tracing::debug!(?x25519_pub);
 
         if url.scheme() != "hc-rtc-sig" {
-            return Err(other_err(format!(
+            return Err(Error::err(format!(
                 "invalid scheme, expected \"hc-rtc-sig\", got {:?}",
                 url.scheme()
             )));
@@ -295,13 +295,13 @@ impl Cli {
             Some(digest_b64) => match base64::decode_config(digest_b64, base64::URL_SAFE_NO_PAD) {
                 Ok(digest) => {
                     if digest.len() != 32 {
-                        return Err(other_err("InvalidUrlCertDigestLen"));
+                        return Err(Error::id("InvalidUrlCertDigestLen"));
                     }
                     digest
                 }
-                Err(e) => return Err(other_err(e)),
+                Err(e) => return Err(Error::err(e)),
             },
-            None => return Err(other_err("InvalidUrlCertDigest")),
+            None => return Err(Error::id("InvalidUrlCertDigest")),
         };
 
         let mut err_list = Vec::new();
@@ -350,7 +350,7 @@ impl Cli {
                 };
 
                 if **remote_id != cert_digest {
-                    err_list.push(other_err("InvalidRemoteCert"));
+                    err_list.push(Error::id("InvalidRemoteCert"));
                     continue;
                 }
 
@@ -360,7 +360,7 @@ impl Cli {
                     Some(WS_CONFIG),
                 )
                 .await
-                .map_err(other_err)
+                .map_err(Error::err)
                 {
                     Ok(r) => r,
                     Err(err) => {
@@ -376,7 +376,7 @@ impl Cli {
 
         let socket = match result_socket {
             Some(socket) => socket,
-            None => return Err(other_err(format!("{:?}", err_list))),
+            None => return Err(Error::err(format!("{:?}", err_list))),
         };
 
         let (sink, mut stream) = socket.split();
@@ -384,14 +384,14 @@ impl Cli {
         let (id, ice_servers) = match stream.next().await {
             Some(Ok(Message::Binary(data))) => {
                 if &data[0..HELLO.len()] != HELLO {
-                    return Err(other_err("InvalidHello"));
+                    return Err(Error::id("InvalidHello"));
                 }
                 let id = Id::from_slice(&data[4..36])?;
                 let ice: serde_json::Value = serde_json::from_slice(&data[36..])?;
                 tracing::debug!(?id, %ice);
                 (id, ice)
             }
-            _ => return Err(other_err("InvalidHello")),
+            _ => return Err(Error::id("InvalidHello")),
         };
 
         let con_term = util::Term::new("con_term", None);
@@ -428,15 +428,15 @@ async fn con_recv_task(
     mut recv_cb: RecvCb,
 ) -> Result<()> {
     while let Some(msg) = stream.next().await {
-        let bin_data: Vec<u8> = match msg.map_err(other_err)? {
+        let bin_data: Vec<u8> = match msg.map_err(Error::err)? {
             Message::Text(data) => data.into_bytes(),
             Message::Binary(data) => data,
             Message::Ping(data) => data,
             Message::Pong(data) => data,
             Message::Close(close) => {
-                return Err(other_err(format!("{:?}", close)));
+                return Err(Error::err(format!("{:?}", close)));
             }
-            Message::Frame(_) => return Err(other_err("RawFrame")),
+            Message::Frame(_) => return Err(Error::id("RawFrame")),
         };
 
         if bin_data.len() == 4 + 32 + 32 && &bin_data[0..4] == DEMO {
@@ -453,11 +453,11 @@ async fn con_recv_task(
                 + 24
                 + sodoken::crypto_box::curve25519xsalsa20poly1305::MACBYTES
         {
-            return Err(other_err("InvalidMsg"));
+            return Err(Error::id("InvalidMsg"));
         }
 
         if &bin_data[0..4] != FORWARD {
-            return Err(other_err("InvalidMsg"));
+            return Err(Error::id("InvalidMsg"));
         }
 
         let rem_id = Id::from_slice(&bin_data[4..36])?;
@@ -503,12 +503,12 @@ async fn con_recv_task(
                 };
                 recv_cb(ice);
             }
-            _ => return Err(other_err("InvalidMsgKind")),
+            _ => return Err(Error::id("InvalidMsgKind")),
         }
     }
 
     // always error on end so our term is called
-    Err(other_err("ConClose"))
+    Err(Error::id("ConClose"))
 }
 
 fn hash_cert(socket: &tokio_rustls::TlsStream<tokio::net::TcpStream>) -> Result<Arc<Id>> {
@@ -522,5 +522,5 @@ fn hash_cert(socket: &tokio_rustls::TlsStream<tokio::net::TcpStream>) -> Result<
             return Ok(digest);
         }
     }
-    Err(other_err("InvalidPeerCert"))
+    Err(Error::id("InvalidPeerCert"))
 }

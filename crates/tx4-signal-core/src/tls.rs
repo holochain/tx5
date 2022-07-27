@@ -60,7 +60,7 @@ pub fn gen_tls_cert_pair() -> Result<(TlsCertDer, TlsPkDer)> {
     use ring::rand::SecureRandom;
     ring::rand::SystemRandom::new()
         .fill(&mut r[..])
-        .map_err(|_| other_err("SystemRandomFailure"))?;
+        .map_err(|_| Error::id("SystemRandomFailure"))?;
 
     let sni = format!(
         "rtc{}ctr",
@@ -84,14 +84,14 @@ pub fn gen_tls_cert_pair() -> Result<(TlsCertDer, TlsPkDer)> {
         format!("Lair Pseudo-Self-Signed Cert {}", &sni),
     );
 
-    let cert = rcgen::Certificate::from_params(params).map_err(other_err)?;
+    let cert = rcgen::Certificate::from_params(params).map_err(Error::err)?;
 
     let priv_key = cert.serialize_private_key_der();
 
     let root_cert = &**WK_CA_RCGEN_CERT;
     let cert_der = cert
         .serialize_der_with_signer(root_cert)
-        .map_err(other_err)?;
+        .map_err(Error::err)?;
 
     Ok((
         TlsCertDer(cert_der.into_boxed_slice()),
@@ -168,21 +168,21 @@ impl TlsConfigBuilder {
 
         let root_cert = rustls::Certificate(WK_CA_CERT_DER.to_vec());
         let mut root_store = rustls::RootCertStore::empty();
-        root_store.add(&root_cert).map_err(other_err)?;
+        root_store.add(&root_cert).map_err(Error::err)?;
 
         let mut srv = rustls::ServerConfig::builder()
             .with_cipher_suites(self.cipher_suites.as_slice())
             .with_safe_default_kx_groups()
             .with_protocol_versions(self.protocol_versions.as_slice())
-            .map_err(other_err)?
+            .map_err(Error::err)?
             .with_client_cert_verifier(rustls::server::NoClientAuth::new())
             .with_single_cert(vec![cert], pk)
-            .map_err(other_err)?;
+            .map_err(Error::err)?;
 
         if self.key_log {
             srv.key_log = KEY_LOG.clone();
         }
-        srv.ticketer = rustls::Ticketer::new().map_err(other_err)?;
+        srv.ticketer = rustls::Ticketer::new().map_err(Error::err)?;
         srv.session_storage = rustls::server::ServerSessionMemoryCache::new(self.session_storage);
         for alpn in self.alpn.iter() {
             srv.alpn_protocols.push(alpn.clone());
@@ -192,7 +192,7 @@ impl TlsConfigBuilder {
             .with_cipher_suites(self.cipher_suites.as_slice())
             .with_safe_default_kx_groups()
             .with_protocol_versions(self.protocol_versions.as_slice())
-            .map_err(other_err)?
+            .map_err(Error::err)?
             .with_custom_certificate_verifier(Arc::new(V))
             .with_no_client_auth();
 
@@ -265,7 +265,7 @@ fn priv_verify_server_cert(
     let (cert, chain, trustroots) = prepare(end_entity, intermediates)?;
     let now = webpki::Time::try_from(now)
         .map_err(|_| rustls::Error::FailedToGetCurrentTime)
-        .map_err(other_err)?;
+        .map_err(Error::err)?;
 
     // Treat server certs like client certs
     cert.verify_is_valid_tls_client_cert(
@@ -274,7 +274,7 @@ fn priv_verify_server_cert(
         &chain,
         now,
     )
-    .map_err(other_err)
+    .map_err(Error::err)
     .map(|_| rustls::client::ServerCertVerified::assertion())
 }
 
@@ -304,12 +304,12 @@ fn prepare<'a, 'b>(
     intermediates: &'a [rustls::Certificate],
 ) -> Result<CertChainAndRoots<'a, 'b>> {
     // EE cert must appear first.
-    let cert = webpki::EndEntityCert::try_from(end_entity.0.as_ref()).map_err(other_err)?;
+    let cert = webpki::EndEntityCert::try_from(end_entity.0.as_ref()).map_err(Error::err)?;
 
     let intermediates: Vec<&'a [u8]> = intermediates.iter().map(|cert| cert.0.as_ref()).collect();
 
     let trustroots =
-        vec![webpki::TrustAnchor::try_from_cert_der(&*WK_CA_CERT_DER).map_err(other_err)?];
+        vec![webpki::TrustAnchor::try_from_cert_der(&*WK_CA_CERT_DER).map_err(Error::err)?];
 
     Ok((cert, intermediates, trustroots))
 }

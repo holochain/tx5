@@ -125,7 +125,7 @@ impl Srv {
 
         let tls = match tls {
             Some(tls) => tls,
-            None => return Err(other_err("TlsRequired")),
+            None => return Err(Error::id("TlsRequired")),
         };
 
         let mut bound = Vec::new();
@@ -160,13 +160,13 @@ impl Srv {
         }
 
         if bound.is_empty() {
-            return Err(other_err("BindingRequired"));
+            return Err(Error::id("BindingRequired"));
         }
 
         let id = tls.cert_digest().to_b64();
 
         let addr = format!("hc-rtc-sig:{}/{}", id, bound.join("/"));
-        let addr = url::Url::parse(&addr).map_err(other_err)?;
+        let addr = url::Url::parse(&addr).map_err(Error::err)?;
 
         tracing::info!(%addr, "running");
 
@@ -184,13 +184,13 @@ impl Con {
     pub async fn send(&mut self, data: Vec<u8>) -> Result<()> {
         let on_term_fut = self.con_term.on_term();
         tokio::select! {
-            _ = on_term_fut => Err(other_err("ConTerm")),
+            _ = on_term_fut => Err(Error::id("ConTerm")),
             r = async {
                 match self
                     .sink
                     .send(Message::Binary(data))
                     .await
-                    .map_err(other_err)
+                    .map_err(Error::err)
                 {
                     Ok(r) => Ok(r),
                     Err(e) => {
@@ -223,7 +223,7 @@ async fn listener_task(
 
         if !ip_limit.check(addr.ip()) {
             tracing::debug!(ip = ?addr.ip(), "IpLimitReached");
-            return Err(other_err("IpLimitReached"));
+            return Err(Error::id("IpLimitReached"));
         }
 
         let id: sodoken::BufWriteSized<32> = sodoken::BufWriteSized::new_no_lock();
@@ -292,7 +292,7 @@ async fn con_task(
             .into();
     let socket: Socket = tokio_tungstenite::accept_async_with_config(socket, Some(WS_CONFIG))
         .await
-        .map_err(other_err)?;
+        .map_err(Error::err)?;
     let (sink, stream) = socket.split();
 
     let mut con = Con {
@@ -323,7 +323,7 @@ async fn con_task(
     }
 
     // always error on end so our term is called
-    Err(other_err("ConClose"))
+    Err(Error::id("ConClose"))
 }
 
 async fn con_recv_task(
@@ -337,27 +337,27 @@ async fn con_recv_task(
     while let Some(msg) = stream.next().await {
         if !ip_limit.check(ip) {
             tracing::debug!(?ip, "IpLimitReached");
-            return Err(other_err("IpLimitReached"));
+            return Err(Error::id("IpLimitReached"));
         }
-        let mut bin_data: Vec<u8> = match msg.map_err(other_err)? {
+        let mut bin_data: Vec<u8> = match msg.map_err(Error::err)? {
             Message::Text(data) => data.into_bytes(),
             Message::Binary(data) => data,
             Message::Ping(data) => data,
             Message::Pong(data) => data,
             Message::Close(close) => {
-                return Err(other_err(format!("{:?}", close)));
+                return Err(Error::err(format!("{:?}", close)));
             }
-            Message::Frame(_) => return Err(other_err("RawFrame")),
+            Message::Frame(_) => return Err(Error::id("RawFrame")),
         };
 
         if bin_data.len() < FORWARD.len() + 32 {
-            return Err(other_err("InvalidMsg"));
+            return Err(Error::id("InvalidMsg"));
         }
 
         match &bin_data[0..4] {
             DEMO => {
                 if !allow_demo {
-                    return Err(other_err("InvalidMsg"));
+                    return Err(Error::id("InvalidMsg"));
                 }
 
                 let mut out = Vec::with_capacity(DEMO.len() + 32 + 32);
@@ -377,13 +377,13 @@ async fn con_recv_task(
                 con_map.send(&dest_id, bin_data);
             }
             _ => {
-                return Err(other_err("InvalidMsg"));
+                return Err(Error::id("InvalidMsg"));
             }
         }
     }
 
     // always error on end so our term is called
-    Err(other_err("ConClose"))
+    Err(Error::id("ConClose"))
 }
 
 // 100 msgs in 5 seconds is 20 messages per second

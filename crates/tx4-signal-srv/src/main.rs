@@ -16,7 +16,7 @@
 #![doc = include_str!("docs/srv_help.md")]
 
 use clap::Parser;
-use tx4_signal_core::*;
+use tx4_signal::*;
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -196,7 +196,7 @@ async fn main_err() -> Result<()> {
 }
 
 #[doc(hidden)]
-async fn read_config(opt: Opt) -> Result<tx4_signal_core::srv::SrvBuilder> {
+async fn read_config(opt: Opt) -> Result<tx4_signal::srv::SrvBuilder> {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tokio::io::AsyncReadExt;
@@ -301,7 +301,7 @@ async fn read_config(opt: Opt) -> Result<tx4_signal_core::srv::SrvBuilder> {
         Ok(tls) => tls,
     };
 
-    let mut srv_builder = tx4_signal_core::srv::SrvBuilder::default()
+    let mut srv_builder = tx4_signal::srv::SrvBuilder::default()
         .with_tls(tls)
         .with_ice_servers(serde_json::to_string(&ice_servers).unwrap())
         .with_allow_demo(demo);

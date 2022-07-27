@@ -213,12 +213,12 @@ async fn con_task(
                         break;
                     }
 
-                    let rem_id = match tx4_signal_core::Id::from_slice(&buf) {
+                    let rem_id = match tx4_signal::Id::from_slice(&buf) {
                         Err(_) => break,
                         Ok(id) => id,
                     };
 
-                    let rem_pk = match tx4_signal_core::Id::from_slice(&buf2) {
+                    let rem_pk = match tx4_signal::Id::from_slice(&buf2) {
                         Err(_) => break,
                         Ok(id) => id,
                     };

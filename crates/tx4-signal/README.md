@@ -1,4 +1,4 @@
-# tx4-signal-core
+# tx4-signal
 
 Holochain webrtc signal server / client.
 

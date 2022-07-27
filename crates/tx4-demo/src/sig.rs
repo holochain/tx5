@@ -101,7 +101,7 @@ async fn sig_task(
             })
         };
 
-        let mut sig_cli = match tx4_signal_core::cli::Cli::builder()
+        let mut sig_cli = match tx4_signal::cli::Cli::builder()
             .with_recv_cb(recv_cb)
             .with_lair_client(lair.lair_client.clone())
             .with_lair_tag(config.lair_tag.clone())

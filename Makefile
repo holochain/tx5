@@ -17,14 +17,11 @@ publish:
 		tx4-go-pion) \
 			export MANIFEST="./crates/tx4-go-pion/Cargo.toml"; \
 			;; \
-		tx4-signal-core) \
-			export MANIFEST="./crates/tx4-signal-core/Cargo.toml"; \
+		tx4-signal) \
+			export MANIFEST="./crates/tx4-signal/Cargo.toml"; \
 			;; \
 		tx4-signal-srv) \
 			export MANIFEST="./crates/tx4-signal-srv/Cargo.toml"; \
-			;; \
-		tx4-signal-cli) \
-			export MANIFEST="./crates/tx4-signal-cli/Cargo.toml"; \
 			;; \
 		tx4-demo) \
 			export MANIFEST="./crates/tx4-demo/Cargo.toml"; \
@@ -33,9 +30,8 @@ publish:
 			echo "USAGE: make publish crate=tx4-core"; \
 			echo "USAGE: make publish crate=tx4-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx4-go-pion"; \
-			echo "USAGE: make publish crate=tx4-signal-core"; \
+			echo "USAGE: make publish crate=tx4-signal"; \
 			echo "USAGE: make publish crate=tx4-signal-srv"; \
-			echo "USAGE: make publish crate=tx4-signal-cli"; \
 			echo "USAGE: make publish crate=tx4-demo"; \
 			exit 1; \
 			;; \
@@ -64,8 +60,7 @@ docs: tools
 	cargo readme -r crates/tx4-core -o README.md
 	cargo readme -r crates/tx4-go-pion-sys -o README.md
 	cargo readme -r crates/tx4-go-pion -o README.md
-	cargo readme -r crates/tx4-signal-core -o README.md
-	cargo readme -r crates/tx4-signal-cli -o README.md
+	cargo readme -r crates/tx4-signal -o README.md
 	cargo readme -r crates/tx4-demo -o README.md
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 

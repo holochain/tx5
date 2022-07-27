@@ -2,7 +2,7 @@ use crate::*;
 use parking_lot::Mutex;
 use std::collections::hash_map;
 use std::collections::HashMap;
-use tx4_signal_core::Id;
+use tx4_signal::Id;
 
 const MAX_CON: usize = 10;
 

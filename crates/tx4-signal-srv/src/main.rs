@@ -106,9 +106,9 @@ jsdoc! { Config {
         hc2, "#tlsCertPem", "PEM encoded TLS certificate",
     ],
     [
-        (), tls_cert_pk_pem,
+        (), tls_cert_priv_pem,
         tls::Pem, (tls::Pem(Default::default())),
-        hc3, "#tlsCertPkPem", "PEM encoded TLS certificate private key",
+        hc3, "#tlsCertPrivPem", "PEM encoded TLS certificate private key",
     ],
     [
         (), ice_servers,
@@ -159,7 +159,17 @@ async fn main_err() -> Result<()> {
 
     let srv_builder = read_config(opt).await?;
 
-    let _srv = srv_builder.build().await?;
+    let srv = srv_builder.build().await?;
+    let port = srv.bound_port();
+
+    for iface in get_if_addrs::get_if_addrs()? {
+        let ip = if iface.ip().is_ipv6() {
+            format!("[{}]", iface.ip())
+        } else {
+            iface.ip().to_string()
+        };
+        println!("wss://{}:{}", ip, port);
+    }
 
     println!("#tx4-signal-srv START#");
 
@@ -234,14 +244,14 @@ async fn read_config(opt: Opt) -> Result<tx4_signal::srv::SrvBuilder> {
     let Config {
         port,
         tls_cert_pem,
-        tls_cert_pk_pem,
+        tls_cert_priv_pem,
         ice_servers,
         demo,
         ..
     } = conf;
 
     let tls = match tls::TlsConfigBuilder::default()
-        .with_cert(tls_cert_pem, tls_cert_pk_pem)
+        .with_cert(tls_cert_pem, tls_cert_priv_pem)
         .build()
     {
         Err(err) => {
@@ -283,11 +293,11 @@ async fn run_init(opt: Opt) -> Result<()> {
         Ok(file) => file,
     };
 
-    let (cert, cert_pk) = tls::tls_self_signed()?;
+    let (cert, cert_priv) = tls::tls_self_signed()?;
 
     let config = Config {
         tls_cert_pem: cert,
-        tls_cert_pk_pem: cert_pk,
+        tls_cert_priv_pem: cert_priv,
         ..Default::default()
     };
 

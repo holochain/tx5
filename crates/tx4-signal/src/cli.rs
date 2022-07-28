@@ -298,7 +298,7 @@ impl Cli {
             None => return Err(Error::id("LairTagRequired")),
         };
 
-        let mut url = match url {
+        let url = match url {
             Some(url) => url,
             None => return Err(Error::id("UrlRequired")),
         };
@@ -350,7 +350,9 @@ impl Cli {
                 }
             };
 
-            let name = "stub".try_into().unwrap();
+            let name = host
+                .try_into()
+                .unwrap_or_else(|_| "tx4-signal".try_into().unwrap());
 
             let socket: tokio_rustls::TlsStream<tokio::net::TcpStream> =
                 match tokio_rustls::TlsConnector::from(tls.cli.clone())
@@ -366,7 +368,7 @@ impl Cli {
 
             let (socket, _rsp) =
                 match tokio_tungstenite::client_async_with_config(
-                    "wss://stub",
+                    format!("wss://{}:{}/{}", host, port, x25519_pub,),
                     socket,
                     Some(WS_CONFIG),
                 )
@@ -389,20 +391,33 @@ impl Cli {
             None => return Err(Error::err(format!("{:?}", err_list))),
         };
 
-        let (sink, mut stream) = socket.split();
+        let (mut sink, mut stream) = socket.split();
 
-        let (id, ice_servers) = match stream.next().await {
+        let ice_servers = match stream.next().await {
             Some(Ok(Message::Binary(data))) => {
-                if &data[0..HELLO.len()] != HELLO {
-                    return Err(Error::id("InvalidHello"));
+                let auth: WireAuth =
+                    rmp_serde::from_slice(&data).map_err(Error::err)?;
+
+                if auth.0 != AUTH {
+                    return Err(Error::id("InvalidAuth"));
                 }
-                let id = Id::from_slice(&data[4..36])?;
-                let ice: serde_json::Value =
-                    serde_json::from_slice(&data[36..])?;
-                tracing::debug!(?id, %ice);
-                (id, ice)
+
+                let ice: serde_json::Value = serde_json::from_slice(auth.2)?;
+
+                // TODO - open seal con key, for now just zeroes
+                let con_key = vec![0; 32];
+
+                let auth = rmp_serde::to_vec(&WireAuthRes(
+                    AUTH, &con_key, true, // just always REG for now
+                ))
+                .map_err(Error::err)?;
+
+                sink.send(Message::Binary(auth)).await.map_err(Error::err)?;
+
+                tracing::debug!(?con_key, %ice);
+                ice
             }
-            _ => return Err(Error::id("InvalidHello")),
+            _ => return Err(Error::id("InvalidAuth")),
         };
 
         let con_term = util::Term::new("con_term", None);
@@ -419,10 +434,11 @@ impl Cli {
             },
         );
 
-        url.query_pairs_mut()
-            .clear()
-            .append_pair("i", &id.to_b64())
-            .append_pair("x", &x25519_pub.to_b64());
+        let url = url::Url::parse(&format!(
+            "wss://{}:{}/{}",
+            host, port, x25519_pub,
+        ))
+        .map_err(Error::err)?;
 
         tracing::debug!(%url);
 

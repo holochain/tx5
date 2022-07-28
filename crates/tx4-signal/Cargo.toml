@@ -21,10 +21,12 @@ rand = { version = "0.8.5", default-features = false, features = [ "std", "std_r
 rand-utf8 = { version = "0.0.1", default-features = false }
 rcgen = { version = "0.9.3", default-features = false, features = [ "pem" ] }
 ring = { version = "0.16.20", default-features = false }
+rmp-serde = { version = "1.1.0", default-features = false }
 rustls = { version = "0.20.4", default-features = false, features = [ "dangerous_configuration" ] }
 rustls-native-certs = { version = "0.6.2", default-features = false }
 rustls-pemfile = { version = "1.0.0", default-features = false }
 serde = { version = "1.0.136", default-features = false, features = [ "std", "derive", "rc" ] }
+serde_bytes = { version = "0.11.6", default-features = false }
 serde_json = { version = "1.0.82", default-features = false, features = [ "std", "preserve_order" ] }
 sha2 = { version = "0.10.2", default-features = false, features = [ "std" ] }
 socket2 = { version = "0.4.4", default-features = false }

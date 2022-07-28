@@ -572,7 +572,7 @@ checksum = "93ef427c4f865071cfc85a7741482ecb54cce07059fa2b6a8bdd928fedd68b11"
 dependencies = [
  "futures",
  "one_err",
- "rmp-serde",
+ "rmp-serde 0.15.5",
  "rmpv",
  "serde",
  "serde_bytes",
@@ -1374,6 +1374,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp-serde"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25786b0d276110195fa3d6f3f31299900cf71dfbd6c28450f3f58a0e7f7a347e"
+dependencies = [
+ "byteorder",
+ "rmp",
+ "serde",
+]
+
+[[package]]
 name = "rmpv"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2054,10 +2065,12 @@ dependencies = [
  "rand-utf8",
  "rcgen 0.9.3",
  "ring",
+ "rmp-serde 1.1.0",
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2",
  "socket2",
@@ -2083,6 +2096,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_json",
+ "sodoken",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.15",

@@ -88,7 +88,22 @@ impl Id {
     }
 }
 
-const HELLO: &[u8] = b"hrsH";
+const AUTH: &[u8] = b"tx4A";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct WireAuth<'lt>(
+    #[serde(with = "serde_bytes")] pub &'lt [u8], // AUTH
+    #[serde(with = "serde_bytes")] pub &'lt [u8], // SEAL
+    #[serde(with = "serde_bytes")] pub &'lt [u8], // ICE
+);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct WireAuthRes<'lt>(
+    #[serde(with = "serde_bytes")] pub &'lt [u8], // AUTH
+    #[serde(with = "serde_bytes")] pub &'lt [u8], // con_key
+    pub bool,                                     // REG
+);
+
 const FORWARD: &[u8] = b"hrsF";
 const DEMO: &[u8] = b"hrsD";
 
@@ -114,8 +129,8 @@ pub fn pk_from_addr(addr: &url::Url) -> Result<Arc<Id>> {
 
 pub(crate) static WS_CONFIG: WebSocketConfig = WebSocketConfig {
     max_send_queue: Some(32),
-    max_message_size: Some(1024),
-    max_frame_size: Some(1024),
+    max_message_size: Some(2048),
+    max_frame_size: Some(2048),
     accept_unmasked_frames: false,
 };
 
@@ -233,7 +248,7 @@ mod tests {
                 .with_lair_tag(tag)
                 .with_recv_cb(recv_cb)
                 .with_url(
-                    url::Url::parse(&format!("wss://127.0.0.1:{}", port))
+                    url::Url::parse(&format!("wss://localhost:{}", port))
                         .unwrap(),
                 )
                 .build()
@@ -251,6 +266,9 @@ mod tests {
     async fn sanity() {
         init_tracing();
 
+        let ice: serde_json::Value = serde_json::from_str(ICE_SERVERS).unwrap();
+        let ice = serde_json::to_string(&ice).unwrap();
+
         let (cert, key) = tls::tls_self_signed().unwrap();
         let tls = tls::TlsConfigBuilder::default()
             .with_cert(cert, key)
@@ -259,7 +277,7 @@ mod tests {
         let srv = srv::Srv::builder()
             .with_port(0)
             .with_tls(tls)
-            .with_ice_servers(ICE_SERVERS.to_string())
+            .with_ice_servers(ice)
             .with_allow_demo(true)
             .build()
             .await

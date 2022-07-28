@@ -1,5 +1,18 @@
 //! Server-side connection types.
 
+// srv coms
+//
+// -> cli opens wss connection to:
+//   wss://<srv_host>:<srv_port>/<cli_x25519_pub>
+//
+// <- srv AUTH as sealed box to cli_x25519_pub with con_key
+//
+// -> cli AUTH reg must include valid con_key, reg bool within x timeout
+//
+// -> cli FWD fwd to target
+//
+// <- srv FWD sent if cli is correctly reg'd
+
 use crate::*;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
@@ -296,15 +309,36 @@ async fn con_task(
     allow_demo: bool,
 ) -> Result<()> {
     let socket = tcp_configure(socket)?;
-    let socket: tokio_rustls::TlsStream<tokio::net::TcpStream> =
-        tokio_rustls::TlsAcceptor::from(tls.srv.clone())
-            .accept(socket)
-            .await?
-            .into();
-    let socket: Socket =
-        tokio_tungstenite::accept_async_with_config(socket, Some(WS_CONFIG))
-            .await
-            .map_err(Error::err)?;
+    let socket = tokio_rustls::TlsAcceptor::from(tls.srv.clone())
+        .accept(socket)
+        .await?;
+    //eprintln!("sni:{:?}", socket.get_ref().1.sni_hostname());
+
+    let socket: tokio_rustls::TlsStream<tokio::net::TcpStream> = socket.into();
+    struct Hdr(tokio::sync::oneshot::Sender<String>);
+    use tokio_tungstenite::tungstenite::handshake::server;
+    impl server::Callback for Hdr {
+        fn on_request(
+            self,
+            request: &server::Request,
+            response: server::Response,
+        ) -> std::result::Result<server::Response, server::ErrorResponse>
+        {
+            let _ = self.0.send(request.uri().to_string());
+            Ok(response)
+        }
+    }
+    let (s, r) = tokio::sync::oneshot::channel();
+    let hdr = Hdr(s);
+    let socket: Socket = tokio_tungstenite::accept_hdr_async_with_config(
+        socket,
+        hdr,
+        Some(WS_CONFIG),
+    )
+    .await
+    .map_err(Error::err)?;
+    //eprintln!("alpn:{:?}", socket.get_ref().get_ref().1.alpn_protocol());
+
     let (sink, stream) = socket.split();
 
     let mut con = Con {
@@ -312,12 +346,37 @@ async fn con_task(
         sink,
     };
 
-    let mut hello = Vec::with_capacity(HELLO.len() + id.len() + ice.len());
-    hello.extend_from_slice(HELLO);
-    hello.extend_from_slice(&id);
-    hello.extend_from_slice(&ice);
+    use sodoken::crypto_box::curve25519xsalsa20poly1305 as crypto_box;
 
-    con.send(hello).await?;
+    let r = r.await.map_err(|_| Error::id("InvalidWssRequest"))?;
+    let mut r_iter = r.split('/');
+    if r_iter.next().is_none() {
+        return Err(Error::id("InvalidClientPubKey"));
+    }
+    let r = match r_iter.next() {
+        Some(r) => r,
+        None => return Err(Error::id("InvalidClientPubKey")),
+    };
+    let r = base64::decode_config(r.as_bytes(), base64::URL_SAFE_NO_PAD)
+        .map_err(Error::err)?;
+    if r.len() != crypto_box::PUBLICKEYBYTES {
+        return Err(Error::id("InvalidClientPubKey"));
+    }
+
+    let con_key = <sodoken::BufWriteSized<32>>::new_no_lock();
+    sodoken::random::bytes_buf(con_key.clone()).await?;
+    let con_key = con_key.to_read_sized();
+
+    let pubkey = sodoken::BufWriteSized::new_no_lock();
+    pubkey.write_lock().copy_from_slice(&r);
+
+    let seal = sodoken::BufWrite::new_no_lock(32 + crypto_box::SEALBYTES);
+    crypto_box::seal(seal.clone(), con_key.clone(), pubkey).await?;
+
+    let auth = rmp_serde::to_vec(&WireAuth(AUTH, &seal.read_lock()[..], &ice))
+        .map_err(Error::err)?;
+
+    con.send(auth).await?;
 
     let con_term_err = con_term.clone();
     util::Term::spawn_err2(
@@ -421,7 +480,11 @@ impl IpLimit {
         let now = std::time::Instant::now();
         hit.push(now);
         hit.retain(|t| *t + IP_LIMIT_WND > now);
-        hit.len() < IP_LIMIT_CNT
+        // disable actually limiting for now
+        if hit.len() >= IP_LIMIT_CNT {
+            tracing::warn!("IpLimitReached (limit disabled for now)");
+        }
+        true
     }
 }
 

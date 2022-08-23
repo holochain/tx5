@@ -5,7 +5,7 @@
 // -> cli opens wss connection to:
 //   wss://<srv_host>:<srv_port>/<cli_x25519_pub>
 //
-// <- srv AUTH as sealed box to cli_x25519_pub with con_key
+// <- srv AUTH as crypto box to cli_x25519_pub with con_key
 //
 // -> cli AUTH reg must include valid con_key, reg bool within x timeout
 //
@@ -367,16 +367,32 @@ async fn con_task(
     sodoken::random::bytes_buf(con_key.clone()).await?;
     let con_key = con_key.to_read_sized();
 
-    let pubkey = sodoken::BufWriteSized::new_no_lock();
-    pubkey.write_lock().copy_from_slice(&r);
+    let srv_pubkey = sodoken::BufWriteSized::new_no_lock();
+    let srv_seckey = sodoken::BufWriteSized::new_mem_locked()?;
+    crypto_box::keypair(srv_pubkey.clone(), srv_seckey.clone()).await?;
 
-    let seal = sodoken::BufWrite::new_no_lock(32 + crypto_box::SEALBYTES);
-    crypto_box::seal(seal.clone(), con_key.clone(), pubkey).await?;
+    let cli_pubkey = sodoken::BufWriteSized::new_no_lock();
+    cli_pubkey.write_lock().copy_from_slice(&r);
 
-    let auth = rmp_serde::to_vec(&WireAuth(AUTH, &seal.read_lock()[..], &ice))
-        .map_err(Error::err)?;
+    let nonce = sodoken::BufWriteSized::new_no_lock();
+    sodoken::random::bytes_buf(nonce.clone()).await?;
 
-    con.send(auth).await?;
+    let cipher = crypto_box::easy(
+        nonce.clone(),
+        con_key.clone(),
+        cli_pubkey.clone(),
+        srv_seckey,
+    ).await?;
+
+    let auth_req = crate::wire::SrvWire::AuthReqV1 {
+        srv_pub: (*srv_pubkey.read_lock_sized()).into(),
+        nonce: (*nonce.read_lock_sized()).into(),
+        cipher: cipher.read_lock().to_vec().into_boxed_slice().into(),
+        // TODO - don't re-decode this every time
+        ice: serde_json::from_slice(&ice)?,
+    }.encode()?;
+
+    con.send(auth_req).await?;
 
     let con_term_err = con_term.clone();
     util::Term::spawn_err2(
@@ -405,6 +421,7 @@ async fn con_recv_task(
     con_map: ConMap,
     allow_demo: bool,
 ) -> Result<()> {
+    //let mut need_auth_res = true;
     while let Some(msg) = stream.next().await {
         if !ip_limit.check(ip) {
             tracing::debug!(?ip, "IpLimitReached");
@@ -420,6 +437,29 @@ async fn con_recv_task(
             }
             Message::Frame(_) => return Err(Error::id("RawFrame")),
         };
+
+        /*
+        let msg = crate::wire::SrvWire::decode(&bin_data)?;
+
+        if need_auth_res {
+            match msg {
+                crate::wire::SrvWire::AuthResV1 { con_key, req_addr } => {
+                }
+                _ => return Err(Error::id("InvalidMsg")),
+            }
+        } else {
+            match msg {
+                crate::wire::SrvWire::FwdV1 { rem_pub, data } => {
+                    // now replace the id with the source id
+                    // so the recipient knows who it came from
+                    bin_data[4..36].copy_from_slice(&id);
+
+                    con_map.send(&rem_pub, bin_data)
+                }
+                _ => return Err(Error::id("InvalidMsg")),
+            }
+        }
+        */
 
         if bin_data.len() < FORWARD.len() + 32 {
             return Err(Error::id("InvalidMsg"));

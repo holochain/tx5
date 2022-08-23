@@ -88,6 +88,8 @@ impl Id {
     }
 }
 
+pub mod wire;
+
 const AUTH: &[u8] = b"tx4A";
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -301,6 +303,7 @@ mod tests {
             .await
         };
         let cli1_addr = cli1.cli.local_addr().clone();
+        tracing::warn!(%cli1_addr);
         let cli1_sig_id = signal_id_from_addr(&cli1_addr).unwrap();
         let cli1_pk = pk_from_addr(&cli1_addr).unwrap();
         tracing::info!(?cli1_sig_id, ?cli1_pk);

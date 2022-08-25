@@ -12,6 +12,7 @@
 //! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
 /// Tx4 core error type.
+#[derive(Clone)]
 pub struct Error {
     /// Error identifier.
     pub id: String,
@@ -66,6 +67,21 @@ impl From<std::io::Error> for Error {
         Self {
             id: "Error".into(),
             info,
+        }
+    }
+}
+
+impl From<&std::io::Error> for Error {
+    #[inline]
+    fn from(e: &std::io::Error) -> Self {
+        if let Some(r) = e.get_ref() {
+            if let Some(r) = r.downcast_ref::<Error>() {
+                return r.clone();
+            }
+        }
+        Self {
+            id: "Error".into(),
+            info: e.to_string(),
         }
     }
 }
@@ -132,12 +148,21 @@ pub trait ErrorExt {
     /// Get the identifier of this error type,
     /// or the string representation.
     fn id(&self) -> std::borrow::Cow<'_, str>;
+
+    /// Clone the error maintaining any meta info is available
+    /// if we are a tx4 error type.
+    fn err_clone(&self) -> std::io::Error;
 }
 
 impl ErrorExt for Error {
     #[inline]
     fn id(&self) -> std::borrow::Cow<'_, str> {
         (&self.id).into()
+    }
+
+    #[inline]
+    fn err_clone(&self) -> std::io::Error {
+        self.clone().into()
     }
 }
 
@@ -151,6 +176,11 @@ impl ErrorExt for std::io::Error {
             },
             None => self.to_string().into(),
         }
+    }
+
+    #[inline]
+    fn err_clone(&self) -> std::io::Error {
+        Error::from(self).into()
     }
 }
 

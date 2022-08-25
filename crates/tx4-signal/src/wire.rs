@@ -46,7 +46,17 @@ pub enum SrvWire {
         rem_pub: BinDataSized<32>,
 
         /// The data to be forwarded / that has been forwarded.
-        data: BinData,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+
+    /// As a standin for bootstrapping, clients may trigger "demo" broadcasts
+    /// announcing themselves to everyone else connected on the signal server.
+    /// If "demo" mode is not enabled, sending a demo command may cause a ban.
+    #[serde(rename_all = "camelCase")]
+    DemoV1 {
+        /// The client pub key to announce.
+        rem_pub: BinDataSized<32>,
     },
 }
 

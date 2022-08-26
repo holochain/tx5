@@ -2268,6 +2268,10 @@ dependencies = [
 [[package]]
 name = "tx4-core"
 version = "0.0.1"
+dependencies = [
+ "base64",
+ "serde",
+]
 
 [[package]]
 name = "tx4-demo"

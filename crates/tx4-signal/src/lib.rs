@@ -15,78 +15,7 @@
 #[doc(inline)]
 pub use tx4_core::*;
 
-use std::sync::Arc;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
-
-/// Hc-rtc-sig identifier.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Id(pub [u8; 32]);
-
-impl std::fmt::Debug for Id {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut a = self.to_b64();
-        a.replace_range(8..a.len() - 8, "..");
-        f.write_str(&a)
-    }
-}
-
-impl std::fmt::Display for Id {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_b64())
-    }
-}
-
-impl std::ops::Deref for Id {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0[..]
-    }
-}
-
-impl AsRef<[u8]> for Id {
-    fn as_ref(&self) -> &[u8] {
-        &self.0[..]
-    }
-}
-
-impl From<&Id> for lair_keystore_api::encoding_types::BinDataSized<32> {
-    #[inline]
-    fn from(id: &Id) -> Self {
-        Self(Arc::new(id.0))
-    }
-}
-
-impl From<Id> for lair_keystore_api::encoding_types::BinDataSized<32> {
-    #[inline]
-    fn from(id: Id) -> Self {
-        (&id).into()
-    }
-}
-
-impl Id {
-    /// Load from a slice.
-    pub fn from_slice(s: &[u8]) -> Result<Arc<Self>> {
-        if s.len() != 32 {
-            return Err(Error::id("InvalidIdLength"));
-        }
-        let mut out = [0; 32];
-        out.copy_from_slice(s);
-        Ok(Arc::new(Self(out)))
-    }
-
-    /// Decode a base64 encoded Id.
-    pub fn from_b64(s: &str) -> Result<Arc<Self>> {
-        let v = base64::decode_config(s, base64::URL_SAFE_NO_PAD)
-            .map_err(Error::err)?;
-        Self::from_slice(&v)
-    }
-
-    /// Encode a Id as base64.
-    pub fn to_b64(&self) -> String {
-        base64::encode_config(self, base64::URL_SAFE_NO_PAD)
-    }
-}
 
 pub mod wire;
 
@@ -110,7 +39,7 @@ const FORWARD: &[u8] = b"hrsF";
 const DEMO: &[u8] = b"hrsD";
 
 /// Extract a signal id from an hc-rtc-sig client address url.
-pub fn signal_id_from_addr(addr: &url::Url) -> Result<Arc<Id>> {
+pub fn signal_id_from_addr(addr: &url::Url) -> Result<Id> {
     for (k, v) in addr.query_pairs() {
         if k == "i" {
             return Id::from_b64(&v);
@@ -120,7 +49,7 @@ pub fn signal_id_from_addr(addr: &url::Url) -> Result<Arc<Id>> {
 }
 
 /// Extract an x25519 pk from an hc-rtc-sig client address url.
-pub fn pk_from_addr(addr: &url::Url) -> Result<Arc<Id>> {
+pub fn pk_from_addr(addr: &url::Url) -> Result<Id> {
     for (k, v) in addr.query_pairs() {
         if k == "x" {
             return Id::from_b64(&v);

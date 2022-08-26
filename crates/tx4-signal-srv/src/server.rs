@@ -245,9 +245,9 @@ type DataSend =
 
 enum SrvCmd {
     Shutdown,
-    Register(Arc<Id>, DataSend, OneSend<Result<()>>),
-    Unregister(Arc<Id>, OneSend<Result<()>>),
-    Forward(Arc<Id>, Vec<u8>, OneSend<Result<OneRecv<Result<()>>>>),
+    Register(Id, DataSend, OneSend<Result<()>>),
+    Unregister(Id, OneSend<Result<()>>),
+    Forward(Id, Vec<u8>, OneSend<Result<OneRecv<Result<()>>>>),
     Broadcast(Vec<u8>),
 }
 
@@ -271,7 +271,7 @@ impl SrvHnd {
 
     pub async fn register(
         &self,
-        id: Arc<Id>,
+        id: Id,
         data_send: DataSend,
     ) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
@@ -281,7 +281,7 @@ impl SrvHnd {
         r.await.map_err(|_| Error::id(E_SERVER_SHUTDOWN))?
     }
 
-    pub async fn unregister(&self, id: Arc<Id>) -> Result<()> {
+    pub async fn unregister(&self, id: Id) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
         if self.0.send(SrvCmd::Unregister(id, s)).is_err() {
             return Err(Error::id(E_SERVER_SHUTDOWN));
@@ -291,7 +291,7 @@ impl SrvHnd {
 
     pub async fn forward(
         &self,
-        id: Arc<Id>,
+        id: Id,
         data: Vec<u8>,
     ) -> Result<OneRecv<Result<()>>> {
         let (s, r) = tokio::sync::oneshot::channel();
@@ -307,7 +307,7 @@ impl SrvHnd {
 }
 
 struct Srv {
-    cons: HashMap<Arc<Id>, DataSend>,
+    cons: HashMap<Id, DataSend>,
 }
 
 impl Srv {
@@ -353,19 +353,19 @@ impl Srv {
         true
     }
 
-    fn register(&mut self, id: Arc<Id>, data_send: DataSend) -> Result<()> {
+    fn register(&mut self, id: Id, data_send: DataSend) -> Result<()> {
         self.cons.insert(id, data_send);
         Ok(())
     }
 
-    fn unregister(&mut self, id: Arc<Id>) -> Result<()> {
+    fn unregister(&mut self, id: Id) -> Result<()> {
         self.cons.remove(&id);
         Ok(())
     }
 
     fn forward(
         &mut self,
-        id: Arc<Id>,
+        id: Id,
         data: Vec<u8>,
     ) -> Result<OneRecv<Result<()>>> {
         if let Some(data_send) = self.cons.get(&id) {

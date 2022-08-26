@@ -17,9 +17,9 @@ pub enum SigMessage {
     /// An incoming webrtc "offer".
     Offer {
         /// Remote signal id.
-        rem_id: Arc<Id>,
+        rem_id: Id,
         /// Remote x25519 public key.
-        rem_pk: Arc<Id>,
+        rem_pk: Id,
         /// The webrtc "offer".
         offer: serde_json::Value,
     },
@@ -27,9 +27,9 @@ pub enum SigMessage {
     /// An incoming webrtc "answer".
     Answer {
         /// Remote signal id.
-        rem_id: Arc<Id>,
+        rem_id: Id,
         /// Remote x25519 public key.
-        rem_pk: Arc<Id>,
+        rem_pk: Id,
         /// The webrtc "answer".
         answer: serde_json::Value,
     },
@@ -37,9 +37,9 @@ pub enum SigMessage {
     /// An incoming webrtc ICE candidate.
     ICE {
         /// Remote signal id.
-        rem_id: Arc<Id>,
+        rem_id: Id,
         /// Remote x25519 public key.
-        rem_pk: Arc<Id>,
+        rem_pk: Id,
         /// The webrtc "answer".
         ice: serde_json::Value,
     },
@@ -47,9 +47,9 @@ pub enum SigMessage {
     /// An incoming demo broadcast.
     Demo {
         /// Remote signal id.
-        rem_id: Arc<Id>,
+        rem_id: Id,
         /// Remote x25519 public key.
-        rem_pk: Arc<Id>,
+        rem_pk: Id,
     },
 }
 
@@ -155,7 +155,7 @@ pub struct Cli {
     addr: url::Url,
     ice_servers: serde_json::Value,
     sink: futures::stream::SplitSink<Socket, Message>,
-    loc_pk: Arc<Id>,
+    loc_pk: Id,
     lair_client: LairClient,
 }
 
@@ -257,8 +257,8 @@ impl Cli {
         let (nonce, cipher) = self
             .lair_client
             .crypto_box_xsalsa_by_pub_key(
-                (&*self.loc_pk).into(),
-                rem_pk.into(),
+                (*self.loc_pk).into(),
+                (**rem_pk).into(),
                 None,
                 msg.into(),
             )
@@ -268,7 +268,7 @@ impl Cli {
             FORWARD.len() + 32 + 32 + nonce.len() + cipher.len(),
         );
         out.extend_from_slice(FORWARD);
-        out.extend_from_slice(rem_id);
+        out.extend_from_slice(&rem_id[..]);
         out.extend_from_slice(&*self.loc_pk);
         out.extend_from_slice(&nonce[..]);
         out.extend_from_slice(&*cipher);
@@ -456,7 +456,7 @@ impl Cli {
 async fn con_recv_task(
     mut stream: futures::stream::SplitStream<Socket>,
     lair_client: LairClient,
-    x25519_pub: Arc<Id>,
+    x25519_pub: Id,
     mut recv_cb: RecvCb,
 ) -> Result<()> {
     while let Some(msg) = stream.next().await {
@@ -500,8 +500,8 @@ async fn con_recv_task(
 
         let msg = lair_client
             .crypto_box_xsalsa_open_by_pub_key(
-                (&*rem_pk).into(),
-                (&*x25519_pub).into(),
+                (*rem_pk).into(),
+                (*x25519_pub).into(),
                 None,
                 nonce,
                 cipher,

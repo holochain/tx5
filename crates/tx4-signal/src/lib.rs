@@ -12,54 +12,22 @@
 //! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 //!
 
-#[doc(inline)]
-pub use tx4_core::*;
+/// Re-exported dependencies.
+pub mod deps {
+    pub use tx4_core::deps::*;
+}
+
+use deps::*;
+
+pub use tx4_core::{Error, ErrorExt, Id, Result};
 
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-const AUTH: &[u8] = b"tx4A";
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct WireAuth<'lt>(
-    #[serde(with = "serde_bytes")] pub &'lt [u8], // AUTH
-    #[serde(with = "serde_bytes")] pub &'lt [u8], // SEAL
-    #[serde(with = "serde_bytes")] pub &'lt [u8], // ICE
-);
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct WireAuthRes<'lt>(
-    #[serde(with = "serde_bytes")] pub &'lt [u8], // AUTH
-    #[serde(with = "serde_bytes")] pub &'lt [u8], // con_key
-    pub bool,                                     // REG
-);
-
-const FORWARD: &[u8] = b"hrsF";
-const DEMO: &[u8] = b"hrsD";
-
-/// Extract a signal id from an hc-rtc-sig client address url.
-pub fn signal_id_from_addr(addr: &url::Url) -> Result<Id> {
-    for (k, v) in addr.query_pairs() {
-        if k == "i" {
-            return Id::from_b64(&v);
-        }
-    }
-    Err(Error::id("InvalidUrl"))
-}
-
-/// Extract an x25519 pk from an hc-rtc-sig client address url.
-pub fn pk_from_addr(addr: &url::Url) -> Result<Id> {
-    for (k, v) in addr.query_pairs() {
-        if k == "x" {
-            return Id::from_b64(&v);
-        }
-    }
-    Err(Error::id("InvalidUrl"))
-}
-
+#[allow(dead_code)]
 pub(crate) static WS_CONFIG: WebSocketConfig = WebSocketConfig {
-    max_send_queue: Some(32),
-    max_message_size: Some(2048),
-    max_frame_size: Some(2048),
+    max_send_queue: Some(tx4_core::ws::MAX_SEND_QUEUE),
+    max_message_size: Some(tx4_core::ws::MAX_MESSAGE_SIZE),
+    max_frame_size: Some(tx4_core::ws::MAX_FRAME_SIZE),
     accept_unmasked_frames: false,
 };
 
@@ -84,10 +52,12 @@ pub(crate) fn tcp_configure(
     tokio::net::TcpStream::from_std(socket)
 }
 
-pub mod cli;
+mod cli;
+pub use cli::*;
+
 //pub mod srv;
 pub mod tls;
-pub mod util;
+//pub mod util;
 
 /*
 #[cfg(test)]

@@ -369,12 +369,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f107b87b6afc2a64fd13cac55fe06d6c8859f12d4b14cbcdd2c67d0976781be"
 
 [[package]]
-name = "event-listener"
-version = "2.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77f3309417938f28bf8228fcff79a4a37103981e3e186d2ccd19c74b38f4eb71"
-
-[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -622,7 +616,7 @@ checksum = "93ef427c4f865071cfc85a7741482ecb54cce07059fa2b6a8bdd928fedd68b11"
 dependencies = [
  "futures",
  "one_err",
- "rmp-serde 0.15.5",
+ "rmp-serde",
  "rmpv",
  "serde",
  "serde_bytes",
@@ -1556,17 +1550,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rmp-serde"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25786b0d276110195fa3d6f3f31299900cf71dfbd6c28450f3f58a0e7f7a347e"
-dependencies = [
- "byteorder",
- "rmp",
- "serde",
-]
-
-[[package]]
 name = "rmpv"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1629,9 +1612,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pemfile"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7522c9de787ff061458fe9a829dc790a3f5b22dc571694fc5883f448b94d9a9"
+checksum = "0864aeff53f8c05aa08d86e5ef839d3dfcf07aeba2db32f12db0ef716e87bd55"
 dependencies = [
  "base64",
 ]
@@ -1682,9 +1665,9 @@ dependencies = [
 
 [[package]]
 name = "security-framework"
-version = "2.6.1"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dc14f172faf8a0194a3aded622712b0de276821addc574fa54fc0a1167e10dc"
+checksum = "2bc1bb97804af6631813c55739f771071e0f2ed33ee20b68c86ec505d906356c"
 dependencies = [
  "bitflags",
  "core-foundation",
@@ -2039,9 +2022,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.11"
+version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72c91f41dcb2f096c05f0873d667dceec1087ce5bcf984ec8ffb19acddbb3217"
+checksum = "3c3f9a28b618c3a6b9251b6908e9c99e04b9e5c02e6581ccbb67d59c34ef7f9b"
 dependencies = [
  "libc",
  "num_threads",
@@ -2137,8 +2120,12 @@ checksum = "f714dd15bead90401d77e04243611caec13726c2408afd5b31901dfcdcb3b181"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-native-certs",
  "tokio",
+ "tokio-rustls",
  "tungstenite 0.17.3",
+ "webpki",
 ]
 
 [[package]]
@@ -2317,10 +2304,12 @@ dependencies = [
  "httparse",
  "log",
  "rand",
+ "rustls",
  "sha-1 0.10.0",
  "thiserror",
  "url",
  "utf-8",
+ "webpki",
 ]
 
 [[package]]
@@ -2387,26 +2376,17 @@ dependencies = [
 name = "tx4-signal"
 version = "0.0.1"
 dependencies = [
- "base64",
- "event-listener",
  "futures",
  "lair_keystore_api",
  "once_cell",
- "parking_lot 0.12.1",
- "rand",
  "rand-utf8",
  "rcgen 0.9.3",
  "ring",
- "rmp-serde 1.1.0",
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile",
- "serde",
- "serde_bytes",
- "serde_json",
  "sha2",
  "socket2",
- "sodoken",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite 0.17.2",

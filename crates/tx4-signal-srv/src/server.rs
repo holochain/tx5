@@ -31,14 +31,17 @@ pub fn exec_tx4_signal_srv(
             };
             let ice_servers = ice_servers.clone();
             let srv_hnd = srv_hnd.clone();
-            ws.on_upgrade(move |ws| async move {
-                if let Err(err) =
-                    client_task(ws, client_pub, ice_servers, srv_hnd).await
-                {
-                    tracing::debug!(?err);
-                }
-            })
-            .into_response()
+            ws.max_send_queue(tx4_core::ws::MAX_SEND_QUEUE)
+                .max_message_size(tx4_core::ws::MAX_MESSAGE_SIZE)
+                .max_frame_size(tx4_core::ws::MAX_FRAME_SIZE)
+                .on_upgrade(move |ws| async move {
+                    if let Err(err) =
+                        client_task(ws, client_pub, ice_servers, srv_hnd).await
+                    {
+                        tracing::debug!(?err);
+                    }
+                })
+                .into_response()
         })
         .with(warp::trace::named("tx4-ws"));
 

@@ -1,63 +1,21 @@
-//! Server-side connection types.
-
 use crate::*;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use lair_keystore_api::prelude::*;
+use std::future::Future;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
+use tx4_core::wire;
 
 type Socket = tokio_tungstenite::WebSocketStream<
-    tokio_rustls::TlsStream<tokio::net::TcpStream>,
+    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
 
-/// A message received from the remote.
-#[derive(Debug)]
-pub enum SigMessage {
-    /// An incoming webrtc "offer".
-    Offer {
-        /// Remote signal id.
-        rem_id: Id,
-        /// Remote x25519 public key.
-        rem_pk: Id,
-        /// The webrtc "offer".
-        offer: serde_json::Value,
-    },
-
-    /// An incoming webrtc "answer".
-    Answer {
-        /// Remote signal id.
-        rem_id: Id,
-        /// Remote x25519 public key.
-        rem_pk: Id,
-        /// The webrtc "answer".
-        answer: serde_json::Value,
-    },
-
-    /// An incoming webrtc ICE candidate.
-    ICE {
-        /// Remote signal id.
-        rem_id: Id,
-        /// Remote x25519 public key.
-        rem_pk: Id,
-        /// The webrtc "answer".
-        ice: serde_json::Value,
-    },
-
-    /// An incoming demo broadcast.
-    Demo {
-        /// Remote signal id.
-        rem_id: Id,
-        /// Remote x25519 public key.
-        rem_pk: Id,
-    },
-}
-
-type RecvCb = Box<dyn FnMut(SigMessage) + 'static + Send>;
+type RecvCb = Box<dyn FnMut(wire::Wire) + 'static + Send>;
 
 /// Builder for constructing a Cli instance.
 pub struct CliBuilder {
-    tls: tls::TlsConfig,
+    tls: Option<tls::TlsConfig>,
     recv_cb: RecvCb,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
@@ -66,9 +24,8 @@ pub struct CliBuilder {
 
 impl Default for CliBuilder {
     fn default() -> Self {
-        let tls = tls::TlsConfigBuilder::default().build().unwrap();
         Self {
-            tls,
+            tls: None,
             recv_cb: Box::new(|_| {}),
             lair_client: None,
             lair_tag: None,
@@ -79,12 +36,12 @@ impl Default for CliBuilder {
 
 impl CliBuilder {
     /// Set the TlsConfig.
-    pub fn set_tls(&mut self, tls: tls::TlsConfig) {
+    pub fn set_tls(&mut self, tls: Option<tls::TlsConfig>) {
         self.tls = tls;
     }
 
     /// Apply a TlsConfig.
-    pub fn with_tls(mut self, tls: tls::TlsConfig) -> Self {
+    pub fn with_tls(mut self, tls: Option<tls::TlsConfig>) -> Self {
         self.set_tls(tls);
         self
     }
@@ -92,7 +49,7 @@ impl CliBuilder {
     /// Set the receiver callback.
     pub fn set_recv_cb<Cb>(&mut self, cb: Cb)
     where
-        Cb: FnMut(SigMessage) + 'static + Send,
+        Cb: FnMut(wire::Wire) + 'static + Send,
     {
         self.recv_cb = Box::new(cb);
     }
@@ -100,7 +57,7 @@ impl CliBuilder {
     /// Apply the receiver callback.
     pub fn with_recv_cb<Cb>(mut self, cb: Cb) -> Self
     where
-        Cb: FnMut(SigMessage) + 'static + Send,
+        Cb: FnMut(wire::Wire) + 'static + Send,
     {
         self.set_recv_cb(cb);
         self
@@ -145,23 +102,27 @@ impl CliBuilder {
     }
 }
 
-const OFFER: u8 = 1;
-const ANSWER: u8 = 2;
-const ICE: u8 = 3;
+type WriteSend = tokio::sync::mpsc::Sender<(
+    Vec<u8>,
+    tokio::sync::oneshot::Sender<Result<()>>,
+)>;
 
-/// Server-side connection type.
+type WriteRecv = tokio::sync::mpsc::Receiver<(
+    Vec<u8>,
+    tokio::sync::oneshot::Sender<Result<()>>,
+)>;
+
+/// Tx4-signal client connection type.
 pub struct Cli {
-    con_term: util::Term,
     addr: url::Url,
-    ice_servers: serde_json::Value,
-    sink: futures::stream::SplitSink<Socket, Message>,
-    loc_pk: Id,
-    lair_client: LairClient,
+    hnd: tokio::task::JoinHandle<()>,
+    ice: serde_json::Value,
+    write_send: WriteSend,
 }
 
 impl Drop for Cli {
     fn drop(&mut self) {
-        self.con_term.term();
+        self.close();
     }
 }
 
@@ -173,7 +134,7 @@ impl Cli {
 
     /// Shutdown this client instance.
     pub fn close(&self) {
-        self.con_term.term();
+        self.hnd.abort();
     }
 
     /// Get the addr this cli can be reached at through the signal server.
@@ -183,101 +144,27 @@ impl Cli {
 
     /// Get the ice server list provided by the server.
     pub fn ice_servers(&self) -> &serde_json::Value {
-        &self.ice_servers
+        &self.ice
     }
 
-    /// Make a webrtc offer to a remote peer.
-    pub async fn offer<S>(
-        &mut self,
-        rem_id: &Id,
-        rem_pk: &Id,
-        offer: &S,
-    ) -> Result<()>
-    where
-        S: ?Sized + serde::Serialize,
-    {
-        let offer = serde_json::to_string(offer)?;
-        self.send(rem_id, rem_pk, OFFER, offer.as_bytes()).await
-    }
-
-    /// Send a webrtc answer to a remote peer.
-    pub async fn answer<S>(
-        &mut self,
-        rem_id: &Id,
-        rem_pk: &Id,
-        answer: &S,
-    ) -> Result<()>
-    where
-        S: ?Sized + serde::Serialize,
-    {
-        let answer = serde_json::to_string(answer)?;
-        self.send(rem_id, rem_pk, ANSWER, answer.as_bytes()).await
-    }
-
-    /// Send a webrtc ice candidate to a remote peer.
-    pub async fn ice<S>(
-        &mut self,
-        rem_id: &Id,
-        rem_pk: &Id,
-        ice: &S,
-    ) -> Result<()>
-    where
-        S: ?Sized + serde::Serialize,
-    {
-        let ice = serde_json::to_string(ice)?;
-        self.send(rem_id, rem_pk, ICE, ice.as_bytes()).await
-    }
-
-    /// Send a demo broadcast message to the server.
-    /// (If server doesn't allow demo mode, this could get you banned).
-    pub async fn demo(&mut self) -> Result<()> {
-        let mut out = Vec::with_capacity(DEMO.len() + 32);
-        out.extend_from_slice(DEMO);
-        out.extend_from_slice(&*self.loc_pk);
-
-        self.sink
-            .send(Message::Binary(out))
-            .await
-            .map_err(Error::err)
+    /// Send a message to the tx4-signal server.
+    pub fn send(
+        &self,
+        wire: wire::Wire,
+    ) -> impl Future<Output = Result<()>> + 'static + Send {
+        let write_send = self.write_send.clone();
+        async move {
+            let wire = wire.encode()?;
+            let (s, r) = tokio::sync::oneshot::channel();
+            write_send
+                .send((wire, s))
+                .await
+                .map_err(|_| Error::id("ClientClosed"))?;
+            r.await.map_err(|_| Error::id("ClientClosed"))?
+        }
     }
 
     // -- private -- //
-
-    async fn send(
-        &mut self,
-        rem_id: &Id,
-        rem_pk: &Id,
-        kind: u8,
-        data: &[u8],
-    ) -> Result<()> {
-        let mut msg = Vec::with_capacity(1 + data.len());
-        msg.push(kind);
-        msg.extend_from_slice(data);
-
-        let (nonce, cipher) = self
-            .lair_client
-            .crypto_box_xsalsa_by_pub_key(
-                (*self.loc_pk).into(),
-                (**rem_pk).into(),
-                None,
-                msg.into(),
-            )
-            .await?;
-
-        let mut out = Vec::with_capacity(
-            FORWARD.len() + 32 + 32 + nonce.len() + cipher.len(),
-        );
-        out.extend_from_slice(FORWARD);
-        out.extend_from_slice(&rem_id[..]);
-        out.extend_from_slice(&*self.loc_pk);
-        out.extend_from_slice(&nonce[..]);
-        out.extend_from_slice(&*cipher);
-
-        self.sink
-            .send(Message::Binary(out))
-            .await
-            .map_err(Error::err)
-    }
 
     async fn priv_build(builder: CliBuilder) -> Result<Self> {
         let CliBuilder {
@@ -310,14 +197,22 @@ impl Cli {
             _ => return Err(Error::err("lair_tag invalid seed")),
         };
 
-        tracing::debug!(?x25519_pub);
+        let use_tls = match url.scheme() {
+            "ws" => false,
+            "wss" => true,
+            _ => {
+                return Err(Error::err(format!(
+                    "invalid scheme, expected \"ws\" or \"wss\", got {:?}",
+                    url.scheme()
+                )));
+            }
+        };
 
-        if url.scheme() != "wss" {
-            return Err(Error::err(format!(
-                "invalid scheme, expected \"wss\", got {:?}",
-                url.scheme()
-            )));
+        if use_tls && tls.is_none() {
+            return Err(Error::err("tls required but no tls config supplied"));
         }
+
+        tracing::debug!(?use_tls, %url, ?x25519_pub);
 
         let host = match url.host_str() {
             None => return Err(Error::id("InvalidHost")),
@@ -326,216 +221,187 @@ impl Cli {
 
         let port = url.port().unwrap_or(443);
 
+        let endpoint = format!("{}:{}", host, port);
+
+        let con_url = if use_tls {
+            format!("wss://{}/{}", endpoint, x25519_pub)
+        } else {
+            format!("ws://{}/{}", endpoint, x25519_pub)
+        };
+
         let mut err_list = Vec::new();
         let mut result_socket = None;
 
-        'connect_loop: for addr in
-            tokio::net::lookup_host(format!("{}:{}", host, port)).await?
-        {
-            tracing::debug!(?addr, "try connect");
-
-            let socket = match tokio::net::TcpStream::connect(addr).await {
-                Ok(socket) => socket,
+        for addr in tokio::net::lookup_host(&endpoint).await? {
+            match Self::priv_con(use_tls, &tls, &host, &con_url, addr).await {
+                Ok(con) => {
+                    result_socket = Some(con);
+                    break;
+                }
                 Err(err) => {
-                    err_list.push(err);
+                    err_list.push(format!("{:?}", err));
                     continue;
                 }
-            };
-
-            let socket = match tcp_configure(socket) {
-                Ok(socket) => socket,
-                Err(err) => {
-                    err_list.push(err);
-                    continue;
-                }
-            };
-
-            let name = host
-                .try_into()
-                .unwrap_or_else(|_| "tx4-signal".try_into().unwrap());
-
-            let socket: tokio_rustls::TlsStream<tokio::net::TcpStream> =
-                match tokio_rustls::TlsConnector::from(tls.cli.clone())
-                    .connect(name, socket)
-                    .await
-                {
-                    Ok(socket) => socket.into(),
-                    Err(err) => {
-                        err_list.push(err);
-                        continue;
-                    }
-                };
-
-            let (socket, _rsp) =
-                match tokio_tungstenite::client_async_with_config(
-                    format!("wss://{}:{}/{}", host, port, x25519_pub,),
-                    socket,
-                    Some(WS_CONFIG),
-                )
-                .await
-                .map_err(Error::err)
-                {
-                    Ok(r) => r,
-                    Err(err) => {
-                        err_list.push(err);
-                        continue;
-                    }
-                };
-
-            result_socket = Some(socket);
-            break 'connect_loop;
+            }
         }
 
-        let socket = match result_socket {
+        let mut socket = match result_socket {
             Some(socket) => socket,
             None => return Err(Error::err(format!("{:?}", err_list))),
         };
 
-        let (mut sink, mut stream) = socket.split();
-
-        let ice_servers = match stream.next().await {
-            Some(Ok(Message::Binary(data))) => {
-                let auth: WireAuth =
-                    rmp_serde::from_slice(&data).map_err(Error::err)?;
-
-                if auth.0 != AUTH {
-                    return Err(Error::id("InvalidAuth"));
-                }
-
-                let ice: serde_json::Value = serde_json::from_slice(auth.2)?;
-
-                // TODO - open seal con key, for now just zeroes
-                let con_key = vec![0; 32];
-
-                let auth = rmp_serde::to_vec(&WireAuthRes(
-                    AUTH, &con_key, true, // just always REG for now
-                ))
-                .map_err(Error::err)?;
-
-                sink.send(Message::Binary(auth)).await.map_err(Error::err)?;
-
-                tracing::debug!(?con_key, %ice);
-                ice
-            }
-            _ => return Err(Error::id("InvalidAuth")),
+        let auth_req = match socket.next().await {
+            Some(Ok(auth_req)) => auth_req.into_data(),
+            Some(Err(err)) => return Err(Error::err(err)),
+            None => return Err(Error::id("InvalidServerAuthReq")),
         };
 
-        let con_term = util::Term::new("con_term", None);
+        let (srv_pub, nonce, cipher, ice) = match wire::Wire::decode(&auth_req)?
+        {
+            wire::Wire::AuthReqV1 {
+                srv_pub,
+                nonce,
+                cipher,
+                ice,
+            } => (srv_pub, nonce, cipher, ice),
+            _ => return Err(Error::id("InvalidServerAuthReq")),
+        };
 
-        con_term.spawn_err(
-            con_recv_task(stream, lair_client.clone(), x25519_pub, recv_cb),
-            |err| {
-                tracing::debug!("ConRecvError: {:?}", err);
-            },
-        );
+        let con_key = lair_client
+            .crypto_box_xsalsa_open_by_pub_key(
+                srv_pub.0.into(),
+                x25519_pub.0.into(),
+                None,
+                nonce.0.into(),
+                cipher.0.into(),
+            )
+            .await?;
 
-        let url = url::Url::parse(&format!(
-            "wss://{}:{}/{}",
-            host, port, x25519_pub,
-        ))
-        .map_err(Error::err)?;
+        socket
+            .send(Message::binary(
+                wire::Wire::AuthResV1 {
+                    con_key: Id::from_slice(&con_key)?,
+                    req_addr: true,
+                }
+                .encode()?,
+            ))
+            .await
+            .map_err(Error::err)?;
+
+        let url = url::Url::parse(&con_url).map_err(Error::err)?;
 
         tracing::debug!(%url);
 
+        let (write_send, write_recv) = tokio::sync::mpsc::channel(1);
+
+        let hnd = tokio::task::spawn(con_task(socket, recv_cb, write_recv));
+
         Ok(Self {
-            con_term,
             addr: url,
-            ice_servers,
-            sink,
-            loc_pk: x25519_pub,
-            lair_client,
+            hnd,
+            ice,
+            write_send,
         })
+    }
+
+    async fn priv_con(
+        use_tls: bool,
+        tls: &Option<crate::tls::TlsConfig>,
+        host: &str,
+        con_url: &str,
+        addr: std::net::SocketAddr,
+    ) -> Result<Socket> {
+        tracing::debug!(?addr, "try connect");
+
+        let socket = match tokio::net::TcpStream::connect(addr).await {
+            Ok(socket) => socket,
+            Err(err) => return Err(err),
+        };
+
+        let socket = match tcp_configure(socket) {
+            Ok(socket) => socket,
+            Err(err) => return Err(err),
+        };
+
+        let socket: tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream> =
+            if use_tls {
+                let name = host
+                    .try_into()
+                    .unwrap_or_else(|_| "tx4-signal".try_into().unwrap());
+
+                let socket = match tokio_rustls::TlsConnector::from(
+                    tls.as_ref().unwrap().cli.clone(),
+                )
+                .connect(name, socket)
+                .await
+                {
+                    Ok(socket) => socket.into(),
+                    Err(err) => return Err(err),
+                };
+
+                tokio_tungstenite::MaybeTlsStream::Rustls(socket)
+            } else {
+                tokio_tungstenite::MaybeTlsStream::Plain(socket)
+            };
+
+        let (socket, _rsp) = match tokio_tungstenite::client_async_with_config(
+            con_url,
+            socket,
+            Some(WS_CONFIG),
+        )
+        .await
+        .map_err(Error::err)
+        {
+            Ok(r) => r,
+            Err(err) => return Err(err),
+        };
+
+        Ok(socket)
     }
 }
 
-async fn con_recv_task(
-    mut stream: futures::stream::SplitStream<Socket>,
-    lair_client: LairClient,
-    x25519_pub: Id,
-    mut recv_cb: RecvCb,
-) -> Result<()> {
-    while let Some(msg) = stream.next().await {
-        let bin_data: Vec<u8> = match msg.map_err(Error::err)? {
-            Message::Text(data) => data.into_bytes(),
-            Message::Binary(data) => data,
-            Message::Ping(data) => data,
-            Message::Pong(data) => data,
-            Message::Close(close) => {
-                return Err(Error::err(format!("{:?}", close)));
-            }
-            Message::Frame(_) => return Err(Error::id("RawFrame")),
-        };
-
-        if bin_data.len() == 4 + 32 + 32 && &bin_data[0..4] == DEMO {
-            let rem_id = Id::from_slice(&bin_data[4..36])?;
-            let rem_pk = Id::from_slice(&bin_data[36..68])?;
-            recv_cb(SigMessage::Demo { rem_id, rem_pk });
-            continue;
-        }
-
-        if bin_data.len()
-            < FORWARD.len()
-                + 32
-                + 32
-                + 24
-                + sodoken::crypto_box::curve25519xsalsa20poly1305::MACBYTES
-        {
-            return Err(Error::id("InvalidMsg"));
-        }
-
-        if &bin_data[0..4] != FORWARD {
-            return Err(Error::id("InvalidMsg"));
-        }
-
-        let rem_id = Id::from_slice(&bin_data[4..36])?;
-        let rem_pk = Id::from_slice(&bin_data[36..68])?;
-        let mut nonce = [0; 24];
-        nonce.copy_from_slice(&bin_data[68..92]);
-        let cipher = bin_data[92..].to_vec().into();
-
-        let msg = lair_client
-            .crypto_box_xsalsa_open_by_pub_key(
-                (*rem_pk).into(),
-                (*x25519_pub).into(),
-                None,
-                nonce,
-                cipher,
-            )
-            .await?;
-        match msg[0] {
-            OFFER => {
-                let offer: serde_json::Value =
-                    serde_json::from_slice(&msg[1..])?;
-                let offer = SigMessage::Offer {
-                    rem_id,
-                    rem_pk,
-                    offer,
-                };
-                recv_cb(offer);
-            }
-            ANSWER => {
-                let answer: serde_json::Value =
-                    serde_json::from_slice(&msg[1..])?;
-                let answer = SigMessage::Answer {
-                    rem_id,
-                    rem_pk,
-                    answer,
-                };
-                recv_cb(answer);
-            }
-            ICE => {
-                let ice: serde_json::Value = serde_json::from_slice(&msg[1..])?;
-                let ice = SigMessage::ICE {
-                    rem_id,
-                    rem_pk,
-                    ice,
-                };
-                recv_cb(ice);
-            }
-            _ => return Err(Error::id("InvalidMsgKind")),
-        }
+async fn con_task(socket: Socket, recv_cb: RecvCb, write_recv: WriteRecv) {
+    if let Err(err) = con_task_err(socket, recv_cb, write_recv).await {
+        tracing::error!(?err);
     }
+}
 
-    // always error on end so our term is called
-    Err(Error::id("ConClose"))
+async fn con_task_err(
+    socket: Socket,
+    mut recv_cb: RecvCb,
+    mut write_recv: WriteRecv,
+) -> Result<()> {
+    let (mut write, mut read) = socket.split();
+
+    tokio::select! {
+        r = async move {
+            while let Some(msg) = read.next().await {
+                let msg = msg.map_err(Error::err)?.into_data();
+                match wire::Wire::decode(&msg)? {
+                    msg @ wire::Wire::OfferV1 { .. } |
+                        msg @ wire::Wire::AnswerV1 { .. } |
+                        msg @ wire::Wire::IceV1 { .. } |
+                        msg @ wire::Wire::DemoV1 { .. }
+                    => {
+                        recv_cb(msg)
+                    }
+                    _ => return Err(Error::id("InvalidClientMsg")),
+                }
+            }
+
+            Ok(())
+        } => r,
+
+        r = async move {
+            while let Some((msg, resp)) = write_recv.recv().await {
+                if let Err(err) = write.send(Message::binary(msg)).await.map_err(Error::err) {
+                    let _ = resp.send(Err(err.err_clone()));
+                    return Err(err);
+                }
+                let _ = resp.send(Ok(()));
+            }
+
+            Ok(())
+        } => r,
+    }
 }

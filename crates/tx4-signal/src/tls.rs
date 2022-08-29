@@ -170,7 +170,7 @@ impl TlsConfigBuilder {
 
         let mut digest = sha2::Sha256::new();
         digest.update(&cert.0);
-        let digest = Arc::new(Id(digest.finalize().into()));
+        let digest = Id(digest.finalize().into());
 
         let cert = rustls::Certificate(cert.to_der()?);
         let pk = rustls::PrivateKey(pk.to_der()?);
@@ -233,8 +233,9 @@ impl TlsConfigBuilder {
 pub struct TlsConfig {
     #[allow(dead_code)]
     pub(crate) srv: Arc<rustls::ServerConfig>,
+    #[allow(dead_code)]
     pub(crate) cli: Arc<rustls::ClientConfig>,
-    digest: Arc<Id>,
+    digest: Id,
 }
 
 impl std::fmt::Debug for TlsConfig {
@@ -252,7 +253,7 @@ impl TlsConfig {
     }
 
     /// Get the sha256 hash of the TLS certificate representing this server
-    pub fn cert_digest(&self) -> &Arc<Id> {
+    pub fn cert_digest(&self) -> &Id {
         &self.digest
     }
 }

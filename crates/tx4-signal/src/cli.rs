@@ -423,12 +423,7 @@ impl Cli {
         let con_term = util::Term::new("con_term", None);
 
         con_term.spawn_err(
-            con_recv_task(
-                stream,
-                lair_client.clone(),
-                x25519_pub.clone(),
-                recv_cb,
-            ),
+            con_recv_task(stream, lair_client.clone(), x25519_pub, recv_cb),
             |err| {
                 tracing::debug!("ConRecvError: {:?}", err);
             },

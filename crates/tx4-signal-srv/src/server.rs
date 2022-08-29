@@ -1,3 +1,4 @@
+use crate::deps::*;
 use crate::*;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
@@ -6,7 +7,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tx4_signal::Id;
+use tx4_core::wire;
 
 /// [exec_tx4_signal_srv] will return this driver future.
 pub type ServerDriver = std::pin::Pin<Box<dyn Future<Output = ()> + 'static>>;
@@ -131,28 +132,21 @@ async fn client_task(
                 let msg = msg.into_bytes();
                 tracing::trace!("ws recv {} bytes", msg.len());
 
-                match tx4_signal::wire::SrvWire::decode(&msg) {
+                match wire::Wire::decode(&msg) {
                     Err(err) => return Err(err),
-                    Ok(tx4_signal::wire::SrvWire::DemoV1 {
+                    Ok(wire::Wire::DemoV1 {
                         rem_pub: _,
                     }) => {
                         // TODO - pay attention to demo config flag
                         //        right now we just always honor demos
                         srv_hnd_read.broadcast(msg);
                     }
-                    Ok(tx4_signal::wire::SrvWire::FwdV1 {
-                        rem_pub,
-                        data,
-                    }) => {
-                        let data = tx4_signal::wire::SrvWire::FwdV1 {
-                            rem_pub: (client_id_read.0).into(),
-                            data,
+                    Ok(wire::Wire::OfferV1 { rem_pub, offer }) => {
+                        let data = wire::Wire::OfferV1 {
+                            rem_pub: client_id_read.clone(),
+                            offer,
                         }.encode()?;
-
-                        let dst_id = Id::from_slice(&*rem_pub)?;
-
-                        // TODO - error response if the target isn't there?
-                        match srv_hnd_read.forward(dst_id, data).await {
+                        match srv_hnd_read.forward(rem_pub, data).await {
                             Ok(fut) => {
                                 match fut.await {
                                     Ok(Ok(())) => (),
@@ -162,7 +156,39 @@ async fn client_task(
                             }
                             Err(_) => (),
                         }
-                    },
+                    }
+                    Ok(wire::Wire::AnswerV1 { rem_pub, answer }) => {
+                        let data = wire::Wire::AnswerV1 {
+                            rem_pub: client_id_read.clone(),
+                            answer,
+                        }.encode()?;
+                        match srv_hnd_read.forward(rem_pub, data).await {
+                            Ok(fut) => {
+                                match fut.await {
+                                    Ok(Ok(())) => (),
+                                    Ok(Err(_)) => (),
+                                    Err(_) => (),
+                                }
+                            }
+                            Err(_) => (),
+                        }
+                    }
+                    Ok(wire::Wire::IceV1 { rem_pub, ice }) => {
+                        let data = wire::Wire::IceV1 {
+                            rem_pub: client_id_read.clone(),
+                            ice,
+                        }.encode()?;
+                        match srv_hnd_read.forward(rem_pub, data).await {
+                            Ok(fut) => {
+                                match fut.await {
+                                    Ok(Ok(())) => (),
+                                    Ok(Err(_)) => (),
+                                    Err(_) => (),
+                                }
+                            }
+                            Err(_) => (),
+                        }
+                    }
                     _ => return Err(Error::id("InvalidClientMsg")),
                 }
             }
@@ -202,7 +228,7 @@ async fn authenticate(
     )
     .await?;
 
-    let auth_req = tx4_signal::wire::SrvWire::AuthReqV1 {
+    let auth_req = wire::Wire::AuthReqV1 {
         srv_pub: (*srv_pubkey.read_lock_sized()).into(),
         nonce: (*nonce.read_lock_sized()).into(),
         cipher: cipher.read_lock().to_vec().into_boxed_slice().into(),
@@ -220,9 +246,9 @@ async fn authenticate(
         Some(Ok(resp)) => resp.into_bytes(),
     };
 
-    match tx4_signal::wire::SrvWire::decode(&resp) {
+    match wire::Wire::decode(&resp) {
         Err(err) => return Err(err),
-        Ok(tx4_signal::wire::SrvWire::AuthResV1 {
+        Ok(wire::Wire::AuthResV1 {
             con_key,
             // TODO just registering addy for everyone right now...
             req_addr: _,
@@ -269,11 +295,7 @@ impl SrvHnd {
         self.1.abort();
     }
 
-    pub async fn register(
-        &self,
-        id: Id,
-        data_send: DataSend,
-    ) -> Result<()> {
+    pub async fn register(&self, id: Id, data_send: DataSend) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
         if self.0.send(SrvCmd::Register(id, data_send, s)).is_err() {
             return Err(Error::id(E_SERVER_SHUTDOWN));

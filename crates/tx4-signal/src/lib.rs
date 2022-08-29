@@ -17,8 +17,6 @@ pub use tx4_core::*;
 
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-pub mod wire;
-
 const AUTH: &[u8] = b"tx4A";
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -87,10 +85,11 @@ pub(crate) fn tcp_configure(
 }
 
 pub mod cli;
-pub mod srv;
+//pub mod srv;
 pub mod tls;
 pub mod util;
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,3 +301,4 @@ mod tests {
         }
     }
 }
+*/

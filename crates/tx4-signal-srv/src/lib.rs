@@ -13,8 +13,14 @@
 
 #![doc = include_str!("docs/srv_help.md")]
 
+/// Re-exported dependencies.
+pub mod deps {
+    pub use tx4_core::deps::*;
+}
+
+pub use tx4_core::{Error, ErrorExt, Id, Result};
+
 use clap::Parser;
-use tx4_signal::*;
 
 mod config;
 pub use config::*;

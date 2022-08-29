@@ -231,6 +231,7 @@ impl TlsConfigBuilder {
 /// A fully configured tls p2p session state instance
 #[derive(Clone)]
 pub struct TlsConfig {
+    #[allow(dead_code)]
     pub(crate) srv: Arc<rustls::ServerConfig>,
     pub(crate) cli: Arc<rustls::ClientConfig>,
     digest: Arc<Id>,

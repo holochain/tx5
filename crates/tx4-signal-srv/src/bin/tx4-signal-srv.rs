@@ -14,7 +14,6 @@
 #![doc = include_str!("../docs/srv_help.md")]
 
 use clap::Parser;
-use tx4_signal::*;
 use tx4_signal_srv::*;
 
 /// Main executable entrypoint.

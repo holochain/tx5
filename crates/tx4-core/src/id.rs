@@ -5,7 +5,10 @@ use crate::*;
 pub struct Id(pub [u8; 32]);
 
 impl serde::Serialize for Id {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -16,7 +19,7 @@ impl serde::Serialize for Id {
 impl<'de> serde::Deserialize<'de> for Id {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>
+        D: serde::Deserializer<'de>,
     {
         let tmp = String::deserialize(deserializer)?;
         Self::from_b64(&tmp).map_err(serde::de::Error::custom)
@@ -48,6 +51,12 @@ impl std::ops::Deref for Id {
 impl AsRef<[u8]> for Id {
     fn as_ref(&self) -> &[u8] {
         &self.0[..]
+    }
+}
+
+impl From<[u8; 32]> for Id {
+    fn from(f: [u8; 32]) -> Self {
+        Self(f)
     }
 }
 

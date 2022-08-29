@@ -11,8 +11,17 @@
 //! [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 //! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
+/// Re-exported dependencies.
+pub mod deps {
+    pub use base64;
+    pub use serde;
+    pub use serde_json;
+}
+
 mod error;
 pub use error::*;
 
 mod id;
 pub use id::*;
+
+pub mod wire;

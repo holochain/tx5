@@ -1,3 +1,4 @@
+use crate::deps::*;
 use crate::*;
 
 /// Tx4 signal server execution configuration.
@@ -28,7 +29,7 @@ macro_rules! jsdoc {
     )*}) => {
         /// Tx4-signal-srv config.
         #[derive(Debug, serde::Serialize, serde::Deserialize)]
-        #[serde(rename_all = "camelCase")]
+        #[serde(rename_all = "camelCase", crate = "crate::deps::serde")]
         #[non_exhaustive]
         pub struct $n {$(
             #[serde(default, skip_deserializing)]

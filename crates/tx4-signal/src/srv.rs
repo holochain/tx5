@@ -1,3 +1,4 @@
+/*
 //! Server-side connection types.
 
 // srv coms
@@ -384,7 +385,7 @@ async fn con_task(
         srv_seckey,
     ).await?;
 
-    let auth_req = crate::wire::SrvWire::AuthReqV1 {
+    let auth_req = crate::wire::Wire::AuthReqV1 {
         srv_pub: (*srv_pubkey.read_lock_sized()).into(),
         nonce: (*nonce.read_lock_sized()).into(),
         cipher: cipher.read_lock().to_vec().into_boxed_slice().into(),
@@ -439,17 +440,17 @@ async fn con_recv_task(
         };
 
         /*
-        let msg = crate::wire::SrvWire::decode(&bin_data)?;
+        let msg = crate::wire::Wire::decode(&bin_data)?;
 
         if need_auth_res {
             match msg {
-                crate::wire::SrvWire::AuthResV1 { con_key, req_addr } => {
+                crate::wire::Wire::AuthResV1 { con_key, req_addr } => {
                 }
                 _ => return Err(Error::id("InvalidMsg")),
             }
         } else {
             match msg {
-                crate::wire::SrvWire::FwdV1 { rem_pub, data } => {
+                crate::wire::Wire::FwdV1 { rem_pub, data } => {
                     // now replace the id with the source id
                     // so the recipient knows who it came from
                     bin_data[4..36].copy_from_slice(&id);
@@ -572,3 +573,4 @@ impl ConMap {
         }
     }
 }
+*/

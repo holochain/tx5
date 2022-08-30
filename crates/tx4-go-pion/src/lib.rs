@@ -66,6 +66,33 @@ mod tests {
 
     #[test]
     fn peer_con() {
+        let config_test = PeerConConfig {
+            ice_servers: vec![
+                IceServer {
+                    urls: vec!["stun:openrelay.metered.ca:80".into()],
+                    username: None,
+                    credential: None,
+                },
+                IceServer {
+                    urls: vec![
+                        "turn:openrelay.metered.ca:443?transport=tcp".into()
+                    ],
+                    username: Some("openrelayproject".into()),
+                    credential: Some("openrelayproject".into()),
+                },
+            ],
+        };
+        let mut config_test = config_test.try_into_go_buf().unwrap();
+        config_test
+            .access(|config_test| {
+                println!(
+                    "CONFIG TEST: {}",
+                    String::from_utf8_lossy(config_test?)
+                );
+                Ok(())
+            })
+            .unwrap();
+
         let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));
 

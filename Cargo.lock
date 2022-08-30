@@ -2356,6 +2356,7 @@ version = "0.0.1"
 dependencies = [
  "parking_lot 0.12.1",
  "tx4-go-pion-sys",
+ "url",
 ]
 
 [[package]]

@@ -13,3 +13,4 @@ categories = ["network-programming"]
 [dependencies]
 tx4-go-pion-sys = { version = "0.0.1", path = "../tx4-go-pion-sys" }
 parking_lot = "0.12.1"
+url = { version = "2.2.2", features = [ "serde" ] }

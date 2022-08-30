@@ -2,6 +2,30 @@ use crate::*;
 use std::sync::Arc;
 use tx4_go_pion_sys::API;
 
+/// ICE server configuration.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
+pub struct IceServer {
+    /// Url list.
+    pub urls: Vec<String>,
+
+    /// Optional username.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+
+    /// Optional credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+/// Configuration for a go pion webrtc PeerConnection.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
+pub struct PeerConConfig {
+    /// ICE server list.
+    pub ice_servers: Vec<IceServer>,
+}
+
 /// A go pion webrtc PeerConnection.
 #[derive(Debug)]
 pub struct PeerConnection(usize);

@@ -1,6 +1,26 @@
 use crate::*;
 use tx4_go_pion_sys::API;
 
+/// Describes a type that can be encoded into a GoBuf.
+pub trait TryIntoGoBuf {
+    /// Encode this type into a GoBuf.
+    fn try_into_go_buf(self) -> Result<GoBuf>;
+}
+
+impl TryIntoGoBuf for GoBuf {
+    fn try_into_go_buf(self) -> Result<GoBuf> {
+        Ok(self)
+    }
+}
+
+impl<T: serde::Serialize> TryIntoGoBuf for &T {
+    fn try_into_go_buf(self) -> Result<GoBuf> {
+        let mut out = GoBuf::new()?;
+        serde_json::to_writer(&mut out, self).map_err(Error::err)?;
+        Ok(out)
+    }
+}
+
 /// A bytes.Buffer managed in go memory.
 /// Rust can only access go memory safely during a callback.
 #[derive(Debug)]

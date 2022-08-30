@@ -3,6 +3,7 @@ use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use lair_keystore_api::prelude::*;
 use std::future::Future;
+use std::sync::atomic;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Message;
 use tx4_core::wire;
@@ -11,7 +12,43 @@ type Socket = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
 
-type RecvCb = Box<dyn FnMut(wire::Wire) + 'static + Send>;
+/// Incoming signal message from a remote node.
+pub enum SignalMsg {
+    /// We received a demo broadcast from the signal server.
+    Demo {
+        /// The remote Id that is connected to the signal server.
+        rem_pub: Id,
+    },
+
+    /// WebRTC offer.
+    Offer {
+        /// The remote Id sending the offer.
+        rem_pub: Id,
+
+        /// The WebRTC offer.
+        offer: serde_json::Value,
+    },
+
+    /// WebRTC answer.
+    Answer {
+        /// The remote Id sending the answer.
+        rem_pub: Id,
+
+        /// The WebRTC answer.
+        answer: serde_json::Value,
+    },
+
+    /// WebRTC ICE candidate.
+    Ice {
+        /// The remote Id sending the ICE candidate.
+        rem_pub: Id,
+
+        /// The WebRTC ICE candidate.
+        ice: serde_json::Value,
+    },
+}
+
+type RecvCb = Box<dyn FnMut(SignalMsg) + 'static + Send>;
 
 /// Builder for constructing a Cli instance.
 pub struct CliBuilder {
@@ -49,7 +86,7 @@ impl CliBuilder {
     /// Set the receiver callback.
     pub fn set_recv_cb<Cb>(&mut self, cb: Cb)
     where
-        Cb: FnMut(wire::Wire) + 'static + Send,
+        Cb: FnMut(SignalMsg) + 'static + Send,
     {
         self.recv_cb = Box::new(cb);
     }
@@ -57,7 +94,7 @@ impl CliBuilder {
     /// Apply the receiver callback.
     pub fn with_recv_cb<Cb>(mut self, cb: Cb) -> Self
     where
-        Cb: FnMut(wire::Wire) + 'static + Send,
+        Cb: FnMut(SignalMsg) + 'static + Send,
     {
         self.set_recv_cb(cb);
         self
@@ -112,12 +149,44 @@ type WriteRecv = tokio::sync::mpsc::Receiver<(
     tokio::sync::oneshot::Sender<Result<()>>,
 )>;
 
+struct Seq(atomic::AtomicU64);
+
+impl Seq {
+    pub const fn new() -> Self {
+        Self(atomic::AtomicU64::new(0))
+    }
+
+    pub fn get(&self) -> f64 {
+        let mut out = (std::time::SystemTime::UNIX_EPOCH
+            .elapsed()
+            .unwrap()
+            .as_secs_f64()
+            * 1000.0) as u64;
+        self.0
+            .fetch_update(
+                atomic::Ordering::SeqCst,
+                atomic::Ordering::SeqCst,
+                |cur| {
+                    if cur >= out {
+                        out = cur + 1
+                    }
+                    Some(out)
+                },
+            )
+            .unwrap();
+        out as f64
+    }
+}
+
 /// Tx4-signal client connection type.
 pub struct Cli {
     addr: url::Url,
     hnd: tokio::task::JoinHandle<()>,
     ice: serde_json::Value,
     write_send: WriteSend,
+    seq: Seq,
+    lair_client: LairClient,
+    x25519_pub: Id,
 }
 
 impl Drop for Cli {
@@ -147,24 +216,91 @@ impl Cli {
         &self.ice
     }
 
-    /// Send a message to the tx4-signal server.
-    pub fn send(
+    /// Send a WebRTC offer to a remote node on the signal server.
+    pub fn offer(
         &self,
-        wire: wire::Wire,
+        rem_pub: Id,
+        offer: serde_json::Value,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
+        self.priv_send(
+            rem_pub,
+            wire::FwdInnerV1::Offer {
+                seq: 0.0, // set in priv_send
+                offer,
+            },
+        )
+    }
+
+    /// Send a WebRTC answer to a remote node on the signal server.
+    pub fn answer(
+        &self,
+        rem_pub: Id,
+        answer: serde_json::Value,
+    ) -> impl Future<Output = Result<()>> + 'static + Send {
+        self.priv_send(
+            rem_pub,
+            wire::FwdInnerV1::Answer {
+                seq: 0.0, // set in priv_send
+                answer,
+            },
+        )
+    }
+
+    /// Send a WebRTC ICE candidate to a remote node on the signal server.
+    pub fn ice(
+        &self,
+        rem_pub: Id,
+        ice: serde_json::Value,
+    ) -> impl Future<Output = Result<()>> + 'static + Send {
+        self.priv_send(
+            rem_pub,
+            wire::FwdInnerV1::Ice {
+                seq: 0.0, // set in priv_send
+                ice,
+            },
+        )
+    }
+
+    // -- private -- //
+
+    fn priv_send(
+        &self,
+        rem_pub: Id,
+        mut msg: wire::FwdInnerV1,
+    ) -> impl Future<Output = Result<()>> + 'static + Send {
+        msg.set_seq(self.seq.get());
+
+        let lair_client = self.lair_client.clone();
+        let x25519_pub = self.x25519_pub;
         let write_send = self.write_send.clone();
+
         async move {
-            let wire = wire.encode()?;
+            let (nonce, cipher) = lair_client
+                .crypto_box_xsalsa_by_pub_key(
+                    x25519_pub.0.into(),
+                    rem_pub.0.into(),
+                    None,
+                    msg.encode()?.into(),
+                )
+                .await?;
+
+            let wire = wire::Wire::FwdV1 {
+                rem_pub,
+                nonce: nonce.into(),
+                cipher: cipher.to_vec().into_boxed_slice().into(),
+            }
+            .encode()?;
+
             let (s, r) = tokio::sync::oneshot::channel();
+
             write_send
                 .send((wire, s))
                 .await
                 .map_err(|_| Error::id("ClientClosed"))?;
+
             r.await.map_err(|_| Error::id("ClientClosed"))?
         }
     }
-
-    // -- private -- //
 
     async fn priv_build(builder: CliBuilder) -> Result<Self> {
         let CliBuilder {
@@ -233,7 +369,7 @@ impl Cli {
         let mut result_socket = None;
 
         for addr in tokio::net::lookup_host(&endpoint).await? {
-            match Self::priv_con(use_tls, &tls, &host, &con_url, addr).await {
+            match Self::priv_con(use_tls, &tls, host, &con_url, addr).await {
                 Ok(con) => {
                     result_socket = Some(con);
                     break;
@@ -272,7 +408,7 @@ impl Cli {
                 srv_pub.0.into(),
                 x25519_pub.0.into(),
                 None,
-                nonce.0.into(),
+                nonce.0,
                 cipher.0.into(),
             )
             .await?;
@@ -294,13 +430,22 @@ impl Cli {
 
         let (write_send, write_recv) = tokio::sync::mpsc::channel(1);
 
-        let hnd = tokio::task::spawn(con_task(socket, recv_cb, write_recv));
+        let hnd = tokio::task::spawn(con_task(
+            socket,
+            recv_cb,
+            x25519_pub,
+            lair_client.clone(),
+            write_recv,
+        ));
 
         Ok(Self {
             addr: url,
             hnd,
             ice,
             write_send,
+            seq: Seq::new(),
+            lair_client,
+            x25519_pub,
         })
     }
 
@@ -335,7 +480,7 @@ impl Cli {
                 .connect(name, socket)
                 .await
                 {
-                    Ok(socket) => socket.into(),
+                    Ok(socket) => socket,
                     Err(err) => return Err(err),
                 };
 
@@ -360,8 +505,16 @@ impl Cli {
     }
 }
 
-async fn con_task(socket: Socket, recv_cb: RecvCb, write_recv: WriteRecv) {
-    if let Err(err) = con_task_err(socket, recv_cb, write_recv).await {
+async fn con_task(
+    socket: Socket,
+    recv_cb: RecvCb,
+    x25519_pub: Id,
+    lair_client: LairClient,
+    write_recv: WriteRecv,
+) {
+    if let Err(err) =
+        con_task_err(socket, recv_cb, x25519_pub, lair_client, write_recv).await
+    {
         tracing::error!(?err);
     }
 }
@@ -369,6 +522,8 @@ async fn con_task(socket: Socket, recv_cb: RecvCb, write_recv: WriteRecv) {
 async fn con_task_err(
     socket: Socket,
     mut recv_cb: RecvCb,
+    x25519_pub: Id,
+    lair_client: LairClient,
     mut write_recv: WriteRecv,
 ) -> Result<()> {
     let (mut write, mut read) = socket.split();
@@ -378,12 +533,22 @@ async fn con_task_err(
             while let Some(msg) = read.next().await {
                 let msg = msg.map_err(Error::err)?.into_data();
                 match wire::Wire::decode(&msg)? {
-                    msg @ wire::Wire::OfferV1 { .. } |
-                        msg @ wire::Wire::AnswerV1 { .. } |
-                        msg @ wire::Wire::IceV1 { .. } |
-                        msg @ wire::Wire::DemoV1 { .. }
-                    => {
-                        recv_cb(msg)
+                    wire::Wire::DemoV1 { rem_pub } => {
+                        recv_cb(SignalMsg::Demo { rem_pub });
+                    }
+                    wire::Wire::FwdV1 { rem_pub, nonce, cipher } => {
+                        if let Err(err) = decode_fwd(
+                            &mut recv_cb,
+                            &x25519_pub,
+                            &lair_client,
+                            rem_pub,
+                            nonce,
+                            cipher,
+                        ).await {
+                            tracing::warn!(?err, "invalid incoming fwd");
+
+                            // MAYBE - should we squelch rem_pub?
+                        }
                     }
                     _ => return Err(Error::id("InvalidClientMsg")),
                 }
@@ -404,4 +569,41 @@ async fn con_task_err(
             Ok(())
         } => r,
     }
+}
+
+async fn decode_fwd(
+    recv_cb: &mut RecvCb,
+    x25519_pub: &Id,
+    lair_client: &LairClient,
+    rem_pub: Id,
+    nonce: wire::Nonce,
+    cipher: wire::Cipher,
+) -> Result<()> {
+    let msg = lair_client
+        .crypto_box_xsalsa_open_by_pub_key(
+            rem_pub.0.into(),
+            x25519_pub.0.into(),
+            None,
+            nonce.0,
+            cipher.0.into(),
+        )
+        .await?;
+
+    let msg = wire::FwdInnerV1::decode(&msg)?;
+
+    // TODO - validate / track seq per rem_pub
+
+    match msg {
+        wire::FwdInnerV1::Offer { offer, .. } => {
+            recv_cb(SignalMsg::Offer { rem_pub, offer });
+        }
+        wire::FwdInnerV1::Answer { answer, .. } => {
+            recv_cb(SignalMsg::Answer { rem_pub, answer });
+        }
+        wire::FwdInnerV1::Ice { ice, .. } => {
+            recv_cb(SignalMsg::Ice { rem_pub, ice });
+        }
+    }
+
+    Ok(())
 }

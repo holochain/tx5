@@ -15,6 +15,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::type_complexity)]
+#![allow(clippy::drop_non_drop)]
 
 use once_cell::sync::Lazy;
 use std::sync::Arc;

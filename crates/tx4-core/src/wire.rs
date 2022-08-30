@@ -81,7 +81,7 @@ impl From<Box<[u8]>> for Cipher {
 
 /// Tx4 signal server wire protocol for client to server communication.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum Wire {
     /// When a client connects to a server, the server sends an initial
     /// authentication / hello request.
@@ -112,37 +112,18 @@ pub enum Wire {
         req_addr: bool,
     },
 
-    /// WebRTC offer.
+    /// A client sends an encrypted message to another client.
     #[serde(rename_all = "camelCase")]
-    OfferV1 {
-        /// On client-to-server, this is the destination pub key.
-        /// On server-to-client, this is the source pub key.
+    FwdV1 {
+        /// The remote id to send this message to,
+        /// or that this message came from.
         rem_pub: Id,
 
-        /// The WebRTC offer data.
-        offer: serde_json::Value,
-    },
+        /// The crypto box nonce for the encoded FwdInnerV1 message.
+        nonce: Nonce,
 
-    /// WebRTC answer.
-    #[serde(rename_all = "camelCase")]
-    AnswerV1 {
-        /// On client-to-server, this is the destination pub key.
-        /// On server-to-client, this is the source pub key.
-        rem_pub: Id,
-
-        /// The WebRTC answer data.
-        answer: serde_json::Value,
-    },
-
-    /// WebRTC ICE candidate.
-    #[serde(rename_all = "camelCase")]
-    IceV1 {
-        /// On client-to-server, this is the destination pub key.
-        /// On server-to-client, this is the source pub key.
-        rem_pub: Id,
-
-        /// The WebRTC ice candidate data.
-        ice: serde_json::Value,
+        /// The cipher bytes for the encoded FwdInnerV1 message.
+        cipher: Cipher,
     },
 
     /// As a standin for bootstrapping, clients may trigger "demo" broadcasts
@@ -166,5 +147,63 @@ impl Wire {
         serde_json::to_string(&self)
             .map_err(Error::err)
             .map(|s| s.into_bytes())
+    }
+}
+
+/// The internal message that is encrypted and forwarded between clients.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum FwdInnerV1 {
+    /// WebRTC offer.
+    #[serde(rename_all = "camelCase")]
+    Offer {
+        /// Sequence.
+        seq: f64,
+
+        /// WebRTC offer.
+        offer: serde_json::Value,
+    },
+
+    /// WebRTC answer.
+    #[serde(rename_all = "camelCase")]
+    Answer {
+        /// Sequence.
+        seq: f64,
+
+        /// WebRTC answer.
+        answer: serde_json::Value,
+    },
+
+    /// WebRTC ICE candidate.
+    #[serde(rename_all = "camelCase")]
+    Ice {
+        /// Sequence.
+        seq: f64,
+
+        /// WebRTC ICE candidate.
+        ice: serde_json::Value,
+    },
+}
+
+impl FwdInnerV1 {
+    /// Decode from wire format (json).
+    pub fn decode(wire: &[u8]) -> Result<Self> {
+        serde_json::from_slice(wire).map_err(Error::err)
+    }
+
+    /// Encode into wire format (json).
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        serde_json::to_string(&self)
+            .map_err(Error::err)
+            .map(|s| s.into_bytes())
+    }
+
+    /// Set the seq.
+    pub fn set_seq(&mut self, new_seq: f64) {
+        match self {
+            FwdInnerV1::Offer { seq, .. } => *seq = new_seq,
+            FwdInnerV1::Answer { seq, .. } => *seq = new_seq,
+            FwdInnerV1::Ice { seq, .. } => *seq = new_seq,
+        }
     }
 }

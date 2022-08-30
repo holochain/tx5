@@ -1,3 +1,6 @@
+fn main() {}
+
+/*
 #![deny(warnings)]
 #![deny(unsafe_code)]
 
@@ -84,3 +87,4 @@ async fn main_err() -> Result<()> {
 
     Ok(())
 }
+*/

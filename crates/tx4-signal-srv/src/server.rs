@@ -100,10 +100,10 @@ async fn client_task(
     let (mut tx, mut rx) = ws.split();
     let (out_send, mut out_recv) = tokio::sync::mpsc::unbounded_channel();
 
-    srv_hnd.register(client_id.clone(), out_send).await?;
+    srv_hnd.register(client_id, out_send).await?;
 
     let srv_hnd_read = srv_hnd.clone();
-    let client_id_read = client_id.clone();
+    let client_id_read = client_id;
     tokio::select! {
         res = async move {
             while let Some((msg, resp)) = out_recv.recv().await {
@@ -144,52 +144,25 @@ async fn client_task(
                         //        right now we just always honor demos
                         srv_hnd_read.broadcast(msg);
                     }
-                    Ok(wire::Wire::OfferV1 { rem_pub, offer }) => {
-                        let data = wire::Wire::OfferV1 {
-                            rem_pub: client_id_read.clone(),
-                            offer,
+                    Ok(wire::Wire::FwdV1 { rem_pub, nonce, cipher }) => {
+                        let data = wire::Wire::FwdV1 {
+                            rem_pub: client_id_read,
+                            nonce,
+                            cipher,
                         }.encode()?;
                         match srv_hnd_read.forward(rem_pub, data).await {
                             Ok(fut) => {
                                 match fut.await {
                                     Ok(Ok(())) => (),
-                                    Ok(Err(_)) => (),
+                                    Ok(Err(err)) => {
+                                        tracing::trace!(?err);
+                                    }
                                     Err(_) => (),
                                 }
                             }
-                            Err(_) => (),
-                        }
-                    }
-                    Ok(wire::Wire::AnswerV1 { rem_pub, answer }) => {
-                        let data = wire::Wire::AnswerV1 {
-                            rem_pub: client_id_read.clone(),
-                            answer,
-                        }.encode()?;
-                        match srv_hnd_read.forward(rem_pub, data).await {
-                            Ok(fut) => {
-                                match fut.await {
-                                    Ok(Ok(())) => (),
-                                    Ok(Err(_)) => (),
-                                    Err(_) => (),
-                                }
+                            Err(err) => {
+                                tracing::trace!(?err);
                             }
-                            Err(_) => (),
-                        }
-                    }
-                    Ok(wire::Wire::IceV1 { rem_pub, ice }) => {
-                        let data = wire::Wire::IceV1 {
-                            rem_pub: client_id_read.clone(),
-                            ice,
-                        }.encode()?;
-                        match srv_hnd_read.forward(rem_pub, data).await {
-                            Ok(fut) => {
-                                match fut.await {
-                                    Ok(Ok(())) => (),
-                                    Ok(Err(_)) => (),
-                                    Err(_) => (),
-                                }
-                            }
-                            Err(_) => (),
                         }
                     }
                     _ => return Err(Error::id("InvalidClientMsg")),

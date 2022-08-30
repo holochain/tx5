@@ -60,6 +60,7 @@ pub use peer_con::*;
 mod data_chan;
 pub use data_chan::*;
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,3 +339,4 @@ mod tests {
         hnd2.join().unwrap();
     }
 }
+*/

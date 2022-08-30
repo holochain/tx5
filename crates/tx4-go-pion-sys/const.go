@@ -3,9 +3,10 @@ package main
 const (
 	// Reporting an error from the lib.
 	// - allowed contexts: Event, Response
-	// - msg slot_a = error code
-	// - msg slot_b = utf8 error text ptr
-	// - msg slot_c = utf8 error text len
+	// - msg slot_a = utf8 error id ptr
+	// - msg slot_b = utf8 error id ptr
+	// - msg slot_c = utf8 error info ptr
+	// - msg slot_d = utf8 error info len
 	TyErr UintPtrT = 0xffff
 
 	// Request a go buffer be created / giving access to said buffer in resp.

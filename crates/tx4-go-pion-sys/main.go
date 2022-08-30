@@ -166,14 +166,14 @@ func Call(
 				response_cb,
 				response_usr,
 				TyErr,
-				// error code
-				0,
-				// error text ptr
+				// error id ptr
+				C.void_star_to_ptr_t(unsafe.Pointer(&([]byte)("Error")[0])),
+				// error id len
+				UintPtrT(5),
+				// error info ptr
 				C.void_star_to_ptr_t(unsafe.Pointer(&bytes[0])),
-				// error text len
+				// error info len
 				UintPtrT(len(bytes)),
-				// unused
-				0,
 			)
 		}
 	}()

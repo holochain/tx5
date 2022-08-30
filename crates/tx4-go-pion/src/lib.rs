@@ -36,15 +36,10 @@ pub use peer_con::*;
 mod data_chan;
 pub use data_chan::*;
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
-
-    //"urls": [
-    //    "stun:stun.l.google.com:19302"
-    //]
 
     const STUN: &str = r#"{
     "iceServers": [
@@ -66,32 +61,8 @@ mod tests {
           "username": "openrelayproject",
           "credential": "openrelayproject"
         }
-    ],
-    "certificates": [
-        "-----BEGIN CERTIFICATE-----\nTUlJQklqQ0J5YUFEQWdFQ0FoRUJSVHR5Zk8vNFF5dS9OU3o3UU5yeExEQUtCZ2dx\naGtqT1BRUURBakFSTVE4d0RRWURWUVFERXdaWFpXSlNWRU13SGhjTk1qSXdOekEy\nTVRreE1EVTNXaGNOTWpJd09EQTJNVGt4TURVM1dqQVJNUTh3RFFZRFZRUURFd1pY\nWldKU1ZFTXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU3phSGxZ\nSW1ORHJsN1JFYnJLS0ZyN2lwSjJkNERRZXJOMXV1WjBZeGhadExzOXNBN1Zid1A4\nSGxBNktrZjV4MGcvRFFDVU56UytXb1U0eFFOTkFBL0xvd0l3QURBS0JnZ3Foa2pP\nUFFRREFnTklBREJGQWlFQXM2NEVITDIyVHF0U2hKQlVBaTljUm1YTDFqOVJHbnlT\nQ0loRFBCTnFHcjBDSUJ5T2d3L2x0bitmU01yMnVYczdDRmJaT0Rla0ZIUlNPTzZW\nLzBCSGp6dzg=\n-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg9Cems82+pSDGMsnS\nfjpQbZr67x6mg2ClewdtlA8u7eOhRANCAASzaHlYImNDrl7REbrKKFr7ipJ2d4DQ\nerN1uuZ0YxhZtLs9sA7VbwP8HlA6Kkf5x0g/DQCUNzS+WoU4xQNNAA/L\n-----END PRIVATE KEY-----"
     ]
 }"#;
-
-    const CERT: &[u8] = &[
-        48, 130, 1, 34, 48, 129, 201, 160, 3, 2, 1, 2, 2, 17, 1, 69, 59, 114,
-        124, 239, 248, 67, 43, 191, 53, 44, 251, 64, 218, 241, 44, 48, 10, 6,
-        8, 42, 134, 72, 206, 61, 4, 3, 2, 48, 17, 49, 15, 48, 13, 6, 3, 85, 4,
-        3, 19, 6, 87, 101, 98, 82, 84, 67, 48, 30, 23, 13, 50, 50, 48, 55, 48,
-        54, 49, 57, 49, 48, 53, 55, 90, 23, 13, 50, 50, 48, 56, 48, 54, 49, 57,
-        49, 48, 53, 55, 90, 48, 17, 49, 15, 48, 13, 6, 3, 85, 4, 3, 19, 6, 87,
-        101, 98, 82, 84, 67, 48, 89, 48, 19, 6, 7, 42, 134, 72, 206, 61, 2, 1,
-        6, 8, 42, 134, 72, 206, 61, 3, 1, 7, 3, 66, 0, 4, 179, 104, 121, 88,
-        34, 99, 67, 174, 94, 209, 17, 186, 202, 40, 90, 251, 138, 146, 118,
-        119, 128, 208, 122, 179, 117, 186, 230, 116, 99, 24, 89, 180, 187, 61,
-        176, 14, 213, 111, 3, 252, 30, 80, 58, 42, 71, 249, 199, 72, 63, 13, 0,
-        148, 55, 52, 190, 90, 133, 56, 197, 3, 77, 0, 15, 203, 163, 2, 48, 0,
-        48, 10, 6, 8, 42, 134, 72, 206, 61, 4, 3, 2, 3, 72, 0, 48, 69, 2, 33,
-        0, 179, 174, 4, 28, 189, 182, 78, 171, 82, 132, 144, 84, 2, 47, 92, 70,
-        101, 203, 214, 63, 81, 26, 124, 146, 8, 136, 67, 60, 19, 106, 26, 189,
-        2, 32, 28, 142, 131, 15, 229, 182, 127, 159, 72, 202, 246, 185, 123,
-        59, 8, 86, 217, 56, 55, 164, 20, 116, 82, 56, 238, 149, 255, 64, 71,
-        143, 60, 60,
-    ];
 
     #[test]
     fn peer_con() {
@@ -162,8 +133,7 @@ mod tests {
                             peer1.set_remote_description(&answer).unwrap();
                         }
                         Cmd::CheckCert => {
-                            let cert = peer1.get_remote_certificate().unwrap();
-                            assert_eq!(CERT, &*cert);
+                            let _cert = peer1.get_remote_certificate().unwrap();
                         }
                         _ => break,
                     }
@@ -205,8 +175,7 @@ mod tests {
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
                         }
                         Cmd::CheckCert => {
-                            let cert = peer2.get_remote_certificate().unwrap();
-                            assert_eq!(CERT, &*cert);
+                            let _cert = peer2.get_remote_certificate().unwrap();
                         }
                         _ => break,
                     }
@@ -315,4 +284,3 @@ mod tests {
         hnd2.join().unwrap();
     }
 }
-*/

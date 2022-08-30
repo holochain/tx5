@@ -279,9 +279,13 @@ impl Api {
             slot_d,
             |t, a, b, c, d| {
                 out = if t == TY_ERR {
-                    let err = std::slice::from_raw_parts(b as *const u8, c);
-                    let err =
-                        Error::err(String::from_utf8_lossy(err).to_string());
+                    let id = std::slice::from_raw_parts(a as *const u8, b);
+                    let id = String::from_utf8_lossy(id).to_string();
+                    let info = std::slice::from_raw_parts(c as *const u8, d);
+                    let info = String::from_utf8_lossy(info).to_string();
+
+                    let err = Error { id, info }.into();
+
                     cb(Err(err))
                 } else {
                     cb(Ok((t, a, b, c, d)))

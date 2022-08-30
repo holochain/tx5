@@ -10,43 +10,19 @@
 //! [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 //! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
-/// Error type.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Error {
-    /// Generic non-code-ed error type.
-    Other(String),
+/// Re-exported dependencies.
+pub mod deps {
+    pub use libc;
+    pub use once_cell;
+    pub use tempfile;
+    pub use tx4_core::deps::*;
+    pub use tx4_go_pion_sys;
+    pub use tx4_go_pion_sys::deps::*;
 }
 
-impl From<String> for Error {
-    fn from(s: String) -> Self {
-        Error::Other(s)
-    }
-}
+use deps::*;
 
-impl From<tx4_go_pion_sys::Error> for Error {
-    fn from(err: tx4_go_pion_sys::Error) -> Self {
-        Error::Other(err.error)
-    }
-}
-
-impl From<Error> for tx4_go_pion_sys::Error {
-    fn from(err: Error) -> Self {
-        match err {
-            Error::Other(error) => Self { code: 0, error },
-        }
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for Error {}
-
-/// Go result type.
-pub type Result<T> = std::result::Result<T, Error>;
+pub use tx4_core::{Error, ErrorExt, Id, Result};
 
 mod evt;
 pub use evt::*;

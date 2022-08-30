@@ -43,12 +43,12 @@ impl DataChannel {
     /// Get the ready state of this DataChannel.
     #[inline]
     pub fn ready_state(&mut self) -> Result<usize> {
-        unsafe { Ok(API.data_chan_ready_state(self.0)?) }
+        unsafe { API.data_chan_ready_state(self.0) }
     }
 
     /// Send data to the remote peer on this DataChannel.
     #[inline]
     pub fn send(&mut self, data: GoBuf) -> Result<()> {
-        unsafe { Ok(API.data_chan_send(self.0, data.0)?) }
+        unsafe { API.data_chan_send(self.0, data.0) }
     }
 }

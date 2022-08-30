@@ -2354,7 +2354,6 @@ dependencies = [
 name = "tx4-go-pion"
 version = "0.0.1"
 dependencies = [
- "once_cell",
  "parking_lot 0.12.1",
  "tx4-go-pion-sys",
 ]
@@ -2369,6 +2368,7 @@ dependencies = [
  "ouroboros",
  "parking_lot 0.12.1",
  "tempfile",
+ "tx4-core",
  "zip",
 ]
 

@@ -31,27 +31,27 @@ impl PeerConnection {
 
     /// Create offer.
     pub fn create_offer(&mut self, json: Option<&str>) -> Result<String> {
-        unsafe { Ok(API.peer_con_create_offer(self.0, json)?) }
+        unsafe { API.peer_con_create_offer(self.0, json) }
     }
 
     /// Create answer.
     pub fn create_answer(&mut self, json: Option<&str>) -> Result<String> {
-        unsafe { Ok(API.peer_con_create_answer(self.0, json)?) }
+        unsafe { API.peer_con_create_answer(self.0, json) }
     }
 
     /// Set local description.
     pub fn set_local_description(&mut self, json: &str) -> Result<()> {
-        unsafe { Ok(API.peer_con_set_local_desc(self.0, json)?) }
+        unsafe { API.peer_con_set_local_desc(self.0, json) }
     }
 
     /// Set remote description.
     pub fn set_remote_description(&mut self, json: &str) -> Result<()> {
-        unsafe { Ok(API.peer_con_set_rem_desc(self.0, json)?) }
+        unsafe { API.peer_con_set_rem_desc(self.0, json) }
     }
 
     /// Add ice candidate.
     pub fn add_ice_candidate(&mut self, json: &str) -> Result<()> {
-        unsafe { Ok(API.peer_con_add_ice_candidate(self.0, json)?) }
+        unsafe { API.peer_con_add_ice_candidate(self.0, json) }
     }
 
     /// Create data channel.
@@ -67,6 +67,6 @@ impl PeerConnection {
 
     /// Get the remote certificate the peer is using (if available).
     pub fn get_remote_certificate(&mut self) -> Result<Box<[u8]>> {
-        unsafe { Ok(API.peer_con_rem_cert(self.0)?) }
+        unsafe { API.peer_con_rem_cert(self.0) }
     }
 }

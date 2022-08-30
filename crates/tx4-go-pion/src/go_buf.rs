@@ -24,13 +24,13 @@ impl GoBuf {
     /// Reserve additional capacity in this buffer.
     #[inline]
     pub fn reserve(&mut self, add: usize) -> Result<()> {
-        unsafe { Ok(API.buffer_reserve(self.0, add)?) }
+        unsafe { API.buffer_reserve(self.0, add) }
     }
 
     /// Extend this buffer with additional bytes.
     #[inline]
     pub fn extend(&mut self, add: &[u8]) -> Result<()> {
-        unsafe { Ok(API.buffer_extend(self.0, add)?) }
+        unsafe { API.buffer_extend(self.0, add) }
     }
 
     /// Get access to the underlying buffer data.
@@ -45,14 +45,14 @@ impl GoBuf {
             match API.buffer_access(self.0, move |r| {
                 match match r {
                     Ok((_id, data)) => cb(Ok(data)),
-                    Err(e) => cb(Err(e.into())),
+                    Err(e) => cb(Err(e)),
                 } {
                     Ok(r) => Ok(r),
-                    Err(e) => Err(e.into()),
+                    Err(e) => Err(e),
                 }
             }) {
                 Ok(r) => Ok(r),
-                Err(e) => Err(e.into()),
+                Err(e) => Err(e),
             }
         }
     }

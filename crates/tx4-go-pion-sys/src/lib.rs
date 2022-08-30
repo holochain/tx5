@@ -17,6 +17,17 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::drop_non_drop)]
 
+/// Re-exported dependencies.
+pub mod deps {
+    pub use libc;
+    pub use once_cell;
+    pub use tempfile;
+    pub use tx4_core;
+    pub use tx4_core::deps::*;
+}
+
+pub use tx4_core::{Error, ErrorExt, Id, Result};
+
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -123,28 +134,6 @@ impl LibInner {
     }
 }
 
-#[derive(Debug)]
-pub struct Error {
-    pub code: usize,
-    pub error: String,
-}
-
-impl From<String> for Error {
-    fn from(s: String) -> Self {
-        Error { code: 0, error: s }
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for Error {}
-
-pub type Result<T> = std::result::Result<T, Error>;
-
 pub type CallType = usize;
 pub type ResponseUsr = *mut libc::c_void;
 pub type ResponseType = usize;
@@ -160,7 +149,7 @@ pub type PeerConState = usize;
 
 #[derive(Debug)]
 pub enum Event {
-    Error(Error),
+    Error(std::io::Error),
     PeerConICECandidate {
         peer_con_id: PeerConId,
         candidate: String,
@@ -208,11 +197,9 @@ impl Api {
                 TY_ERR => {
                     let err =
                         std::slice::from_raw_parts(slot_b as *const u8, slot_c);
-                    let err = Error {
-                        code: slot_a,
-                        error: String::from_utf8_lossy(err).to_string(),
-                    };
-                    Event::Error(err)
+                    Event::Error(Error::err(
+                        String::from_utf8_lossy(err).to_string(),
+                    ))
                 }
                 TY_PEER_CON_ON_ICE_CANDIDATE => {
                     let candidate =
@@ -238,10 +225,10 @@ impl Api {
                     data_chan_id: slot_a,
                     buffer_id: slot_b,
                 },
-                oth => Event::Error(Error {
-                    code: 0,
-                    error: format!("invalid event_type: {}", oth),
-                }),
+                oth => Event::Error(Error::err(format!(
+                    "invalid event_type: {}",
+                    oth
+                ))),
             };
 
             closure(evt);
@@ -283,7 +270,7 @@ impl Api {
             Result<(ResponseType, SlotA, SlotB, SlotC, SlotD)>,
         ) -> Result<R>,
     {
-        let mut out = Err("not called".to_string().into());
+        let mut out = Err(Error::id("NotCalled"));
         self.call_inner(
             call_type,
             slot_a,
@@ -293,10 +280,8 @@ impl Api {
             |t, a, b, c, d| {
                 out = if t == TY_ERR {
                     let err = std::slice::from_raw_parts(b as *const u8, c);
-                    let err = Error {
-                        code: a,
-                        error: String::from_utf8_lossy(err).to_string(),
-                    };
+                    let err =
+                        Error::err(String::from_utf8_lossy(err).to_string());
                     cb(Err(err))
                 } else {
                     cb(Ok((t, a, b, c, d)))

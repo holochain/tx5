@@ -16,6 +16,6 @@ Tx4 Holochain WebRTC P2P Communication Ecosystem
 - [tx4-core](crates/tx4-core) - Core types used in other tx4 crates.
 - [tx4-go-pion-sys](crates/tx4-go-pion-sys) - Low level rust bindings to the go pion webrtc library.
 - [tx4-go-pion](crates/tx4-go-pion) - Higher level rust bindings to the go pion webrtc library.
-- [tx4-signal](crates/tx4-signal) - Holochain webrtc signal server / client core types.
+- [tx4-signal](crates/tx4-signal) - Holochain webrtc signal client.
 - [tx4-signal-srv](crates/tx4-signal-srv) - Holochain webrtc signal server.
 - [tx4-demo](crates/tx4-demo) - Demo showing off tx4 p2p connectivity.

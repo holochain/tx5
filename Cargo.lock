@@ -2379,6 +2379,7 @@ dependencies = [
  "futures",
  "lair_keystore_api",
  "once_cell",
+ "rand",
  "rand-utf8",
  "rcgen 0.9.3",
  "ring",
@@ -2387,12 +2388,14 @@ dependencies = [
  "rustls-pemfile",
  "sha2",
  "socket2",
+ "sodoken",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite 0.17.2",
  "tracing",
  "tracing-subscriber 0.3.15",
  "tx4-core",
+ "tx4-signal-srv",
  "url",
 ]
 

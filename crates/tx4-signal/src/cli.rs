@@ -13,6 +13,7 @@ type Socket = tokio_tungstenite::WebSocketStream<
 >;
 
 /// Incoming signal message from a remote node.
+#[derive(Debug)]
 pub enum SignalMsg {
     /// We received a demo broadcast from the signal server.
     Demo {
@@ -206,6 +207,11 @@ impl Cli {
         self.hnd.abort();
     }
 
+    /// Get the id (x25519 public key) that this local node is identified by.
+    pub fn local_id(&self) -> &Id {
+        &self.x25519_pub
+    }
+
     /// Get the addr this cli can be reached at through the signal server.
     pub fn local_addr(&self) -> &url::Url {
         &self.addr
@@ -259,6 +265,21 @@ impl Cli {
                 ice,
             },
         )
+    }
+
+    /// Send a demo broadcast to the signal server.
+    /// Warning, if demo mode is not enabled on this server,
+    /// this could result in a ban.
+    pub fn demo(&self) {
+        let write_send = self.write_send.clone();
+        let rem_pub = self.x25519_pub;
+        tokio::task::spawn(async move {
+            let (s, r) = tokio::sync::oneshot::channel();
+            let _ = write_send
+                .send((wire::Wire::DemoV1 { rem_pub }.encode().unwrap(), s))
+                .await;
+            let _ = r.await;
+        });
     }
 
     // -- private -- //
@@ -360,9 +381,9 @@ impl Cli {
         let endpoint = format!("{}:{}", host, port);
 
         let con_url = if use_tls {
-            format!("wss://{}/{}", endpoint, x25519_pub)
+            format!("wss://{}/tx4-ws/{}", endpoint, x25519_pub)
         } else {
-            format!("ws://{}/{}", endpoint, x25519_pub)
+            format!("ws://{}/tx4-ws/{}", endpoint, x25519_pub)
         };
 
         let mut err_list = Vec::new();

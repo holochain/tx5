@@ -48,7 +48,7 @@ pub fn exec_tx4_signal_srv(
     let routes = tx4_ws.with(warp::trace::request());
 
     warp::serve(routes)
-        .try_bind_ephemeral(([0, 0, 0, 0], 8443))
+        .try_bind_ephemeral(([0, 0, 0, 0], config.port))
         .map_err(Error::err)
         .map(|(addr, fut)| {
             let fut: ServerDriver = Box::pin(fut);

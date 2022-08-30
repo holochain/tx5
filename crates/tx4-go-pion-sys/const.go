@@ -107,13 +107,6 @@ const (
 	// - call slot_c: utf8 json len
 	TyPeerConCreateDataChan UintPtrT = 0x9008
 
-	// Request the remote certificate (if available).
-	// - allowed contexts: Call, Response
-	// - call slot_a: peer_con id
-	// - call slot_b: cert ptr
-	// - call slot_c: cert len
-	TyPeerConRemCert UintPtrT = 0x9009
-
 	// OnICECandidate event on an existing peer con.
 	// - allowed contexts: Event
 	// - msg slot_a: peer_con id

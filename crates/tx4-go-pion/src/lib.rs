@@ -72,7 +72,6 @@ mod tests {
         #[derive(Debug)]
         enum Cmd {
             Shutdown,
-            CheckCert,
             ICE(String),
             Offer(String),
             Answer(String),
@@ -132,9 +131,6 @@ mod tests {
                             println!("peer1 recv answer: {}", answer);
                             peer1.set_remote_description(&answer).unwrap();
                         }
-                        Cmd::CheckCert => {
-                            let _cert = peer1.get_remote_certificate().unwrap();
-                        }
                         _ => break,
                     }
                 }
@@ -173,9 +169,6 @@ mod tests {
                             let answer = peer2.create_answer(None).unwrap();
                             peer2.set_local_description(&answer).unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
-                        }
-                        Cmd::CheckCert => {
-                            let _cert = peer2.get_remote_certificate().unwrap();
                         }
                         _ => break,
                     }
@@ -252,11 +245,6 @@ mod tests {
         for _ in 0..need_open_cnt {
             r_open.recv().unwrap();
         }
-
-        // -- check remote certificates -- //
-
-        cmd_send_1.send(Cmd::CheckCert).unwrap();
-        cmd_send_2.send(Cmd::CheckCert).unwrap();
 
         // -- send data on the data channels -- //
 

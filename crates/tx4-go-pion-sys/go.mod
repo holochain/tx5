@@ -1,4 +1,4 @@
-module github.com/holochain/go-pion-webrtc-rs
+module github.com/holochain/tx4-go-pion-sys
 
 go 1.18
 

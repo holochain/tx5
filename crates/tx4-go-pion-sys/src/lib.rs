@@ -574,17 +574,6 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn peer_con_rem_cert(&self, id: PeerConId) -> Result<Box<[u8]>> {
-        self.call(TY_PEER_CON_REM_CERT, id, 0, 0, 0, |r| match r {
-            Ok((_t, a, b, _c, _d)) => {
-                let s = std::slice::from_raw_parts(a as *const _, b);
-                Ok(s.to_vec().into())
-            }
-            Err(e) => Err(e),
-        })
-    }
-
-    #[inline]
     pub unsafe fn data_chan_free(&self, id: DataChanId) {
         self.0.borrow_call()(
             TY_DATA_CHAN_FREE,

@@ -64,9 +64,4 @@ impl PeerConnection {
             Ok(DataChannelSeed(data_chan_id))
         }
     }
-
-    /// Get the remote certificate the peer is using (if available).
-    pub fn get_remote_certificate(&mut self) -> Result<Box<[u8]>> {
-        unsafe { API.peer_con_rem_cert(self.0) }
-    }
 }

@@ -1,8 +1,8 @@
 #![deny(missing_docs)]
-#![deny(unsafe_code)]
 #![deny(warnings)]
+#![deny(unsafe_code)]
 
-//! Holochain WebRTC P2P Communication Ecosystem Core Types.
+//! Holochain webrtc signal server.
 //!
 //! [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
 //! [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)
@@ -11,29 +11,19 @@
 //! [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 //! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
+#![doc = include_str!("docs/srv_help.md")]
+
 /// Re-exported dependencies.
 pub mod deps {
-    pub use base64;
-    pub use serde;
-    pub use serde_json;
+    pub use tx4_core::deps::*;
 }
 
-mod error;
-pub use error::*;
+pub use tx4_core::{Error, ErrorExt, Id, Result};
 
-mod id;
-pub use id::*;
+use clap::Parser;
 
-pub mod wire;
+mod config;
+pub use config::*;
 
-/// Websocket configuration constants.
-pub mod ws {
-    /// Outgoing message queue size.
-    pub const MAX_SEND_QUEUE: usize = 32;
-
-    /// Max incoming and outgoing message size.
-    pub const MAX_MESSAGE_SIZE: usize = 2048;
-
-    /// Max incoming and outgoing frame size.
-    pub const MAX_FRAME_SIZE: usize = 2048;
-}
+mod server;
+pub use server::*;

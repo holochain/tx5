@@ -83,7 +83,8 @@ async fn con_task(
     impl Drop for DoneDrop {
         fn drop(&mut self) {
             tracing::debug!(id = ?self.id, "CON DROP");
-            let should_block = self.should_block.load(atomic::Ordering::Relaxed);
+            let should_block =
+                self.should_block.load(atomic::Ordering::Relaxed);
             self.core.drop_con(self.id.clone(), should_block);
         }
     }
@@ -197,10 +198,13 @@ async fn con_task(
                 tracing::trace!("DATA CHANNEL MESSAGE!!!");
                 let mut buf = [0; 32];
                 msg.read_exact(&mut buf[..])?;
-                let len = buf.iter().position(|&c| c == b'\0').unwrap_or(buf.len());
-                let friendly_name = String::from_utf8_lossy(&buf[..len]).to_string();
+                let len =
+                    buf.iter().position(|&c| c == b'\0').unwrap_or(buf.len());
+                let friendly_name =
+                    String::from_utf8_lossy(&buf[..len]).to_string();
                 msg.read_exact(&mut buf[..])?;
-                let len = buf.iter().position(|&c| c == b'\0').unwrap_or(buf.len());
+                let len =
+                    buf.iter().position(|&c| c == b'\0').unwrap_or(buf.len());
                 let shoutout = String::from_utf8_lossy(&buf[..len]).to_string();
 
                 let mut buf2 = [0; 32];
@@ -213,12 +217,12 @@ async fn con_task(
                         break;
                     }
 
-                    let rem_id = match tx4_signal_core::Id::from_slice(&buf) {
+                    let rem_id = match tx4_signal::Id::from_slice(&buf) {
                         Err(_) => break,
                         Ok(id) => id,
                     };
 
-                    let rem_pk = match tx4_signal_core::Id::from_slice(&buf2) {
+                    let rem_pk = match tx4_signal::Id::from_slice(&buf2) {
                         Err(_) => break,
                         Ok(id) => id,
                     };

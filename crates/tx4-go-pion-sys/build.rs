@@ -11,8 +11,9 @@ fn main() {
     println!("cargo:rerun-if-changed=peerconnection.go");
     println!("cargo:rerun-if-changed=main.go");
 
-    let mut lib_path =
-        std::path::PathBuf::from(std::env::var("OUT_DIR").expect("failed to read env OUT_DIR"));
+    let mut lib_path = std::path::PathBuf::from(
+        std::env::var("OUT_DIR").expect("failed to read env OUT_DIR"),
+    );
     #[cfg(target_os = "macos")]
     lib_path.push("go-pion-webrtc.dylib");
     #[cfg(target_os = "windows")]
@@ -54,7 +55,8 @@ fn go_unzip_vendor() {
     vendor_path.push("vendor.zip");
 
     zip::read::ZipArchive::new(
-        std::fs::File::open(vendor_path).expect("failed to open vendor zip file"),
+        std::fs::File::open(vendor_path)
+            .expect("failed to open vendor zip file"),
     )
     .expect("failed to open vendor zip file")
     .extract(manifest_path)

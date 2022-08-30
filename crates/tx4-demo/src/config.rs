@@ -36,9 +36,11 @@ impl Config {
         let mut rng = rand::thread_rng();
 
         let lair_tag: Arc<str> = rand_utf8::rand_utf8(&mut rng, 32).into();
-        let lair_passphrase: Arc<str> = rand_utf8::rand_utf8(&mut rng, 32).into();
+        let lair_passphrase: Arc<str> =
+            rand_utf8::rand_utf8(&mut rng, 32).into();
 
-        let passphrase = sodoken::BufRead::new_no_lock(lair_passphrase.as_bytes());
+        let passphrase =
+            sodoken::BufRead::new_no_lock(lair_passphrase.as_bytes());
 
         let lair_config = PwHashLimits::Interactive
             .with_exec(|| LairServerConfigInner::new(data_root, passphrase))
@@ -171,7 +173,10 @@ async fn read_config(config_fn: &std::path::Path) -> Result<Arc<Config>> {
     Ok(Arc::new(config))
 }
 
-async fn run_init(config_fn: &std::path::Path, config_dir: &std::path::Path) -> Result<()> {
+async fn run_init(
+    config_fn: &std::path::Path,
+    config_dir: &std::path::Path,
+) -> Result<()> {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tokio::io::AsyncWriteExt;

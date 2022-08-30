@@ -55,7 +55,7 @@ impl Core {
         let _ = self.core_send.send(CoreCmd::Ice(ice));
     }
 
-    pub fn sig_msg(&self, msg: tx4_signal_core::cli::SigMessage) {
+    pub fn sig_msg(&self, msg: tx4_signal::cli::SigMessage) {
         let _ = self.core_send.send(CoreCmd::SigMsg(msg));
     }
 
@@ -82,7 +82,7 @@ enum CoreCmd {
     Addr(url::Url),
     Ice(serde_json::Value),
     Sig(sig::Sig),
-    SigMsg(tx4_signal_core::cli::SigMessage),
+    SigMsg(tx4_signal::cli::SigMessage),
     DropCon(state::PeerId, bool),
     SendOffer(state::PeerId, String),
     SendAnswer(state::PeerId, String),
@@ -122,14 +122,14 @@ async fn core_task(
 
     let _kill_tick = KillTick(tick_abort);
 
-    use tx4_signal_core::cli::SigMessage;
+    use tx4_signal::cli::SigMessage;
 
     let state = state::State::new(friendly_name, shoutout);
 
     let mut ice_servers = serde_json::json!([]);
     let mut sig = None;
     let mut con_map = HashMap::new();
-    let mut loc_pk = tx4_signal_core::Id::from_slice(&[0; 32]).unwrap();
+    let mut loc_pk = tx4_signal::Id::from_slice(&[0; 32]).unwrap();
 
     while let Some(cmd) = core_recv.recv().await {
         match cmd {
@@ -155,8 +155,8 @@ async fn core_task(
                 state.con_done(id, should_block);
             }
             CoreCmd::Addr(addr) => {
-                let loc_id = tx4_signal_core::signal_id_from_addr(&addr).unwrap();
-                loc_pk = tx4_signal_core::pk_from_addr(&addr).unwrap();
+                let loc_id = tx4_signal::signal_id_from_addr(&addr).unwrap();
+                loc_pk = tx4_signal::pk_from_addr(&addr).unwrap();
                 tracing::info!(?loc_id, ?loc_pk, "recv local id");
                 state.set_loc(loc_id, loc_pk.clone());
             }

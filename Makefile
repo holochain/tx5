@@ -17,8 +17,11 @@ publish:
 		tx4-go-pion) \
 			export MANIFEST="./crates/tx4-go-pion/Cargo.toml"; \
 			;; \
-		tx4-signal-core) \
-			export MANIFEST="./crates/tx4-signal-core/Cargo.toml"; \
+		tx4-signal) \
+			export MANIFEST="./crates/tx4-signal/Cargo.toml"; \
+			;; \
+		tx4-signal-srv) \
+			export MANIFEST="./crates/tx4-signal-srv/Cargo.toml"; \
 			;; \
 		tx4-demo) \
 			export MANIFEST="./crates/tx4-demo/Cargo.toml"; \
@@ -27,7 +30,8 @@ publish:
 			echo "USAGE: make publish crate=tx4-core"; \
 			echo "USAGE: make publish crate=tx4-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx4-go-pion"; \
-			echo "USAGE: make publish crate=tx4-signal-core"; \
+			echo "USAGE: make publish crate=tx4-signal"; \
+			echo "USAGE: make publish crate=tx4-signal-srv"; \
 			echo "USAGE: make publish crate=tx4-demo"; \
 			exit 1; \
 			;; \
@@ -47,10 +51,16 @@ static: docs tools
 	cargo clippy
 
 docs: tools
+	printf '### The `tx4-signal-srv` executable\n`tx4-signal-srv --help`\n```text\n' > crates/tx4-signal-srv/src/docs/srv_help.md
+	cargo run --manifest-path crates/tx4-signal-srv/Cargo.toml -- --help >> crates/tx4-signal-srv/src/docs/srv_help.md
+	printf '\n```\n' >> crates/tx4-signal-srv/src/docs/srv_help.md
+	cargo readme -r crates/tx4-signal-srv -o README.md
+	printf '\n' >> crates/tx4-signal-srv/README.md
+	cat crates/tx4-signal-srv/src/docs/srv_help.md >> crates/tx4-signal-srv/README.md
 	cargo readme -r crates/tx4-core -o README.md
 	cargo readme -r crates/tx4-go-pion-sys -o README.md
 	cargo readme -r crates/tx4-go-pion -o README.md
-	cargo readme -r crates/tx4-signal-core -o README.md
+	cargo readme -r crates/tx4-signal -o README.md
 	cargo readme -r crates/tx4-demo -o README.md
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 

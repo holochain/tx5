@@ -2,7 +2,7 @@ use crate::*;
 use parking_lot::Mutex;
 use std::collections::hash_map;
 use std::collections::HashMap;
-use tx4_signal_core::Id;
+use tx4_signal::Id;
 
 const MAX_CON: usize = 10;
 
@@ -95,16 +95,17 @@ impl State {
 
         let now = std::time::Instant::now();
 
-        let mut r = inner
-            .map
-            .entry(id.clone())
-            .or_insert_with(move || PeerInfo {
-                id,
-                state: PeerState::New,
-                last_touch: now,
-                friendly_name: None,
-                shoutout: None,
-            });
+        let mut r =
+            inner
+                .map
+                .entry(id.clone())
+                .or_insert_with(move || PeerInfo {
+                    id,
+                    state: PeerState::New,
+                    last_touch: now,
+                    friendly_name: None,
+                    shoutout: None,
+                });
 
         r.friendly_name = Some(friendly_name);
         r.shoutout = Some(shoutout);
@@ -120,7 +121,8 @@ impl State {
         use rand::Rng;
         //let secs = rand::thread_rng().gen_range(0..20);
         let secs = rand::thread_rng().gen_range(0..5);
-        let now = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        let now =
+            std::time::Instant::now() + std::time::Duration::from_secs(secs);
 
         let state = if should_block {
             PeerState::Block
@@ -128,16 +130,17 @@ impl State {
             PeerState::Done
         };
 
-        let mut r = inner
-            .map
-            .entry(id.clone())
-            .or_insert_with(move || PeerInfo {
-                id,
-                state,
-                last_touch: now,
-                friendly_name: None,
-                shoutout: None,
-            });
+        let mut r =
+            inner
+                .map
+                .entry(id.clone())
+                .or_insert_with(move || PeerInfo {
+                    id,
+                    state,
+                    last_touch: now,
+                    friendly_name: None,
+                    shoutout: None,
+                });
 
         r.last_touch = now;
         r.state = state;
@@ -170,13 +173,17 @@ impl State {
             });
 
             for (_, i) in items {
-                if i.state == PeerState::Block && i.last_touch.elapsed().as_secs() > 60 * 5 {
+                if i.state == PeerState::Block
+                    && i.last_touch.elapsed().as_secs() > 60 * 5
+                {
                     remove.push(i.id.clone());
                     continue;
                 }
 
                 //if i.state == PeerState::Done && i.last_touch.elapsed().as_secs() > 60 {
-                if i.state == PeerState::Done && i.last_touch.elapsed().as_secs() > 10 {
+                if i.state == PeerState::Done
+                    && i.last_touch.elapsed().as_secs() > 10
+                {
                     i.state = PeerState::New;
                 }
 
@@ -204,16 +211,17 @@ impl State {
 
         let now = std::time::Instant::now();
 
-        let mut r = inner
-            .map
-            .entry(id.clone())
-            .or_insert_with(move || PeerInfo {
-                id,
-                state: PeerState::New,
-                last_touch: now,
-                friendly_name: None,
-                shoutout: None,
-            });
+        let mut r =
+            inner
+                .map
+                .entry(id.clone())
+                .or_insert_with(move || PeerInfo {
+                    id,
+                    state: PeerState::New,
+                    last_touch: now,
+                    friendly_name: None,
+                    shoutout: None,
+                });
 
         if r.state != PeerState::New && r.state != PeerState::Done {
             return false;
@@ -232,7 +240,8 @@ impl State {
             .copy_from_slice(inner.friendly_name.as_bytes());
         out.extend(&buf[..]).map_err(other_err)?;
         buf[..].fill(0);
-        buf[0..inner.shoutout.as_bytes().len()].copy_from_slice(inner.shoutout.as_bytes());
+        buf[0..inner.shoutout.as_bytes().len()]
+            .copy_from_slice(inner.shoutout.as_bytes());
         out.extend(&buf[..]).map_err(other_err)?;
         for (_id, info) in inner.map.iter() {
             if info.state != PeerState::Block {
@@ -254,7 +263,12 @@ struct StateInner {
 }
 
 impl StateInner {
-    pub fn new(loc_id: Arc<Id>, loc_pk: Arc<Id>, friendly_name: String, shoutout: String) -> Self {
+    pub fn new(
+        loc_id: Arc<Id>,
+        loc_pk: Arc<Id>,
+        friendly_name: String,
+        shoutout: String,
+    ) -> Self {
         Self {
             loc_id,
             loc_pk,

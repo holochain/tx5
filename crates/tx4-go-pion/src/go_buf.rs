@@ -1,23 +1,28 @@
 use crate::*;
 use tx4_go_pion_sys::API;
 
-/// Describes a type that can be encoded into a GoBuf.
-pub trait TryIntoGoBuf {
-    /// Encode this type into a GoBuf.
-    fn try_into_go_buf(self) -> Result<GoBuf>;
-}
+/// Interim step for conversion into a GoBuf.
+pub struct IntoGoBuf(pub Result<GoBuf>);
 
-impl TryIntoGoBuf for GoBuf {
-    fn try_into_go_buf(self) -> Result<GoBuf> {
-        Ok(self)
+impl From<IntoGoBuf> for Result<GoBuf> {
+    fn from(i: IntoGoBuf) -> Self {
+        i.0
     }
 }
 
-impl<T: serde::Serialize> TryIntoGoBuf for &T {
-    fn try_into_go_buf(self) -> Result<GoBuf> {
-        let mut out = GoBuf::new()?;
-        serde_json::to_writer(&mut out, self).map_err(Error::err)?;
-        Ok(out)
+impl From<GoBuf> for IntoGoBuf {
+    fn from(b: GoBuf) -> Self {
+        Self(Ok(b))
+    }
+}
+
+impl<S: serde::Serialize> From<S> for IntoGoBuf {
+    fn from(s: S) -> Self {
+        Self((|| {
+            let mut b = GoBuf::new()?;
+            serde_json::to_writer(&mut b, &s).map_err(Error::err)?;
+            Ok(b)
+        })())
     }
 }
 

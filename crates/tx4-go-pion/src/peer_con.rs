@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tx4_go_pion_sys::API;
 
 /// ICE server configuration.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
 pub struct IceServer {
     /// Url list.
@@ -19,7 +19,7 @@ pub struct IceServer {
 }
 
 /// Configuration for a go pion webrtc PeerConnection.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
 pub struct PeerConConfig {
     /// ICE server list.
@@ -41,13 +41,16 @@ impl Drop for PeerConnection {
 
 impl PeerConnection {
     /// Construct a new PeerConnection.
-    pub fn new<Cb>(json: &str, cb: Cb) -> Result<Self>
+    pub fn new<B, Cb>(config: B, cb: Cb) -> Result<Self>
     where
+        B: Into<IntoGoBuf>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
+        let config: Result<GoBuf> = config.into().into();
         let cb: PeerConEvtCb = Arc::new(cb);
         unsafe {
-            let peer_con_id = API.peer_con_alloc(json)?;
+            let config = config?;
+            let peer_con_id = API.peer_con_alloc(config.0)?;
             register_peer_con_evt_cb(peer_con_id, cb);
             Ok(Self(peer_con_id))
         }

@@ -51,8 +51,7 @@ const (
 
 	// Request a new peer connection be opened.
 	// - allowed contexts: Call, Response
-	// - call slot_a: utf8 json config ptr
-	// - call slot_b: utf8 json config len
+	// - call slot_a: config buffer id
 	// - msg slot_a: peer_con id
 	TyPeerConAlloc UintPtrT = 0x9001
 

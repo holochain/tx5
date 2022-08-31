@@ -429,10 +429,11 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn peer_con_alloc(&self, json: &str) -> Result<PeerConId> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-        self.call(TY_PEER_CON_ALLOC, data, len, 0, 0, |r| match r {
+    pub unsafe fn peer_con_alloc(
+        &self,
+        config_buf_id: BufferId,
+    ) -> Result<PeerConId> {
+        self.call(TY_PEER_CON_ALLOC, config_buf_id, 0, 0, 0, |r| match r {
             Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })

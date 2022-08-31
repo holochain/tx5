@@ -66,6 +66,7 @@ mod tests {
 
     #[test]
     fn peer_con() {
+        let stun: PeerConConfig = serde_json::from_str(STUN).unwrap();
         let config_test = PeerConConfig {
             ice_servers: vec![
                 IceServer {
@@ -82,7 +83,8 @@ mod tests {
                 },
             ],
         };
-        let mut config_test = config_test.try_into_go_buf().unwrap();
+        let config_test = IntoGoBuf::from(config_test);
+        let mut config_test = <Result<GoBuf>>::from(config_test).unwrap();
         config_test
             .access(|config_test| {
                 println!(
@@ -122,13 +124,14 @@ mod tests {
         // -- spawn thread for peer connection 1 -- //
 
         let hnd1 = {
+            let stun = stun.clone();
             let res_send = res_send.clone();
             let cmd_send_2 = cmd_send_2.clone();
             let ice1 = ice1.clone();
             std::thread::spawn(move || {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
-                    PeerConnection::new(STUN, move |evt| match evt {
+                    PeerConnection::new(&stun, move |evt| match evt {
                         PeerConnectionEvent::ICECandidate(candidate) => {
                             println!("peer1 in-ice: {}", candidate);
                             ice1.lock().push(candidate.clone());
@@ -167,13 +170,14 @@ mod tests {
         // -- spawn thread for peer connection 2 -- //
 
         let hnd2 = {
+            let stun = stun.clone();
             let res_send = res_send.clone();
             let cmd_send_1 = cmd_send_1.clone();
             let ice2 = ice2.clone();
             std::thread::spawn(move || {
                 let mut peer2 = {
                     let cmd_send_1 = cmd_send_1.clone();
-                    PeerConnection::new(STUN, move |evt| match evt {
+                    PeerConnection::new(&stun, move |evt| match evt {
                         PeerConnectionEvent::ICECandidate(candidate) => {
                             println!("peer2 in-ice: {}", candidate);
                             ice2.lock().push(candidate.clone());

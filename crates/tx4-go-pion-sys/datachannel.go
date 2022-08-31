@@ -129,20 +129,15 @@ func CallDataChanSend(
 	buf_hnd := cgo.Handle(buffer_id)
 	buf := buf_hnd.Value().(*Buffer)
 	buf.mu.Lock()
-	// defer buf.mu.Unlock()
-	// don't defer Unlock, we need to be able to unlock it manually
-	// so that we can free the passed in buffer... *BUT* that
-	// means we have to manually unlock it before all exits
+	defer buf.mu.Unlock()
 
 	if buf.closed {
-		buf.mu.Unlock()
 		panic("BufferClosed")
 	}
 
 	err := dataChan.ch.Send(buf.buf.Bytes())
 
-	buf.mu.Unlock()
-	buf.Free()
+	buf.FreeAlreadyLocked()
 
 	if err != nil {
 		panic(err)

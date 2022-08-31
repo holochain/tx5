@@ -41,8 +41,7 @@ type PeerConConfig struct {
 }
 
 func CallPeerConAlloc(
-	config_json UintPtrT,
-	config_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -61,13 +60,20 @@ func CallPeerConAlloc(
 	  }
 	  fmt.Printf("cert:\n%s\n", certPem)
 	*/
+  buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-	buf := LoadBytesSafe(config_json, config_len)
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var tmpConfig PeerConConfig
-	if err := json.Unmarshal(buf.Bytes(), &tmpConfig); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &tmpConfig); err != nil {
 		panic(err)
 	}
+
+  buf.FreeAlreadyLocked()
 
 	var config_parsed webrtc.Configuration
 	config_parsed.ICEServers = tmpConfig.ICEServers

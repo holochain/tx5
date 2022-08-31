@@ -14,6 +14,12 @@ type Buffer struct {
 	handle UintPtrT
 }
 
+func BufferFromPtr(id UintPtrT) *Buffer {
+	hnd := cgo.Handle(id)
+	buf := hnd.Value().(*Buffer)
+  return buf
+}
+
 // If you invoke this function, you *must* call Free,
 // otherwise the buffer will be leaked.
 func NewBuffer(initBuf []byte) *Buffer {
@@ -27,10 +33,7 @@ func NewBuffer(initBuf []byte) *Buffer {
 	return buf
 }
 
-func (buf *Buffer) Free() {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-
+func (buf *Buffer) FreeAlreadyLocked() {
 	if buf.closed {
 		return
 	}
@@ -56,9 +59,11 @@ func CallBufferAlloc(
 }
 
 func CallBufferFree(id UintPtrT) {
-	hnd := cgo.Handle(id)
-	buf := hnd.Value().(*Buffer)
-	buf.Free()
+  buf := BufferFromPtr(id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	buf.FreeAlreadyLocked()
 }
 
 func CallBufferAccess(
@@ -66,8 +71,7 @@ func CallBufferAccess(
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
-	hnd := cgo.Handle(id)
-	buf := hnd.Value().(*Buffer)
+  buf := BufferFromPtr(id)
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 
@@ -107,8 +111,7 @@ func CallBufferReserve(
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
-	hnd := cgo.Handle(id)
-	buf := hnd.Value().(*Buffer)
+  buf := BufferFromPtr(id)
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 
@@ -136,8 +139,7 @@ func CallBufferExtend(
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
-	hnd := cgo.Handle(id)
-	buf := hnd.Value().(*Buffer)
+  buf := BufferFromPtr(id)
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 
@@ -167,8 +169,7 @@ func CallBufferRead(
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
-	hnd := cgo.Handle(id)
-	buf := hnd.Value().(*Buffer)
+  buf := BufferFromPtr(id)
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 

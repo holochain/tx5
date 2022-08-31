@@ -66,34 +66,7 @@ mod tests {
 
     #[test]
     fn peer_con() {
-        let stun: PeerConConfig = serde_json::from_str(STUN).unwrap();
-        let config_test = PeerConConfig {
-            ice_servers: vec![
-                IceServer {
-                    urls: vec!["stun:openrelay.metered.ca:80".into()],
-                    username: None,
-                    credential: None,
-                },
-                IceServer {
-                    urls: vec![
-                        "turn:openrelay.metered.ca:443?transport=tcp".into()
-                    ],
-                    username: Some("openrelayproject".into()),
-                    credential: Some("openrelayproject".into()),
-                },
-            ],
-        };
-        let config_test = IntoGoBuf::from(config_test);
-        let mut config_test = <Result<GoBuf>>::from(config_test).unwrap();
-        config_test
-            .access(|config_test| {
-                println!(
-                    "CONFIG TEST: {}",
-                    String::from_utf8_lossy(config_test?)
-                );
-                Ok(())
-            })
-            .unwrap();
+        let config: PeerConConfig = serde_json::from_str(STUN).unwrap();
 
         let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));
@@ -124,14 +97,14 @@ mod tests {
         // -- spawn thread for peer connection 1 -- //
 
         let hnd1 = {
-            let stun = stun.clone();
+            let config = config.clone();
             let res_send = res_send.clone();
             let cmd_send_2 = cmd_send_2.clone();
             let ice1 = ice1.clone();
             std::thread::spawn(move || {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
-                    PeerConnection::new(&stun, move |evt| match evt {
+                    PeerConnection::new(&config, move |evt| match evt {
                         PeerConnectionEvent::ICECandidate(candidate) => {
                             println!("peer1 in-ice: {}", candidate);
                             ice1.lock().push(candidate.clone());
@@ -170,14 +143,14 @@ mod tests {
         // -- spawn thread for peer connection 2 -- //
 
         let hnd2 = {
-            let stun = stun.clone();
+            let config = config.clone();
             let res_send = res_send.clone();
             let cmd_send_1 = cmd_send_1.clone();
             let ice2 = ice2.clone();
             std::thread::spawn(move || {
                 let mut peer2 = {
                     let cmd_send_1 = cmd_send_1.clone();
-                    PeerConnection::new(&stun, move |evt| match evt {
+                    PeerConnection::new(&config, move |evt| match evt {
                         PeerConnectionEvent::ICECandidate(candidate) => {
                             println!("peer2 in-ice: {}", candidate);
                             ice2.lock().push(candidate.clone());

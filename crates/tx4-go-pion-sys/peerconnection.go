@@ -60,7 +60,7 @@ func CallPeerConAlloc(
 	  }
 	  fmt.Printf("cert:\n%s\n", certPem)
 	*/
-  buf := BufferFromPtr(config_buf_id)
+	buf := BufferFromPtr(config_buf_id)
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 
@@ -73,7 +73,7 @@ func CallPeerConAlloc(
 		panic(err)
 	}
 
-  buf.FreeAlreadyLocked()
+	buf.FreeAlreadyLocked()
 
 	var config_parsed webrtc.Configuration
 	config_parsed.ICEServers = tmpConfig.ICEServers

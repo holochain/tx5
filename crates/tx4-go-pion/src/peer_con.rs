@@ -26,6 +26,18 @@ pub struct PeerConConfig {
     pub ice_servers: Vec<IceServer>,
 }
 
+impl From<PeerConConfig> for IntoGoBuf {
+    fn from(p: PeerConConfig) -> Self {
+        IntoGoBuf::json(&p)
+    }
+}
+
+impl From<&PeerConConfig> for IntoGoBuf {
+    fn from(p: &PeerConConfig) -> Self {
+        IntoGoBuf::json(&p)
+    }
+}
+
 /// A go pion webrtc PeerConnection.
 #[derive(Debug)]
 pub struct PeerConnection(usize);

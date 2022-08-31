@@ -1,23 +1,13 @@
 use crate::*;
+use std::sync::Arc;
 use tx4_go_pion_sys::API;
 
 /// Interim step for conversion into a GoBuf.
 pub struct IntoGoBuf(pub Result<GoBuf>);
 
-impl From<IntoGoBuf> for Result<GoBuf> {
-    fn from(i: IntoGoBuf) -> Self {
-        i.0
-    }
-}
-
-impl From<GoBuf> for IntoGoBuf {
-    fn from(b: GoBuf) -> Self {
-        Self(Ok(b))
-    }
-}
-
-impl<S: serde::Serialize> From<S> for IntoGoBuf {
-    fn from(s: S) -> Self {
+impl IntoGoBuf {
+    /// Serialize via serde_json into an IntoGoBuf.
+    pub fn json<S: serde::Serialize>(s: S) -> Self {
         Self((|| {
             let mut b = GoBuf::new()?;
             serde_json::to_writer(&mut b, &s).map_err(Error::err)?;
@@ -26,10 +16,85 @@ impl<S: serde::Serialize> From<S> for IntoGoBuf {
     }
 }
 
+impl From<IntoGoBuf> for Result<GoBuf> {
+    #[inline]
+    fn from(i: IntoGoBuf) -> Self {
+        i.0
+    }
+}
+
+impl From<GoBuf> for IntoGoBuf {
+    #[inline]
+    fn from(b: GoBuf) -> Self {
+        Self(Ok(b))
+    }
+}
+
+impl<R: AsRef<[u8]>> From<R> for IntoGoBuf {
+    #[inline]
+    fn from(r: R) -> Self {
+        Self(GoBuf::from_slice(r))
+    }
+}
+
 /// A bytes.Buffer managed in go memory.
 /// Rust can only access go memory safely during a callback.
 #[derive(Debug)]
 pub struct GoBuf(pub(crate) usize);
+
+impl std::convert::TryFrom<&[u8]> for GoBuf {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: &[u8]) -> Result<Self> {
+        GoBuf::from_slice(value)
+    }
+}
+
+impl std::convert::TryFrom<&Vec<u8>> for GoBuf {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: &Vec<u8>) -> Result<Self> {
+        GoBuf::from_slice(value)
+    }
+}
+
+impl<const N: usize> std::convert::TryFrom<[u8; N]> for GoBuf {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: [u8; N]) -> Result<Self> {
+        GoBuf::from_slice(value)
+    }
+}
+
+impl std::convert::TryFrom<Vec<u8>> for GoBuf {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: Vec<u8>) -> Result<Self> {
+        GoBuf::from_slice(value)
+    }
+}
+
+impl std::convert::TryFrom<Box<[u8]>> for GoBuf {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: Box<[u8]>) -> Result<Self> {
+        GoBuf::from_slice(value)
+    }
+}
+
+impl std::convert::TryFrom<Arc<[u8]>> for GoBuf {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: Arc<[u8]>) -> Result<Self> {
+        GoBuf::from_slice(value)
+    }
+}
 
 impl Drop for GoBuf {
     fn drop(&mut self) {
@@ -44,6 +109,15 @@ impl GoBuf {
     #[inline]
     pub fn new() -> Result<Self> {
         unsafe { Ok(Self(API.buffer_alloc()?)) }
+    }
+
+    /// Construct a new bytes.Buffer in go memory,
+    /// copying in the provided slice.
+    #[inline]
+    pub fn from_slice<R: AsRef<[u8]>>(r: R) -> Result<Self> {
+        let mut b = GoBuf::new()?;
+        b.extend(r.as_ref())?;
+        Ok(b)
     }
 
     /// Reserve additional capacity in this buffer.

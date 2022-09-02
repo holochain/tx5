@@ -190,13 +190,13 @@ func CallPeerConCreateOffer(
 		panic(err)
 	}
 
-  buf := NewBuffer([]byte(offerJson))
+	buf := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateOffer,
-    buf.handle,
+		buf.handle,
 		0,
 		0,
 		0,
@@ -240,13 +240,13 @@ func CallPeerConCreateAnswer(
 		panic(err)
 	}
 
-  buf := NewBuffer([]byte(offerJson))
+	buf := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateAnswer,
-    buf.handle,
+		buf.handle,
 		0,
 		0,
 		0,

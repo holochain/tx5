@@ -47,8 +47,10 @@ test: static tools
 	RUST_BACKTRACE=1 cargo test
 
 static: docs tools
+	(cd crates/tx4-go-pion-sys; go fmt)
 	cargo fmt -- --check
 	cargo clippy
+	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 docs: tools
 	printf '### The `tx4-signal-srv` executable\n`tx4-signal-srv --help`\n```text\n' > crates/tx4-signal-srv/src/docs/srv_help.md
@@ -62,7 +64,6 @@ docs: tools
 	cargo readme -r crates/tx4-go-pion -o README.md
 	cargo readme -r crates/tx4-signal -o README.md
 	cargo readme -r crates/tx4-demo -o README.md
-	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 tools: tool_rust tool_fmt tool_clippy tool_readme
 

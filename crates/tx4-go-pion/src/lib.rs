@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn peer_con() {
-        let config: PeerConConfig = serde_json::from_str(STUN).unwrap();
+        let config: PeerConnectionConfig = serde_json::from_str(STUN).unwrap();
 
         let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));
@@ -74,7 +74,7 @@ mod tests {
         #[derive(Debug)]
         enum Cmd {
             Shutdown,
-            ICE(String),
+            ICE(GoBuf),
             Offer(GoBuf),
             Answer(GoBuf),
         }
@@ -105,9 +105,14 @@ mod tests {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
                     PeerConnection::new(&config, move |evt| match evt {
-                        PeerConnectionEvent::ICECandidate(candidate) => {
-                            println!("peer1 in-ice: {}", candidate);
-                            ice1.lock().push(candidate.clone());
+                        PeerConnectionEvent::ICECandidate(mut candidate) => {
+                            println!(
+                                "peer1 in-ice: {}",
+                                String::from_utf8_lossy(
+                                    &candidate.to_vec().unwrap()
+                                )
+                            );
+                            ice1.lock().push(candidate.mut_clone());
                             cmd_send_2.send(Cmd::ICE(candidate)).unwrap();
                         }
                         PeerConnectionEvent::DataChannel(chan) => {
@@ -118,7 +123,9 @@ mod tests {
                 };
 
                 let chan1 = peer1
-                    .create_data_channel("{ \"label\": \"data\" }")
+                    .create_data_channel(DataChannelConfig {
+                        label: Some("data".into()),
+                    })
                     .unwrap();
 
                 res_send.send(Res::Chan1(chan1)).unwrap();
@@ -129,7 +136,7 @@ mod tests {
 
                 while let Ok(cmd) = cmd_recv_1.recv() {
                     match cmd {
-                        Cmd::ICE(ice) => peer1.add_ice_candidate(&ice).unwrap(),
+                        Cmd::ICE(ice) => peer1.add_ice_candidate(ice).unwrap(),
                         Cmd::Answer(mut answer) => {
                             println!(
                                 "peer1 recv answer: {}",
@@ -156,9 +163,14 @@ mod tests {
                 let mut peer2 = {
                     let cmd_send_1 = cmd_send_1.clone();
                     PeerConnection::new(&config, move |evt| match evt {
-                        PeerConnectionEvent::ICECandidate(candidate) => {
-                            println!("peer2 in-ice: {}", candidate);
-                            ice2.lock().push(candidate.clone());
+                        PeerConnectionEvent::ICECandidate(mut candidate) => {
+                            println!(
+                                "peer2 in-ice: {}",
+                                String::from_utf8_lossy(
+                                    &candidate.to_vec().unwrap()
+                                )
+                            );
+                            ice2.lock().push(candidate.mut_clone());
                             cmd_send_1.send(Cmd::ICE(candidate)).unwrap();
                         }
                         PeerConnectionEvent::DataChannel(chan) => {
@@ -171,7 +183,7 @@ mod tests {
 
                 while let Ok(cmd) = cmd_recv_2.recv() {
                     match cmd {
-                        Cmd::ICE(ice) => peer2.add_ice_candidate(&ice).unwrap(),
+                        Cmd::ICE(ice) => peer2.add_ice_candidate(ice).unwrap(),
                         Cmd::Offer(mut offer) => {
                             println!(
                                 "peer2 recv offer: {}",

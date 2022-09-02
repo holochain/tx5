@@ -104,13 +104,14 @@ func CallPeerConAlloc(
 		if err != nil {
 			return
 		}
-		bytes := []byte(json)
+
+		buf := NewBuffer([]byte(json))
 
 		EmitEvent(
 			TyPeerConOnICECandidate,
 			handle,
-			VoidStarToPtrT(unsafe.Pointer(&bytes[0])),
-			UintPtrT(len(bytes)),
+			buf.handle,
+			0,
 			0,
 		)
 	})
@@ -341,8 +342,7 @@ func CallPeerConSetRemDesc(
 
 func CallPeerConAddICECandidate(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	ice_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -355,10 +355,16 @@ func CallPeerConAddICECandidate(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(ice_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var candidate webrtc.ICECandidateInit
-	if err := json.Unmarshal(buf.Bytes(), &candidate); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &candidate); err != nil {
 		panic(err)
 	}
 
@@ -389,8 +395,7 @@ type DataChanConfig struct {
 
 func CallPeerConCreateDataChan(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -403,10 +408,16 @@ func CallPeerConCreateDataChan(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var conf DataChanConfig
-	if err := json.Unmarshal(buf.Bytes(), &conf); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &conf); err != nil {
 		panic(err)
 	}
 

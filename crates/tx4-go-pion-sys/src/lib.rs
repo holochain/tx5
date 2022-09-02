@@ -152,7 +152,7 @@ pub enum Event {
     Error(std::io::Error),
     PeerConICECandidate {
         peer_con_id: PeerConId,
-        candidate: String,
+        candidate: BufferId,
     },
     PeerConStateChange {
         peer_con_id: PeerConId,
@@ -201,16 +201,10 @@ impl Api {
                         String::from_utf8_lossy(err).to_string(),
                     ))
                 }
-                TY_PEER_CON_ON_ICE_CANDIDATE => {
-                    let candidate =
-                        std::slice::from_raw_parts(slot_b as *const u8, slot_c);
-                    let candidate =
-                        String::from_utf8_lossy(candidate).to_string();
-                    Event::PeerConICECandidate {
-                        peer_con_id: slot_a,
-                        candidate,
-                    }
-                }
+                TY_PEER_CON_ON_ICE_CANDIDATE => Event::PeerConICECandidate {
+                    peer_con_id: slot_a,
+                    candidate: slot_b,
+                },
                 TY_PEER_CON_ON_STATE_CHANGE => Event::PeerConStateChange {
                     peer_con_id: slot_a,
                     peer_con_state: slot_b,
@@ -534,44 +528,28 @@ impl Api {
     pub unsafe fn peer_con_add_ice_candidate(
         &self,
         id: PeerConId,
-        json: &str,
+        ice_buf_id: BufferId,
     ) -> Result<()> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
-        self.call(
-            TY_PEER_CON_ADD_ICE_CANDIDATE,
-            id,
-            data,
-            len,
-            0,
-            |r| match r {
+        self.call(TY_PEER_CON_ADD_ICE_CANDIDATE, id, ice_buf_id, 0, 0, |r| {
+            match r {
                 Ok((_t, _a, _b, _c, _d)) => Ok(()),
                 Err(e) => Err(e),
-            },
-        )
+            }
+        })
     }
 
     #[inline]
     pub unsafe fn peer_con_create_data_chan(
         &self,
         id: PeerConId,
-        json: &str,
+        config_buf_id: BufferId,
     ) -> Result<DataChanId> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
-        self.call(
-            TY_PEER_CON_CREATE_DATA_CHAN,
-            id,
-            data,
-            len,
-            0,
-            |r| match r {
+        self.call(TY_PEER_CON_CREATE_DATA_CHAN, id, config_buf_id, 0, 0, |r| {
+            match r {
                 Ok((_t, a, _b, _c, _d)) => Ok(a),
                 Err(e) => Err(e),
-            },
-        )
+            }
+        })
     }
 
     #[inline]

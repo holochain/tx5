@@ -21,19 +21,40 @@ pub struct IceServer {
 /// Configuration for a go pion webrtc PeerConnection.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
-pub struct PeerConConfig {
+pub struct PeerConnectionConfig {
     /// ICE server list.
     pub ice_servers: Vec<IceServer>,
 }
 
-impl From<PeerConConfig> for GoBufRef<'static> {
-    fn from(p: PeerConConfig) -> Self {
+impl From<PeerConnectionConfig> for GoBufRef<'static> {
+    fn from(p: PeerConnectionConfig) -> Self {
         GoBufRef::json(&p)
     }
 }
 
-impl From<&PeerConConfig> for GoBufRef<'static> {
-    fn from(p: &PeerConConfig) -> Self {
+impl From<&PeerConnectionConfig> for GoBufRef<'static> {
+    fn from(p: &PeerConnectionConfig) -> Self {
+        GoBufRef::json(&p)
+    }
+}
+
+/// Configuration for a go pion webrtc DataChannel.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
+pub struct DataChannelConfig {
+    /// DataChannel Label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+impl From<DataChannelConfig> for GoBufRef<'static> {
+    fn from(p: DataChannelConfig) -> Self {
+        GoBufRef::json(&p)
+    }
+}
+
+impl From<&DataChannelConfig> for GoBufRef<'static> {
+    fn from(p: &DataChannelConfig) -> Self {
         GoBufRef::json(&p)
     }
 }
@@ -99,17 +120,28 @@ impl PeerConnection {
     }
 
     /// Add ice candidate.
-    pub fn add_ice_candidate(&mut self, json: &str) -> Result<()> {
-        unsafe { API.peer_con_add_ice_candidate(self.0, json) }
+    pub fn add_ice_candidate<'a, B>(&mut self, ice: B) -> Result<()>
+    where
+        B: Into<GoBufRef<'a>>,
+    {
+        let mut ice = ice.into();
+        let ice = ice.as_mut_ref()?;
+        unsafe { API.peer_con_add_ice_candidate(self.0, ice.0) }
     }
 
     /// Create data channel.
-    pub fn create_data_channel(
+    pub fn create_data_channel<'a, B>(
         &mut self,
-        json: &str,
-    ) -> Result<DataChannelSeed> {
+        config: B,
+    ) -> Result<DataChannelSeed>
+    where
+        B: Into<GoBufRef<'a>>,
+    {
+        let mut config = config.into();
+        let config = config.as_mut_ref()?;
         unsafe {
-            let data_chan_id = API.peer_con_create_data_chan(self.0, json)?;
+            let data_chan_id =
+                API.peer_con_create_data_chan(self.0, config.0)?;
             Ok(DataChannelSeed(data_chan_id))
         }
     }

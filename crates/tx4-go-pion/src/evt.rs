@@ -10,7 +10,7 @@ use tx4_go_pion_sys::API;
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
     /// Received a trickle ICE candidate.
-    ICECandidate(String),
+    ICECandidate(GoBuf),
 
     /// Received an incoming data channel.
     DataChannel(DataChannelSeed),
@@ -66,7 +66,7 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 let maybe_cb =
                     MANAGER.lock().peer_con.get(&peer_con_id).cloned();
                 if let Some(cb) = maybe_cb {
-                    cb(PeerConnectionEvent::ICECandidate(candidate));
+                    cb(PeerConnectionEvent::ICECandidate(GoBuf(candidate)));
                 }
             }
             SysEvent::PeerConStateChange {

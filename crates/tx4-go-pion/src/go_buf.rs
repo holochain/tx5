@@ -170,6 +170,13 @@ impl GoBuf {
         })
     }
 
+    /// GoBuf requires mutable access to read, so we can't just
+    /// implement Clone directly.
+    #[inline]
+    pub fn mut_clone(&mut self) -> Result<Self> {
+        self.access(|bytes| GoBuf::from_slice(bytes?))
+    }
+
     /// Read the data out of Go memory into a rust Vec<u8>.
     #[inline]
     pub fn to_vec(&mut self) -> Result<Vec<u8>> {

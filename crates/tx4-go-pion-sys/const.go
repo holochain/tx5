@@ -91,22 +91,19 @@ const (
 	// Request an existing peer con add ice candidate.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: ice buffer id
 	TyPeerConAddICECandidate UintPtrT = 0x9007
 
 	// Request an existing peer con create a new data channel.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: config buffer id
 	TyPeerConCreateDataChan UintPtrT = 0x9008
 
 	// OnICECandidate event on an existing peer con.
 	// - allowed contexts: Event
 	// - msg slot_a: peer_con id
-	// - msg slot_b: utf8 ptr
-	// - msg slot_c: utf8 len
+	// - msg slot_b: ice buffer id
 	TyPeerConOnICECandidate UintPtrT = 0x9801
 
 	// OnConStateChange event on an existing peer con.

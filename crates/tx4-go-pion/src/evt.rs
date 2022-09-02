@@ -9,6 +9,9 @@ use tx4_go_pion_sys::API;
 /// Incoming events related to a PeerConnection.
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
+    /// PeerConnection Error.
+    Error(Error),
+
     /// Received a trickle ICE candidate.
     ICECandidate(GoBuf),
 
@@ -27,6 +30,12 @@ pub enum DataChannelEvent {
 
     /// DataChannel incoming message.
     Message(GoBuf),
+}
+
+#[inline]
+pub(crate) fn init_evt_manager() {
+    // ensure initialization
+    MANAGER.is_locked();
 }
 
 pub(crate) fn register_peer_con_evt_cb(id: usize, cb: PeerConEvtCb) {

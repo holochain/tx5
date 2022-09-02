@@ -6,6 +6,7 @@ import (
 	//"crypto/elliptic"
 	//"crypto/rand"
 	//"fmt"
+	"fmt"
 	"runtime/cgo"
 	"sync"
 	"unsafe"
@@ -95,7 +96,24 @@ func CallPeerConAlloc(
 	handle := UintPtrT(cgo.NewHandle(peerCon))
 	peerCon.handle = handle
 
+	EmitTrace(
+		LvlDebug,
+		fmt.Sprintf(
+			"PeerConnection(%v).PeerConAlloc()",
+			handle,
+		),
+	)
+
 	con.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		EmitTrace(
+			LvlTrace,
+			fmt.Sprintf(
+				"PeerConnection(%v).OnICECandidate(%v)",
+				handle,
+				candidate,
+			),
+		)
+
 		if candidate == nil {
 			return
 		}
@@ -128,6 +146,16 @@ func CallPeerConAlloc(
 
 	con.OnDataChannel(func(ch *webrtc.DataChannel) {
 		dataChan := NewDataChan(ch)
+
+		EmitTrace(
+			LvlTrace,
+			fmt.Sprintf(
+				"PeerConnection(%v).OnDataChannel(%v)",
+				handle,
+				dataChan.handle,
+			),
+		)
+
 		EmitEvent(
 			TyPeerConOnDataChannel,
 			handle,

@@ -136,6 +136,29 @@ func OnEvent(
 	return prev
 }
 
+const (
+	LvlTrace UintPtrT = 0x01
+	LvlDebug UintPtrT = 0x02
+	LvlInfo  UintPtrT = 0x03
+	LvlWarn  UintPtrT = 0x04
+	LvlError UintPtrT = 0x05
+)
+
+func EmitTrace(
+	lvl UintPtrT,
+	msg string,
+) {
+	buf := []byte(msg)
+
+	EmitEvent(
+		TyOnTrace,
+		lvl,
+		C.void_star_to_ptr_t(unsafe.Pointer(&buf[0])),
+		UintPtrT(len(buf)),
+		0,
+	)
+}
+
 // make a call into the library
 //
 //export Call

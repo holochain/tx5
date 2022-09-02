@@ -1,4 +1,5 @@
 pub const TY_ERR: usize = 0xffff;
+pub const TY_TRACE: usize = 0xfffe;
 pub const TY_BUFFER_ALLOC: usize = 0x8001;
 pub const TY_BUFFER_FREE: usize = 0x8002;
 pub const TY_BUFFER_ACCESS: usize = 0x8003;

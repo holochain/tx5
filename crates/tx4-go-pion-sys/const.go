@@ -4,10 +4,17 @@ const (
 	// Reporting an error from the lib.
 	// - allowed contexts: Event, Response
 	// - msg slot_a = utf8 error id ptr
-	// - msg slot_b = utf8 error id ptr
+	// - msg slot_b = utf8 error id len
 	// - msg slot_c = utf8 error info ptr
 	// - msg slot_d = utf8 error info len
 	TyErr UintPtrT = 0xffff
+
+	// A tracing message published by the lib.
+	// - allowed contexts: Event
+	// - msg slot_a: logging level
+	// - msg slot_b: utf8 info ptr
+	// - msg slot_c: utf8 info len
+	TyOnTrace UintPtrT = 0xfffe
 
 	// Request a go buffer be created / giving access to said buffer in resp.
 	// - allowed contexts: Call, Response

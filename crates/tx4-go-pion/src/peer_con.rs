@@ -113,6 +113,7 @@ impl PeerConnection {
         B: Into<GoBufRef<'a>>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
+        init_evt_manager();
         let mut config = config.into();
         let config = config.as_mut_ref()?;
         let cb: PeerConEvtCb = Arc::new(cb);

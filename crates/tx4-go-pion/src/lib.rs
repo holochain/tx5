@@ -64,8 +64,21 @@ mod tests {
     ]
 }"#;
 
+    fn init_tracing() {
+        let subscriber = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(
+                tracing_subscriber::filter::EnvFilter::from_default_env(),
+            )
+            .with_file(true)
+            .with_line_number(true)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
+
     #[test]
     fn peer_con() {
+        init_tracing();
+
         let config: PeerConnectionConfig = serde_json::from_str(STUN).unwrap();
 
         let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
@@ -105,6 +118,9 @@ mod tests {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
                     PeerConnection::new(&config, move |evt| match evt {
+                        PeerConnectionEvent::Error(err) => {
+                            panic!("{:?}", err);
+                        }
                         PeerConnectionEvent::ICECandidate(mut candidate) => {
                             println!(
                                 "peer1 in-ice: {}",
@@ -164,6 +180,9 @@ mod tests {
                 let mut peer2 = {
                     let cmd_send_1 = cmd_send_1.clone();
                     PeerConnection::new(&config, move |evt| match evt {
+                        PeerConnectionEvent::Error(err) => {
+                            panic!("{:?}", err);
+                        }
                         PeerConnectionEvent::ICECandidate(mut candidate) => {
                             println!(
                                 "peer2 in-ice: {}",

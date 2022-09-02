@@ -201,6 +201,22 @@ impl Api {
                         String::from_utf8_lossy(err).to_string(),
                     ))
                 }
+                TY_TRACE => {
+                    let msg =
+                        std::slice::from_raw_parts(slot_b as *const u8, slot_c);
+                    let msg = String::from_utf8_lossy(msg);
+                    match slot_a {
+                        1 => tracing::trace!("{}", msg),
+                        2 => tracing::debug!("{}", msg),
+                        3 => tracing::info!("{}", msg),
+                        4 => tracing::warn!("{}", msg),
+                        _ => tracing::error!("{}", msg),
+                    }
+
+                    // need to forget it every time, otherwise drop will run
+                    Box::into_raw(closure);
+                    return;
+                }
                 TY_PEER_CON_ON_ICE_CANDIDATE => Event::PeerConICECandidate {
                     peer_con_id: slot_a,
                     candidate: slot_b,

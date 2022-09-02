@@ -47,9 +47,9 @@ test: static tools
 	RUST_BACKTRACE=1 cargo test
 
 static: docs tools
-	(cd crates/tx4-go-pion-sys; go fmt)
 	cargo fmt -- --check
 	cargo clippy
+	(cd crates/tx4-go-pion-sys; go fmt -mod vendor)
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 docs: tools

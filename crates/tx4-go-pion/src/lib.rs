@@ -130,7 +130,8 @@ mod tests {
 
                 res_send.send(Res::Chan1(chan1)).unwrap();
 
-                let mut offer = peer1.create_offer(None).unwrap();
+                let mut offer =
+                    peer1.create_offer(OfferConfig::default()).unwrap();
                 peer1.set_local_description(&mut offer).unwrap();
                 cmd_send_2.send(Cmd::Offer(offer)).unwrap();
 
@@ -192,7 +193,9 @@ mod tests {
                                 )
                             );
                             peer2.set_remote_description(offer).unwrap();
-                            let mut answer = peer2.create_answer(None).unwrap();
+                            let mut answer = peer2
+                                .create_answer(AnswerConfig::default())
+                                .unwrap();
                             peer2.set_local_description(&mut answer).unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
                         }

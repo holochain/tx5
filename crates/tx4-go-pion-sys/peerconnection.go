@@ -156,8 +156,7 @@ func CallPeerConFree(peer_con_id UintPtrT) {
 
 func CallPeerConCreateOffer(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -170,15 +169,17 @@ func CallPeerConCreateOffer(
 		panic("PeerConClosed")
 	}
 
-	var opts *webrtc.OfferOptions
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-	if json_data != 0 {
-		buf := LoadBytesSafe(json_data, json_len)
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
-		opts = new(webrtc.OfferOptions)
-		if err := json.Unmarshal(buf.Bytes(), opts); err != nil {
-			panic(err)
-		}
+	opts := new(webrtc.OfferOptions)
+	if err := json.Unmarshal(buf.buf.Bytes(), opts); err != nil {
+		panic(err)
 	}
 
 	offer, err := peerCon.con.CreateOffer(opts)
@@ -191,13 +192,13 @@ func CallPeerConCreateOffer(
 		panic(err)
 	}
 
-	buf := NewBuffer([]byte(offerJson))
+	bufOut := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateOffer,
-		buf.handle,
+		bufOut.handle,
 		0,
 		0,
 		0,
@@ -206,8 +207,7 @@ func CallPeerConCreateOffer(
 
 func CallPeerConCreateAnswer(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -220,15 +220,17 @@ func CallPeerConCreateAnswer(
 		panic("PeerConClosed")
 	}
 
-	var opts *webrtc.AnswerOptions
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-	if json_data != 0 {
-		buf := LoadBytesSafe(json_data, json_len)
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
-		opts = new(webrtc.AnswerOptions)
-		if err := json.Unmarshal(buf.Bytes(), opts); err != nil {
-			panic(err)
-		}
+	opts := new(webrtc.AnswerOptions)
+	if err := json.Unmarshal(buf.buf.Bytes(), opts); err != nil {
+		panic(err)
 	}
 
 	offer, err := peerCon.con.CreateAnswer(opts)
@@ -241,13 +243,13 @@ func CallPeerConCreateAnswer(
 		panic(err)
 	}
 
-	buf := NewBuffer([]byte(offerJson))
+	bufOut := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateAnswer,
-		buf.handle,
+		bufOut.handle,
 		0,
 		0,
 		0,

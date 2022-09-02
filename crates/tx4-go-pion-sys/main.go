@@ -235,9 +235,9 @@ func callInner(
 	case TyPeerConAlloc:
 		CallPeerConAlloc(slot_a, response_cb, response_usr)
 	case TyPeerConCreateOffer:
-		CallPeerConCreateOffer(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConCreateOffer(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConCreateAnswer:
-		CallPeerConCreateAnswer(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConCreateAnswer(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConSetLocalDesc:
 		CallPeerConSetLocalDesc(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConSetRemDesc:

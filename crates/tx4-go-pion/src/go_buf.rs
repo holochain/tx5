@@ -197,7 +197,8 @@ impl GoBuf {
 
     /// Get access to the underlying buffer data.
     /// This data is allocated / managed by go, so it's only
-    /// safe to access during a callback.
+    /// safe to access during a callback. All the other
+    /// accessors on GoBuf build on this function.
     #[inline]
     pub fn access<Cb, R>(&mut self, cb: Cb) -> Result<R>
     where

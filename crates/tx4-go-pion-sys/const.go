@@ -63,16 +63,14 @@ const (
 	// Request an existing peer con create an offer.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: config buffer id
 	// - msg slot_a: offer buffer id
 	TyPeerConCreateOffer UintPtrT = 0x9003
 
 	// Request an existing peer con create an answer.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: config buffer id
 	// - msg slot_a: answer buffer id
 	TyPeerConCreateAnswer UintPtrT = 0x9004
 

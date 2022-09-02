@@ -19,7 +19,7 @@ pub struct IceServer {
 }
 
 /// Configuration for a go pion webrtc PeerConnection.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
 pub struct PeerConnectionConfig {
     /// ICE server list.
@@ -39,7 +39,7 @@ impl From<&PeerConnectionConfig> for GoBufRef<'static> {
 }
 
 /// Configuration for a go pion webrtc DataChannel.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
 pub struct DataChannelConfig {
     /// DataChannel Label.
@@ -55,6 +55,40 @@ impl From<DataChannelConfig> for GoBufRef<'static> {
 
 impl From<&DataChannelConfig> for GoBufRef<'static> {
     fn from(p: &DataChannelConfig) -> Self {
+        GoBufRef::json(&p)
+    }
+}
+
+/// Configuration for a go pion webrtc PeerConnection offer.
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
+pub struct OfferConfig {}
+
+impl From<OfferConfig> for GoBufRef<'static> {
+    fn from(p: OfferConfig) -> Self {
+        GoBufRef::json(&p)
+    }
+}
+
+impl From<&OfferConfig> for GoBufRef<'static> {
+    fn from(p: &OfferConfig) -> Self {
+        GoBufRef::json(&p)
+    }
+}
+
+/// Configuration for a go pion webrtc PeerConnection answer.
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
+pub struct AnswerConfig {}
+
+impl From<AnswerConfig> for GoBufRef<'static> {
+    fn from(p: AnswerConfig) -> Self {
+        GoBufRef::json(&p)
+    }
+}
+
+impl From<&AnswerConfig> for GoBufRef<'static> {
+    fn from(p: &AnswerConfig) -> Self {
         GoBufRef::json(&p)
     }
 }
@@ -90,13 +124,23 @@ impl PeerConnection {
     }
 
     /// Create offer.
-    pub fn create_offer(&mut self, json: Option<&str>) -> Result<GoBuf> {
-        unsafe { API.peer_con_create_offer(self.0, json).map(GoBuf) }
+    pub fn create_offer<'a, B>(&mut self, config: B) -> Result<GoBuf>
+    where
+        B: Into<GoBufRef<'a>>,
+    {
+        let mut config = config.into();
+        let config = config.as_mut_ref()?;
+        unsafe { API.peer_con_create_offer(self.0, config.0).map(GoBuf) }
     }
 
     /// Create answer.
-    pub fn create_answer(&mut self, json: Option<&str>) -> Result<GoBuf> {
-        unsafe { API.peer_con_create_answer(self.0, json).map(GoBuf) }
+    pub fn create_answer<'a, B>(&mut self, config: B) -> Result<GoBuf>
+    where
+        B: Into<GoBufRef<'a>>,
+    {
+        let mut config = config.into();
+        let config = config.as_mut_ref()?;
+        unsafe { API.peer_con_create_answer(self.0, config.0).map(GoBuf) }
     }
 
     /// Set local description.

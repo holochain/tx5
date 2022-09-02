@@ -450,39 +450,32 @@ impl Api {
     pub unsafe fn peer_con_create_offer(
         &self,
         id: PeerConId,
-        json: Option<&str>,
+        config_buf_id: BufferId,
     ) -> Result<BufferId> {
-        let mut data = 0;
-        let mut len = 0;
-
-        if let Some(json) = json {
-            len = json.as_bytes().len();
-            data = json.as_bytes().as_ptr() as usize;
-        }
-
-        self.call(TY_PEER_CON_CREATE_OFFER, id, data, len, 0, |r| match r {
-            Ok((_t, a, _b, _c, _d)) => Ok(a),
-            Err(e) => Err(e),
-        })
+        self.call(
+            TY_PEER_CON_CREATE_OFFER,
+            id,
+            config_buf_id,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
+            },
+        )
     }
 
     #[inline]
     pub unsafe fn peer_con_create_answer(
         &self,
         id: PeerConId,
-        json: Option<&str>,
+        config_buf_id: BufferId,
     ) -> Result<BufferId> {
-        let mut data = 0;
-        let mut len = 0;
-
-        if let Some(json) = json {
-            len = json.as_bytes().len();
-            data = json.as_bytes().as_ptr() as usize;
-        }
-
-        self.call(TY_PEER_CON_CREATE_ANSWER, id, data, len, 0, |r| match r {
-            Ok((_t, a, _b, _c, _d)) => Ok(a),
-            Err(e) => Err(e),
+        self.call(TY_PEER_CON_CREATE_ANSWER, id, config_buf_id, 0, 0, |r| {
+            match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
+            }
         })
     }
 

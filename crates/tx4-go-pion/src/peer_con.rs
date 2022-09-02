@@ -26,15 +26,15 @@ pub struct PeerConConfig {
     pub ice_servers: Vec<IceServer>,
 }
 
-impl From<PeerConConfig> for IntoGoBuf {
+impl From<PeerConConfig> for GoBufRef<'static> {
     fn from(p: PeerConConfig) -> Self {
-        IntoGoBuf::json(&p)
+        GoBufRef::json(&p)
     }
 }
 
-impl From<&PeerConConfig> for IntoGoBuf {
+impl From<&PeerConConfig> for GoBufRef<'static> {
     fn from(p: &PeerConConfig) -> Self {
-        IntoGoBuf::json(&p)
+        GoBufRef::json(&p)
     }
 }
 
@@ -53,15 +53,15 @@ impl Drop for PeerConnection {
 
 impl PeerConnection {
     /// Construct a new PeerConnection.
-    pub fn new<B, Cb>(config: B, cb: Cb) -> Result<Self>
+    pub fn new<'a, B, Cb>(config: B, cb: Cb) -> Result<Self>
     where
-        B: Into<IntoGoBuf>,
+        B: Into<GoBufRef<'a>>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
-        let config: Result<GoBuf> = config.into().into();
+        let mut config = config.into();
+        let config = config.as_mut_ref()?;
         let cb: PeerConEvtCb = Arc::new(cb);
         unsafe {
-            let config = config?;
             let peer_con_id = API.peer_con_alloc(config.0)?;
             register_peer_con_evt_cb(peer_con_id, cb);
             Ok(Self(peer_con_id))
@@ -69,23 +69,33 @@ impl PeerConnection {
     }
 
     /// Create offer.
-    pub fn create_offer(&mut self, json: Option<&str>) -> Result<String> {
-        unsafe { API.peer_con_create_offer(self.0, json) }
+    pub fn create_offer(&mut self, json: Option<&str>) -> Result<GoBuf> {
+        unsafe { API.peer_con_create_offer(self.0, json).map(GoBuf) }
     }
 
     /// Create answer.
-    pub fn create_answer(&mut self, json: Option<&str>) -> Result<String> {
-        unsafe { API.peer_con_create_answer(self.0, json) }
+    pub fn create_answer(&mut self, json: Option<&str>) -> Result<GoBuf> {
+        unsafe { API.peer_con_create_answer(self.0, json).map(GoBuf) }
     }
 
     /// Set local description.
-    pub fn set_local_description(&mut self, json: &str) -> Result<()> {
-        unsafe { API.peer_con_set_local_desc(self.0, json) }
+    pub fn set_local_description<'a, B>(&mut self, desc: B) -> Result<()>
+    where
+        B: Into<GoBufRef<'a>>,
+    {
+        let mut desc = desc.into();
+        let desc = desc.as_mut_ref()?;
+        unsafe { API.peer_con_set_local_desc(self.0, desc.0) }
     }
 
     /// Set remote description.
-    pub fn set_remote_description(&mut self, json: &str) -> Result<()> {
-        unsafe { API.peer_con_set_rem_desc(self.0, json) }
+    pub fn set_remote_description<'a, B>(&mut self, desc: B) -> Result<()>
+    where
+        B: Into<GoBufRef<'a>>,
+    {
+        let mut desc = desc.into();
+        let desc = desc.as_mut_ref()?;
+        unsafe { API.peer_con_set_rem_desc(self.0, desc.0) }
     }
 
     /// Add ice candidate.

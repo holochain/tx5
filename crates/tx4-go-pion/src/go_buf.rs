@@ -2,13 +2,32 @@ use crate::*;
 use std::sync::Arc;
 use tx4_go_pion_sys::API;
 
-/// Interim step for conversion into a GoBuf.
-pub struct IntoGoBuf(pub Result<GoBuf>);
+/// A type that references a GoBuf either directly or through serialization.
+pub enum GoBufRef<'lt> {
+    /// An owned GoBuf - usually the result of serialization.
+    Owned(Result<GoBuf>),
 
-impl IntoGoBuf {
-    /// Serialize via serde_json into an IntoGoBuf.
+    /// A reference to an existing GoBuf.
+    Borrowed(&'lt mut GoBuf),
+}
+
+impl<'lt> GoBufRef<'lt> {
+    /// Get a mutable reference to the internal go buffer.
+    pub fn as_mut_ref(&'lt mut self) -> Result<&'lt mut GoBuf> {
+        match self {
+            GoBufRef::Owned(o) => match o {
+                Ok(o) => Ok(o),
+                Err(e) => Err(e.err_clone()),
+            },
+            GoBufRef::Borrowed(b) => Ok(b),
+        }
+    }
+}
+
+impl GoBufRef<'static> {
+    /// Serialize via serde_json into a GoBufRef.
     pub fn json<S: serde::Serialize>(s: S) -> Self {
-        Self((|| {
+        Self::Owned((|| {
             let mut b = GoBuf::new()?;
             serde_json::to_writer(&mut b, &s).map_err(Error::err)?;
             Ok(b)
@@ -16,24 +35,24 @@ impl IntoGoBuf {
     }
 }
 
-impl From<IntoGoBuf> for Result<GoBuf> {
-    #[inline]
-    fn from(i: IntoGoBuf) -> Self {
-        i.0
-    }
-}
-
-impl From<GoBuf> for IntoGoBuf {
+impl From<GoBuf> for GoBufRef<'static> {
     #[inline]
     fn from(b: GoBuf) -> Self {
-        Self(Ok(b))
+        Self::Owned(Ok(b))
     }
 }
 
-impl<R: AsRef<[u8]>> From<R> for IntoGoBuf {
+impl<'lt> From<&'lt mut GoBuf> for GoBufRef<'lt> {
+    #[inline]
+    fn from(b: &'lt mut GoBuf) -> Self {
+        Self::Borrowed(b)
+    }
+}
+
+impl<R: AsRef<[u8]>> From<R> for GoBufRef<'static> {
     #[inline]
     fn from(r: R) -> Self {
-        Self(GoBuf::from_slice(r))
+        Self::Owned(GoBuf::from_slice(r))
     }
 }
 
@@ -96,6 +115,24 @@ impl std::convert::TryFrom<Arc<[u8]>> for GoBuf {
     }
 }
 
+impl std::convert::TryFrom<&mut GoBuf> for Vec<u8> {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: &mut GoBuf) -> Result<Self> {
+        value.to_vec()
+    }
+}
+
+impl std::convert::TryFrom<GoBuf> for Vec<u8> {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(mut value: GoBuf) -> Result<Self> {
+        value.to_vec()
+    }
+}
+
 impl Drop for GoBuf {
     fn drop(&mut self) {
         unsafe {
@@ -118,6 +155,25 @@ impl GoBuf {
         let mut b = GoBuf::new()?;
         b.extend(r.as_ref())?;
         Ok(b)
+    }
+
+    /// Deserialize this go buffer as json bytes
+    /// into a type implementing serde::DeserializeOwned.
+    #[inline]
+    pub fn as_json<D>(&mut self) -> Result<D>
+    where
+        D: serde::de::DeserializeOwned + Sized,
+    {
+        self.access(|bytes| {
+            let bytes = bytes?;
+            serde_json::from_slice(bytes).map_err(Error::err)
+        })
+    }
+
+    /// Read the data out of Go memory into a rust Vec<u8>.
+    #[inline]
+    pub fn to_vec(&mut self) -> Result<Vec<u8>> {
+        self.access(|bytes| bytes.map(|bytes| bytes.to_vec()))
     }
 
     /// Reserve additional capacity in this buffer.

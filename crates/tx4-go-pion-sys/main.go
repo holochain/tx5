@@ -237,9 +237,9 @@ func callInner(
 	case TyPeerConCreateAnswer:
 		CallPeerConCreateAnswer(slot_a, slot_b, slot_c, response_cb, response_usr)
 	case TyPeerConSetLocalDesc:
-		CallPeerConSetLocalDesc(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConSetLocalDesc(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConSetRemDesc:
-		CallPeerConSetRemDesc(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConSetRemDesc(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConAddICECandidate:
 		CallPeerConAddICECandidate(slot_a, slot_b, slot_c, response_cb, response_usr)
 	case TyPeerConCreateDataChan:

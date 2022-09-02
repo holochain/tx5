@@ -457,7 +457,7 @@ impl Api {
         &self,
         id: PeerConId,
         json: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<BufferId> {
         let mut data = 0;
         let mut len = 0;
 
@@ -467,11 +467,7 @@ impl Api {
         }
 
         self.call(TY_PEER_CON_CREATE_OFFER, id, data, len, 0, |r| match r {
-            Ok((_t, a, b, _c, _d)) => {
-                let s = std::slice::from_raw_parts(a as *const _, b);
-                let s = String::from_utf8_lossy(s).to_string();
-                Ok(s)
-            }
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })
     }
@@ -481,7 +477,7 @@ impl Api {
         &self,
         id: PeerConId,
         json: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<BufferId> {
         let mut data = 0;
         let mut len = 0;
 
@@ -491,11 +487,7 @@ impl Api {
         }
 
         self.call(TY_PEER_CON_CREATE_ANSWER, id, data, len, 0, |r| match r {
-            Ok((_t, a, b, _c, _d)) => {
-                let s = std::slice::from_raw_parts(a as *const _, b);
-                let s = String::from_utf8_lossy(s).to_string();
-                Ok(s)
-            }
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })
     }
@@ -504,30 +496,38 @@ impl Api {
     pub unsafe fn peer_con_set_local_desc(
         &self,
         id: PeerConId,
-        json: &str,
+        desc_buf_id: BufferId,
     ) -> Result<()> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
-        self.call(TY_PEER_CON_SET_LOCAL_DESC, id, data, len, 0, |r| match r {
-            Ok((_t, _a, _b, _c, _d)) => Ok(()),
-            Err(e) => Err(e),
-        })
+        self.call(
+            TY_PEER_CON_SET_LOCAL_DESC,
+            id,
+            desc_buf_id,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, _a, _b, _c, _d)) => Ok(()),
+                Err(e) => Err(e),
+            },
+        )
     }
 
     #[inline]
     pub unsafe fn peer_con_set_rem_desc(
         &self,
         id: PeerConId,
-        json: &str,
+        desc_buf_id: BufferId,
     ) -> Result<()> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
-        self.call(TY_PEER_CON_SET_REM_DESC, id, data, len, 0, |r| match r {
-            Ok((_t, _a, _b, _c, _d)) => Ok(()),
-            Err(e) => Err(e),
-        })
+        self.call(
+            TY_PEER_CON_SET_REM_DESC,
+            id,
+            desc_buf_id,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, _a, _b, _c, _d)) => Ok(()),
+                Err(e) => Err(e),
+            },
+        )
     }
 
     #[inline]

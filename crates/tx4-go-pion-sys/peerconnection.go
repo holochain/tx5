@@ -73,8 +73,6 @@ func CallPeerConAlloc(
 		panic(err)
 	}
 
-	buf.FreeAlreadyLocked()
-
 	var config_parsed webrtc.Configuration
 	config_parsed.ICEServers = tmpConfig.ICEServers
 
@@ -192,14 +190,14 @@ func CallPeerConCreateOffer(
 		panic(err)
 	}
 
-	offerBytes := []byte(offerJson)
+  buf := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateOffer,
-		VoidStarToPtrT(unsafe.Pointer(&offerBytes[0])),
-		UintPtrT(len(offerBytes)),
+    buf.handle,
+		0,
 		0,
 		0,
 	)
@@ -242,14 +240,14 @@ func CallPeerConCreateAnswer(
 		panic(err)
 	}
 
-	offerBytes := []byte(offerJson)
+  buf := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateAnswer,
-		VoidStarToPtrT(unsafe.Pointer(&offerBytes[0])),
-		UintPtrT(len(offerBytes)),
+    buf.handle,
+		0,
 		0,
 		0,
 	)
@@ -257,8 +255,7 @@ func CallPeerConCreateAnswer(
 
 func CallPeerConSetLocalDesc(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	desc_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -271,10 +268,16 @@ func CallPeerConSetLocalDesc(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(desc_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var desc webrtc.SessionDescription
-	if err := json.Unmarshal(buf.Bytes(), &desc); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &desc); err != nil {
 		panic(err)
 	}
 
@@ -295,8 +298,7 @@ func CallPeerConSetLocalDesc(
 
 func CallPeerConSetRemDesc(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	desc_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -309,10 +311,16 @@ func CallPeerConSetRemDesc(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(desc_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var desc webrtc.SessionDescription
-	if err := json.Unmarshal(buf.Bytes(), &desc); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &desc); err != nil {
 		panic(err)
 	}
 

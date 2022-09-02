@@ -75,8 +75,8 @@ mod tests {
         enum Cmd {
             Shutdown,
             ICE(String),
-            Offer(String),
-            Answer(String),
+            Offer(GoBuf),
+            Answer(GoBuf),
         }
 
         #[derive(Debug)]
@@ -123,16 +123,21 @@ mod tests {
 
                 res_send.send(Res::Chan1(chan1)).unwrap();
 
-                let offer = peer1.create_offer(None).unwrap();
-                peer1.set_local_description(&offer).unwrap();
-                cmd_send_2.send(Cmd::Offer(offer.clone())).unwrap();
+                let mut offer = peer1.create_offer(None).unwrap();
+                peer1.set_local_description(&mut offer).unwrap();
+                cmd_send_2.send(Cmd::Offer(offer)).unwrap();
 
                 while let Ok(cmd) = cmd_recv_1.recv() {
                     match cmd {
                         Cmd::ICE(ice) => peer1.add_ice_candidate(&ice).unwrap(),
-                        Cmd::Answer(answer) => {
-                            println!("peer1 recv answer: {}", answer);
-                            peer1.set_remote_description(&answer).unwrap();
+                        Cmd::Answer(mut answer) => {
+                            println!(
+                                "peer1 recv answer: {}",
+                                String::from_utf8_lossy(
+                                    &answer.to_vec().unwrap()
+                                )
+                            );
+                            peer1.set_remote_description(answer).unwrap();
                         }
                         _ => break,
                     }
@@ -167,11 +172,16 @@ mod tests {
                 while let Ok(cmd) = cmd_recv_2.recv() {
                     match cmd {
                         Cmd::ICE(ice) => peer2.add_ice_candidate(&ice).unwrap(),
-                        Cmd::Offer(offer) => {
-                            println!("peer2 recv offer: {}", offer);
-                            peer2.set_remote_description(&offer).unwrap();
-                            let answer = peer2.create_answer(None).unwrap();
-                            peer2.set_local_description(&answer).unwrap();
+                        Cmd::Offer(mut offer) => {
+                            println!(
+                                "peer2 recv offer: {}",
+                                String::from_utf8_lossy(
+                                    &offer.to_vec().unwrap()
+                                )
+                            );
+                            peer2.set_remote_description(offer).unwrap();
+                            let mut answer = peer2.create_answer(None).unwrap();
+                            peer2.set_local_description(&mut answer).unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
                         }
                         _ => break,

@@ -65,8 +65,7 @@ const (
 	// - call slot_a: peer_con id
 	// - call slot_b: utf8 json ptr
 	// - call slot_c: utf8 json len
-	// - msg slot_a: utf8 json ptr
-	// - msg slot_b: utf8 json len
+	// - msg slot_a: offer buffer id
 	TyPeerConCreateOffer UintPtrT = 0x9003
 
 	// Request an existing peer con create an answer.
@@ -74,22 +73,19 @@ const (
 	// - call slot_a: peer_con id
 	// - call slot_b: utf8 json ptr
 	// - call slot_c: utf8 json len
-	// - msg slot_a: utf8 json ptr
-	// - msg slot_b: utf8 json len
+	// - msg slot_a: answer buffer id
 	TyPeerConCreateAnswer UintPtrT = 0x9004
 
 	// Request an existing peer con set local description.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: desc buffer id
 	TyPeerConSetLocalDesc UintPtrT = 0x9005
 
 	// Request an existing peer con set rem description.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: desc buffer id
 	TyPeerConSetRemDesc UintPtrT = 0x9006
 
 	// Request an existing peer con add ice candidate.

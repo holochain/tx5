@@ -116,6 +116,7 @@ func EmitEvent(
 }
 
 // register the MessageCb that will be invoked for events
+//
 //export OnEvent
 func OnEvent(
 	// the callback to invoke
@@ -136,6 +137,7 @@ func OnEvent(
 }
 
 // make a call into the library
+//
 //export Call
 func Call(
 	// call type indicator

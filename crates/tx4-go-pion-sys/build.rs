@@ -10,6 +10,7 @@ fn main() {
     println!("cargo:rerun-if-changed=datachannel.go");
     println!("cargo:rerun-if-changed=peerconnection.go");
     println!("cargo:rerun-if-changed=main.go");
+    println!("cargo:rerun-if-changed=vendor.zip");
 
     let mut lib_path = std::path::PathBuf::from(
         std::env::var("OUT_DIR").expect("failed to read env OUT_DIR"),
@@ -38,8 +39,8 @@ fn go_check_version() {
         .parse()
         .expect("error parsing go version");
     assert!(
-        ver >= 1.18,
-        "go executable version must be >= 1.18, got: {}",
+        ver >= 1.19,
+        "go executable version must be >= 1.19, got: {}",
         ver
     );
 }

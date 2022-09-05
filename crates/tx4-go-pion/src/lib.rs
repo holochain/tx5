@@ -164,7 +164,8 @@ mod tests {
                 while let Some(cmd) = cmd_recv_1.recv().await {
                     match cmd {
                         Cmd::ICE(ice) => {
-                            peer1.add_ice_candidate(ice).await.unwrap()
+                            // ok if these are lost during test shutdown
+                            let _ = peer1.add_ice_candidate(ice).await;
                         }
                         Cmd::Answer(mut answer) => {
                             println!(
@@ -203,7 +204,8 @@ mod tests {
                                 )
                             );
                             ice2.lock().push(candidate.mut_clone());
-                            cmd_send_1.send(Cmd::ICE(candidate)).unwrap();
+                            // ok if these are lost during test shutdown
+                            let _ = cmd_send_1.send(Cmd::ICE(candidate));
                         }
                         PeerConnectionEvent::DataChannel(chan) => {
                             println!("peer2 in-chan: {:?}", chan);

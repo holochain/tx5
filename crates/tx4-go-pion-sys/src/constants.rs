@@ -21,6 +21,7 @@ pub const TY_PEER_CON_ON_DATA_CHANNEL: usize = 0x9803;
 pub const TY_DATA_CHAN_FREE: usize = 0xa002;
 pub const TY_DATA_CHAN_READY_STATE: usize = 0xa003;
 pub const TY_DATA_CHAN_SEND: usize = 0xa004;
+pub const TY_DATA_CHAN_LABEL: usize = 0xa005;
 pub const TY_DATA_CHAN_ON_CLOSE: usize = 0xa801;
 pub const TY_DATA_CHAN_ON_OPEN: usize = 0xa802;
 pub const TY_DATA_CHAN_ON_ERROR: usize = 0xa803;

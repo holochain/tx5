@@ -586,6 +586,14 @@ impl Api {
     }
 
     #[inline]
+    pub unsafe fn data_chan_label(&self, id: DataChanId) -> Result<BufferId> {
+        self.call(TY_DATA_CHAN_LABEL, id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
     pub unsafe fn data_chan_send(
         &self,
         id: DataChanId,

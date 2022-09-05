@@ -140,6 +140,12 @@ const (
 	// - call slot_b: buffer id
 	TyDataChanSend UintPtrT = 0xa004
 
+	// Request the label of an existing data channel..
+	// - allowed contexts: Call, Response
+	// - call slot_a: data_chan id
+	// - msg slot_a: label buffer id
+	TyDataChanLabel UintPtrT = 0xa005
+
 	// OnClose event on an existing data chan.
 	// - allowed contexts: Event
 	// - msg slot_a: data_chan id

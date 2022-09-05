@@ -108,86 +108,102 @@ impl Drop for PeerConnection {
 
 impl PeerConnection {
     /// Construct a new PeerConnection.
-    pub fn new<'a, B, Cb>(config: B, cb: Cb) -> Result<Self>
+    pub async fn new<'a, B, Cb>(config: B, cb: Cb) -> Result<Self>
     where
         B: Into<GoBufRef<'a>>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
         init_evt_manager();
-        let mut config = config.into();
-        let config = config.as_mut_ref()?;
+        r2id!(config);
         let cb: PeerConEvtCb = Arc::new(cb);
-        unsafe {
-            let peer_con_id = API.peer_con_alloc(config.0)?;
+        tokio::task::spawn_blocking(move || unsafe {
+            let peer_con_id = API.peer_con_alloc(config)?;
             register_peer_con_evt_cb(peer_con_id, cb);
             Ok(Self(peer_con_id))
-        }
+        })
+        .await?
     }
 
     /// Create offer.
-    pub fn create_offer<'a, B>(&mut self, config: B) -> Result<GoBuf>
+    pub async fn create_offer<'a, B>(&mut self, config: B) -> Result<GoBuf>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let mut config = config.into();
-        let config = config.as_mut_ref()?;
-        unsafe { API.peer_con_create_offer(self.0, config.0).map(GoBuf) }
+        let peer_con = self.0;
+        r2id!(config);
+        tokio::task::spawn_blocking(move || unsafe {
+            API.peer_con_create_offer(peer_con, config).map(GoBuf)
+        })
+        .await?
     }
 
     /// Create answer.
-    pub fn create_answer<'a, B>(&mut self, config: B) -> Result<GoBuf>
+    pub async fn create_answer<'a, B>(&mut self, config: B) -> Result<GoBuf>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let mut config = config.into();
-        let config = config.as_mut_ref()?;
-        unsafe { API.peer_con_create_answer(self.0, config.0).map(GoBuf) }
+        let peer_con = self.0;
+        r2id!(config);
+        tokio::task::spawn_blocking(move || unsafe {
+            API.peer_con_create_answer(peer_con, config).map(GoBuf)
+        })
+        .await?
     }
 
     /// Set local description.
-    pub fn set_local_description<'a, B>(&mut self, desc: B) -> Result<()>
+    pub async fn set_local_description<'a, B>(&mut self, desc: B) -> Result<()>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let mut desc = desc.into();
-        let desc = desc.as_mut_ref()?;
-        unsafe { API.peer_con_set_local_desc(self.0, desc.0) }
+        let peer_con = self.0;
+        r2id!(desc);
+        tokio::task::spawn_blocking(move || unsafe {
+            API.peer_con_set_local_desc(peer_con, desc)
+        })
+        .await?
     }
 
     /// Set remote description.
-    pub fn set_remote_description<'a, B>(&mut self, desc: B) -> Result<()>
+    pub async fn set_remote_description<'a, B>(&mut self, desc: B) -> Result<()>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let mut desc = desc.into();
-        let desc = desc.as_mut_ref()?;
-        unsafe { API.peer_con_set_rem_desc(self.0, desc.0) }
+        let peer_con = self.0;
+        r2id!(desc);
+        tokio::task::spawn_blocking(move || unsafe {
+            API.peer_con_set_rem_desc(peer_con, desc)
+        })
+        .await?
     }
 
     /// Add ice candidate.
-    pub fn add_ice_candidate<'a, B>(&mut self, ice: B) -> Result<()>
+    pub async fn add_ice_candidate<'a, B>(&mut self, ice: B) -> Result<()>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let mut ice = ice.into();
-        let ice = ice.as_mut_ref()?;
-        unsafe { API.peer_con_add_ice_candidate(self.0, ice.0) }
+        let peer_con = self.0;
+        r2id!(ice);
+        tokio::task::spawn_blocking(move || unsafe {
+            API.peer_con_add_ice_candidate(peer_con, ice)
+        })
+        .await?
     }
 
     /// Create data channel.
-    pub fn create_data_channel<'a, B>(
+    pub async fn create_data_channel<'a, B>(
         &mut self,
         config: B,
     ) -> Result<DataChannelSeed>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let mut config = config.into();
-        let config = config.as_mut_ref()?;
-        unsafe {
+        let peer_con = self.0;
+        r2id!(config);
+        tokio::task::spawn_blocking(move || unsafe {
             let data_chan_id =
-                API.peer_con_create_data_chan(self.0, config.0)?;
+                API.peer_con_create_data_chan(peer_con, config)?;
             Ok(DataChannelSeed(data_chan_id))
-        }
+        })
+        .await?
     }
 }

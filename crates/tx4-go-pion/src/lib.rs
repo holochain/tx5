@@ -20,6 +20,15 @@ pub mod deps {
     pub use tx4_go_pion_sys::deps::*;
 }
 
+/// We need to keep all the intermediaries to ensure lifetimes.
+macro_rules! r2id {
+    ($n:ident) => {
+        let mut $n = $n.into();
+        let $n = $n.as_mut_ref()?;
+        let $n = $n.0;
+    };
+}
+
 use deps::*;
 
 pub use tx4_core::{Error, ErrorExt, Id, Result};
@@ -75,8 +84,8 @@ mod tests {
         let _ = tracing::subscriber::set_global_default(subscriber);
     }
 
-    #[test]
-    fn peer_con() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn peer_con() {
         init_tracing();
 
         let config: PeerConnectionConfig = serde_json::from_str(STUN).unwrap();
@@ -98,14 +107,13 @@ mod tests {
             Chan2(DataChannelSeed),
         }
 
-        let (cmd_send_1, cmd_recv_1) = std::sync::mpsc::sync_channel(32);
-        let cmd_send_1 = Arc::new(cmd_send_1);
+        let (cmd_send_1, mut cmd_recv_1) =
+            tokio::sync::mpsc::unbounded_channel();
 
-        let (cmd_send_2, cmd_recv_2) = std::sync::mpsc::sync_channel(32);
-        let cmd_send_2 = Arc::new(cmd_send_2);
+        let (cmd_send_2, mut cmd_recv_2) =
+            tokio::sync::mpsc::unbounded_channel();
 
-        let (res_send, res_recv) = std::sync::mpsc::sync_channel(32);
-        let res_send = Arc::new(res_send);
+        let (res_send, mut res_recv) = tokio::sync::mpsc::unbounded_channel();
 
         // -- spawn thread for peer connection 1 -- //
 
@@ -114,7 +122,7 @@ mod tests {
             let res_send = res_send.clone();
             let cmd_send_2 = cmd_send_2.clone();
             let ice1 = ice1.clone();
-            std::thread::spawn(move || {
+            tokio::task::spawn(async move {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
                     PeerConnection::new(&config, move |evt| match evt {
@@ -135,6 +143,7 @@ mod tests {
                             println!("peer1 in-chan: {:?}", chan);
                         }
                     })
+                    .await
                     .unwrap()
                 };
 
@@ -142,18 +151,21 @@ mod tests {
                     .create_data_channel(DataChannelConfig {
                         label: Some("data".into()),
                     })
+                    .await
                     .unwrap();
 
                 res_send.send(Res::Chan1(chan1)).unwrap();
 
                 let mut offer =
-                    peer1.create_offer(OfferConfig::default()).unwrap();
-                peer1.set_local_description(&mut offer).unwrap();
+                    peer1.create_offer(OfferConfig::default()).await.unwrap();
+                peer1.set_local_description(&mut offer).await.unwrap();
                 cmd_send_2.send(Cmd::Offer(offer)).unwrap();
 
-                while let Ok(cmd) = cmd_recv_1.recv() {
+                while let Some(cmd) = cmd_recv_1.recv().await {
                     match cmd {
-                        Cmd::ICE(ice) => peer1.add_ice_candidate(ice).unwrap(),
+                        Cmd::ICE(ice) => {
+                            peer1.add_ice_candidate(ice).await.unwrap()
+                        }
                         Cmd::Answer(mut answer) => {
                             println!(
                                 "peer1 recv answer: {}",
@@ -161,7 +173,7 @@ mod tests {
                                     &answer.to_vec().unwrap()
                                 )
                             );
-                            peer1.set_remote_description(answer).unwrap();
+                            peer1.set_remote_description(answer).await.unwrap();
                         }
                         _ => break,
                     }
@@ -176,7 +188,7 @@ mod tests {
             let res_send = res_send.clone();
             let cmd_send_1 = cmd_send_1.clone();
             let ice2 = ice2.clone();
-            std::thread::spawn(move || {
+            tokio::task::spawn(async move {
                 let mut peer2 = {
                     let cmd_send_1 = cmd_send_1.clone();
                     PeerConnection::new(&config, move |evt| match evt {
@@ -198,12 +210,15 @@ mod tests {
                             res_send.send(Res::Chan2(chan)).unwrap();
                         }
                     })
+                    .await
                     .unwrap()
                 };
 
-                while let Ok(cmd) = cmd_recv_2.recv() {
+                while let Some(cmd) = cmd_recv_2.recv().await {
                     match cmd {
-                        Cmd::ICE(ice) => peer2.add_ice_candidate(ice).unwrap(),
+                        Cmd::ICE(ice) => {
+                            peer2.add_ice_candidate(ice).await.unwrap()
+                        }
                         Cmd::Offer(mut offer) => {
                             println!(
                                 "peer2 recv offer: {}",
@@ -211,11 +226,15 @@ mod tests {
                                     &offer.to_vec().unwrap()
                                 )
                             );
-                            peer2.set_remote_description(offer).unwrap();
+                            peer2.set_remote_description(offer).await.unwrap();
                             let mut answer = peer2
                                 .create_answer(AnswerConfig::default())
+                                .await
                                 .unwrap();
-                            peer2.set_local_description(&mut answer).unwrap();
+                            peer2
+                                .set_local_description(&mut answer)
+                                .await
+                                .unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
                         }
                         _ => break,
@@ -230,7 +249,7 @@ mod tests {
         let mut chan2 = None;
 
         for _ in 0..2 {
-            match res_recv.recv().unwrap() {
+            match res_recv.recv().await.unwrap() {
                 Res::Chan1(chan) => chan1 = Some(chan),
                 Res::Chan2(chan) => chan2 = Some(chan),
             }
@@ -294,15 +313,27 @@ mod tests {
             r_open.recv().unwrap();
         }
 
+        // -- check the channel labels -- //
+
+        let lbl1 =
+            String::from_utf8_lossy(&chan1.label().unwrap().to_vec().unwrap())
+                .to_string();
+        let lbl2 =
+            String::from_utf8_lossy(&chan2.label().unwrap().to_vec().unwrap())
+                .to_string();
+        tracing::info!(%lbl1, %lbl2);
+        assert_eq!("data", &lbl1);
+        assert_eq!("data", &lbl2);
+
         // -- send data on the data channels -- //
 
         let mut buf = GoBuf::new().unwrap();
         buf.extend(b"hello").unwrap();
-        chan1.send(buf).unwrap();
+        chan1.send(buf).await.unwrap();
 
         let mut buf = GoBuf::new().unwrap();
         buf.extend(b"world").unwrap();
-        chan2.send(buf).unwrap();
+        chan2.send(buf).await.unwrap();
 
         // -- await receiving data on the data channels -- //
 
@@ -316,7 +347,7 @@ mod tests {
         drop(chan2);
         cmd_send_1.send(Cmd::Shutdown).unwrap();
         cmd_send_2.send(Cmd::Shutdown).unwrap();
-        hnd1.join().unwrap();
-        hnd2.join().unwrap();
+        hnd1.await.unwrap();
+        hnd2.await.unwrap();
     }
 }

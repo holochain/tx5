@@ -2355,6 +2355,7 @@ name = "tx4-go-pion"
 version = "0.0.1"
 dependencies = [
  "parking_lot 0.12.1",
+ "tokio",
  "tracing",
  "tracing-subscriber 0.3.15",
  "tx4-go-pion-sys",

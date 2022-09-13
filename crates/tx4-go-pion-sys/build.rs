@@ -25,6 +25,7 @@ fn main() {
     go_check_version();
     go_unzip_vendor();
     go_build(&lib_path);
+    gen_rust_const();
 }
 
 fn go_check_version() {
@@ -82,4 +83,35 @@ fn go_build(path: &std::path::Path) {
             .success(),
         "error running go build",
     );
+}
+
+fn gen_rust_const() {
+    use inflector::Inflector;
+    use std::io::BufRead;
+
+    let mut out_lines = Vec::new();
+
+    for line in
+        std::io::BufReader::new(std::fs::File::open("const.go").unwrap())
+            .lines()
+    {
+        let line = line.unwrap();
+        let line = line.trim();
+        if line.starts_with("//") {
+            out_lines.push(format!("/{}", line));
+        } else if line.starts_with("Ty") {
+            let mut ws = line.split_whitespace();
+            let id = ws.next().unwrap();
+            let id = (*id).to_screaming_snake_case();
+            ws.next().unwrap(); //ty
+            ws.next().unwrap(); //=
+            let val = ws.next().unwrap();
+            out_lines.push(format!("pub const {}: usize = {};", id, val));
+        }
+
+        let mut out: std::path::PathBuf =
+            std::env::var_os("OUT_DIR").unwrap().into();
+        out.push("constants.rs");
+        std::fs::write(&out, out_lines.join("\n")).unwrap();
+    }
 }

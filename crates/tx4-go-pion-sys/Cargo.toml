@@ -28,4 +28,5 @@ tx4-core = { version = "0.0.1", path = "../tx4-core" }
 parking_lot = "0.12.1"
 
 [build-dependencies]
+Inflector = "0.11.4"
 zip = { version = "0.6.2", default-features = false, features = [ "deflate" ] }

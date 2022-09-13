@@ -43,8 +43,10 @@ const LIB_BYTES: &[u8] =
 const LIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
 
-/// Constants
-pub mod constants;
+/// Constants.
+pub mod constants {
+    include!(concat!(env!("OUT_DIR"), "/constants.rs"));
+}
 use constants::*;
 
 #[ouroboros::self_referencing]
@@ -201,7 +203,7 @@ impl Api {
                         String::from_utf8_lossy(err).to_string(),
                     ))
                 }
-                TY_TRACE => {
+                TY_ON_TRACE => {
                     let msg =
                         std::slice::from_raw_parts(slot_b as *const u8, slot_c);
                     let msg = String::from_utf8_lossy(msg);

@@ -137,7 +137,9 @@ mod tests {
                                 )
                             );
                             ice1.lock().push(candidate.mut_clone());
-                            cmd_send_2.send(Cmd::ICE(candidate)).unwrap();
+                            // ok if these are lost during test shutdown
+                            let _ =
+                                cmd_send_2.send(Cmd::ICE(candidate)).unwrap();
                         }
                         PeerConnectionEvent::DataChannel(chan) => {
                             println!("peer1 in-chan: {:?}", chan);

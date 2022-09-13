@@ -17,6 +17,17 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::drop_non_drop)]
 
+/// Re-exported dependencies.
+pub mod deps {
+    pub use libc;
+    pub use once_cell;
+    pub use tempfile;
+    pub use tx4_core;
+    pub use tx4_core::deps::*;
+}
+
+pub use tx4_core::{Error, ErrorExt, Id, Result};
+
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
@@ -32,8 +43,10 @@ const LIB_BYTES: &[u8] =
 const LIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
 
-/// Constants
-pub mod constants;
+/// Constants.
+pub mod constants {
+    include!(concat!(env!("OUT_DIR"), "/constants.rs"));
+}
 use constants::*;
 
 #[ouroboros::self_referencing]
@@ -123,28 +136,6 @@ impl LibInner {
     }
 }
 
-#[derive(Debug)]
-pub struct Error {
-    pub code: usize,
-    pub error: String,
-}
-
-impl From<String> for Error {
-    fn from(s: String) -> Self {
-        Error { code: 0, error: s }
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for Error {}
-
-pub type Result<T> = std::result::Result<T, Error>;
-
 pub type CallType = usize;
 pub type ResponseUsr = *mut libc::c_void;
 pub type ResponseType = usize;
@@ -160,10 +151,10 @@ pub type PeerConState = usize;
 
 #[derive(Debug)]
 pub enum Event {
-    Error(Error),
+    Error(std::io::Error),
     PeerConICECandidate {
         peer_con_id: PeerConId,
-        candidate: String,
+        candidate: BufferId,
     },
     PeerConStateChange {
         peer_con_id: PeerConId,
@@ -208,22 +199,30 @@ impl Api {
                 TY_ERR => {
                     let err =
                         std::slice::from_raw_parts(slot_b as *const u8, slot_c);
-                    let err = Error {
-                        code: slot_a,
-                        error: String::from_utf8_lossy(err).to_string(),
-                    };
-                    Event::Error(err)
+                    Event::Error(Error::err(
+                        String::from_utf8_lossy(err).to_string(),
+                    ))
                 }
-                TY_PEER_CON_ON_ICE_CANDIDATE => {
-                    let candidate =
+                TY_ON_TRACE => {
+                    let msg =
                         std::slice::from_raw_parts(slot_b as *const u8, slot_c);
-                    let candidate =
-                        String::from_utf8_lossy(candidate).to_string();
-                    Event::PeerConICECandidate {
-                        peer_con_id: slot_a,
-                        candidate,
+                    let msg = String::from_utf8_lossy(msg);
+                    match slot_a {
+                        1 => tracing::trace!("{}", msg),
+                        2 => tracing::debug!("{}", msg),
+                        3 => tracing::info!("{}", msg),
+                        4 => tracing::warn!("{}", msg),
+                        _ => tracing::error!("{}", msg),
                     }
+
+                    // need to forget it every time, otherwise drop will run
+                    Box::into_raw(closure);
+                    return;
                 }
+                TY_PEER_CON_ON_ICE_CANDIDATE => Event::PeerConICECandidate {
+                    peer_con_id: slot_a,
+                    candidate: slot_b,
+                },
                 TY_PEER_CON_ON_STATE_CHANGE => Event::PeerConStateChange {
                     peer_con_id: slot_a,
                     peer_con_state: slot_b,
@@ -238,10 +237,10 @@ impl Api {
                     data_chan_id: slot_a,
                     buffer_id: slot_b,
                 },
-                oth => Event::Error(Error {
-                    code: 0,
-                    error: format!("invalid event_type: {}", oth),
-                }),
+                oth => Event::Error(Error::err(format!(
+                    "invalid event_type: {}",
+                    oth
+                ))),
             };
 
             closure(evt);
@@ -283,7 +282,7 @@ impl Api {
             Result<(ResponseType, SlotA, SlotB, SlotC, SlotD)>,
         ) -> Result<R>,
     {
-        let mut out = Err("not called".to_string().into());
+        let mut out = Err(Error::id("NotCalled"));
         self.call_inner(
             call_type,
             slot_a,
@@ -292,11 +291,13 @@ impl Api {
             slot_d,
             |t, a, b, c, d| {
                 out = if t == TY_ERR {
-                    let err = std::slice::from_raw_parts(b as *const u8, c);
-                    let err = Error {
-                        code: a,
-                        error: String::from_utf8_lossy(err).to_string(),
-                    };
+                    let id = std::slice::from_raw_parts(a as *const u8, b);
+                    let id = String::from_utf8_lossy(id).to_string();
+                    let info = std::slice::from_raw_parts(c as *const u8, d);
+                    let info = String::from_utf8_lossy(info).to_string();
+
+                    let err = Error { id, info }.into();
+
                     cb(Err(err))
                 } else {
                     cb(Ok((t, a, b, c, d)))
@@ -440,10 +441,11 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn peer_con_alloc(&self, json: &str) -> Result<PeerConId> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-        self.call(TY_PEER_CON_ALLOC, data, len, 0, 0, |r| match r {
+    pub unsafe fn peer_con_alloc(
+        &self,
+        config_buf_id: BufferId,
+    ) -> Result<PeerConId> {
+        self.call(TY_PEER_CON_ALLOC, config_buf_id, 0, 0, 0, |r| match r {
             Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })
@@ -466,116 +468,13 @@ impl Api {
     pub unsafe fn peer_con_create_offer(
         &self,
         id: PeerConId,
-        json: Option<&str>,
-    ) -> Result<String> {
-        let mut data = 0;
-        let mut len = 0;
-
-        if let Some(json) = json {
-            len = json.as_bytes().len();
-            data = json.as_bytes().as_ptr() as usize;
-        }
-
-        self.call(TY_PEER_CON_CREATE_OFFER, id, data, len, 0, |r| match r {
-            Ok((_t, a, b, _c, _d)) => {
-                let s = std::slice::from_raw_parts(a as *const _, b);
-                let s = String::from_utf8_lossy(s).to_string();
-                Ok(s)
-            }
-            Err(e) => Err(e),
-        })
-    }
-
-    #[inline]
-    pub unsafe fn peer_con_create_answer(
-        &self,
-        id: PeerConId,
-        json: Option<&str>,
-    ) -> Result<String> {
-        let mut data = 0;
-        let mut len = 0;
-
-        if let Some(json) = json {
-            len = json.as_bytes().len();
-            data = json.as_bytes().as_ptr() as usize;
-        }
-
-        self.call(TY_PEER_CON_CREATE_ANSWER, id, data, len, 0, |r| match r {
-            Ok((_t, a, b, _c, _d)) => {
-                let s = std::slice::from_raw_parts(a as *const _, b);
-                let s = String::from_utf8_lossy(s).to_string();
-                Ok(s)
-            }
-            Err(e) => Err(e),
-        })
-    }
-
-    #[inline]
-    pub unsafe fn peer_con_set_local_desc(
-        &self,
-        id: PeerConId,
-        json: &str,
-    ) -> Result<()> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
-        self.call(TY_PEER_CON_SET_LOCAL_DESC, id, data, len, 0, |r| match r {
-            Ok((_t, _a, _b, _c, _d)) => Ok(()),
-            Err(e) => Err(e),
-        })
-    }
-
-    #[inline]
-    pub unsafe fn peer_con_set_rem_desc(
-        &self,
-        id: PeerConId,
-        json: &str,
-    ) -> Result<()> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
-        self.call(TY_PEER_CON_SET_REM_DESC, id, data, len, 0, |r| match r {
-            Ok((_t, _a, _b, _c, _d)) => Ok(()),
-            Err(e) => Err(e),
-        })
-    }
-
-    #[inline]
-    pub unsafe fn peer_con_add_ice_candidate(
-        &self,
-        id: PeerConId,
-        json: &str,
-    ) -> Result<()> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
+        config_buf_id: BufferId,
+    ) -> Result<BufferId> {
         self.call(
-            TY_PEER_CON_ADD_ICE_CANDIDATE,
+            TY_PEER_CON_CREATE_OFFER,
             id,
-            data,
-            len,
+            config_buf_id,
             0,
-            |r| match r {
-                Ok((_t, _a, _b, _c, _d)) => Ok(()),
-                Err(e) => Err(e),
-            },
-        )
-    }
-
-    #[inline]
-    pub unsafe fn peer_con_create_data_chan(
-        &self,
-        id: PeerConId,
-        json: &str,
-    ) -> Result<DataChanId> {
-        let len = json.as_bytes().len();
-        let data = json.as_bytes().as_ptr() as usize;
-
-        self.call(
-            TY_PEER_CON_CREATE_DATA_CHAN,
-            id,
-            data,
-            len,
             0,
             |r| match r {
                 Ok((_t, a, _b, _c, _d)) => Ok(a),
@@ -585,13 +484,82 @@ impl Api {
     }
 
     #[inline]
-    pub unsafe fn peer_con_rem_cert(&self, id: PeerConId) -> Result<Box<[u8]>> {
-        self.call(TY_PEER_CON_REM_CERT, id, 0, 0, 0, |r| match r {
-            Ok((_t, a, b, _c, _d)) => {
-                let s = std::slice::from_raw_parts(a as *const _, b);
-                Ok(s.to_vec().into())
+    pub unsafe fn peer_con_create_answer(
+        &self,
+        id: PeerConId,
+        config_buf_id: BufferId,
+    ) -> Result<BufferId> {
+        self.call(TY_PEER_CON_CREATE_ANSWER, id, config_buf_id, 0, 0, |r| {
+            match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_set_local_desc(
+        &self,
+        id: PeerConId,
+        desc_buf_id: BufferId,
+    ) -> Result<()> {
+        self.call(
+            TY_PEER_CON_SET_LOCAL_DESC,
+            id,
+            desc_buf_id,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, _a, _b, _c, _d)) => Ok(()),
+                Err(e) => Err(e),
+            },
+        )
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_set_rem_desc(
+        &self,
+        id: PeerConId,
+        desc_buf_id: BufferId,
+    ) -> Result<()> {
+        self.call(
+            TY_PEER_CON_SET_REM_DESC,
+            id,
+            desc_buf_id,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, _a, _b, _c, _d)) => Ok(()),
+                Err(e) => Err(e),
+            },
+        )
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_add_ice_candidate(
+        &self,
+        id: PeerConId,
+        ice_buf_id: BufferId,
+    ) -> Result<()> {
+        self.call(TY_PEER_CON_ADD_ICE_CANDIDATE, id, ice_buf_id, 0, 0, |r| {
+            match r {
+                Ok((_t, _a, _b, _c, _d)) => Ok(()),
+                Err(e) => Err(e),
+            }
+        })
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_create_data_chan(
+        &self,
+        id: PeerConId,
+        config_buf_id: BufferId,
+    ) -> Result<DataChanId> {
+        self.call(TY_PEER_CON_CREATE_DATA_CHAN, id, config_buf_id, 0, 0, |r| {
+            match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
+            }
         })
     }
 
@@ -614,6 +582,14 @@ impl Api {
         id: DataChanId,
     ) -> Result<usize> {
         self.call(TY_DATA_CHAN_READY_STATE, id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn data_chan_label(&self, id: DataChanId) -> Result<BufferId> {
+        self.call(TY_DATA_CHAN_LABEL, id, 0, 0, 0, |r| match r {
             Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })

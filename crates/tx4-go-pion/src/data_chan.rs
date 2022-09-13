@@ -40,15 +40,29 @@ impl Drop for DataChannel {
 }
 
 impl DataChannel {
+    /// Get the label of this DataChannel.
+    #[inline]
+    pub fn label(&mut self) -> Result<GoBuf> {
+        unsafe { Ok(GoBuf(API.data_chan_label(self.0)?)) }
+    }
+
     /// Get the ready state of this DataChannel.
     #[inline]
     pub fn ready_state(&mut self) -> Result<usize> {
-        unsafe { Ok(API.data_chan_ready_state(self.0)?) }
+        unsafe { API.data_chan_ready_state(self.0) }
     }
 
     /// Send data to the remote peer on this DataChannel.
-    #[inline]
-    pub fn send(&mut self, data: GoBuf) -> Result<()> {
-        unsafe { Ok(API.data_chan_send(self.0, data.0)?) }
+    pub async fn send<'a, B>(&mut self, data: B) -> Result<()>
+    where
+        B: Into<GoBufRef<'a>>,
+    {
+        // TODO - use OnBufferedAmountLow signal to implement backpressure
+        let data_chan = self.0;
+        r2id!(data);
+        tokio::task::spawn_blocking(move || unsafe {
+            API.data_chan_send(data_chan, data)
+        })
+        .await?
     }
 }

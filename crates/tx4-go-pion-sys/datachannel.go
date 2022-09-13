@@ -45,8 +45,27 @@ func NewDataChan(ch *webrtc.DataChannel) *DataChan {
 		)
 	})
 
+	ch.OnBufferedAmountLow(func() {
+		EmitTrace(
+			LvlTrace,
+			fmt.Sprintf(
+				"DataChannel(%v).OnBufferedAmountLow()",
+				handle,
+			),
+		)
+	})
+
 	ch.OnError(func(err error) {
-		fmt.Printf("go DATA CHAN ERR %v\n", err)
+		EmitTrace(
+			LvlTrace,
+			fmt.Sprintf(
+				"DataChannel(%v).OnError(%v)",
+				handle,
+				err,
+			),
+		)
+
+		// TODO - forward this to rust
 	})
 
 	ch.OnMessage(func(msg webrtc.DataChannelMessage) {
@@ -82,6 +101,33 @@ func CallDataChanFree(data_chan_id UintPtrT) {
 	hnd := cgo.Handle(data_chan_id)
 	dataChan := hnd.Value().(*DataChan)
 	dataChan.Free()
+}
+
+func CallDataChanLabel(
+	data_chan_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(data_chan_id)
+	dataChan := hnd.Value().(*DataChan)
+	dataChan.mu.Lock()
+	defer dataChan.mu.Unlock()
+
+	if dataChan.closed {
+		panic("DataChanClosed")
+	}
+
+	buf := NewBuffer([]byte(dataChan.ch.Label()))
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyDataChanLabel,
+		buf.handle,
+		0,
+		0,
+		0,
+	)
 }
 
 func CallDataChanReadyState(
@@ -129,20 +175,13 @@ func CallDataChanSend(
 	buf_hnd := cgo.Handle(buffer_id)
 	buf := buf_hnd.Value().(*Buffer)
 	buf.mu.Lock()
-	// defer buf.mu.Unlock()
-	// don't defer Unlock, we need to be able to unlock it manually
-	// so that we can free the passed in buffer... *BUT* that
-	// means we have to manually unlock it before all exits
+	defer buf.mu.Unlock()
 
 	if buf.closed {
-		buf.mu.Unlock()
 		panic("BufferClosed")
 	}
 
 	err := dataChan.ch.Send(buf.buf.Bytes())
-
-	buf.mu.Unlock()
-	buf.Free()
 
 	if err != nil {
 		panic(err)

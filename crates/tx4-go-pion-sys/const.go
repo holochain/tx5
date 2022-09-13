@@ -3,10 +3,18 @@ package main
 const (
 	// Reporting an error from the lib.
 	// - allowed contexts: Event, Response
-	// - msg slot_a = error code
-	// - msg slot_b = utf8 error text ptr
-	// - msg slot_c = utf8 error text len
+	// - msg slot_a = utf8 error id ptr
+	// - msg slot_b = utf8 error id len
+	// - msg slot_c = utf8 error info ptr
+	// - msg slot_d = utf8 error info len
 	TyErr UintPtrT = 0xffff
+
+	// A tracing message published by the lib.
+	// - allowed contexts: Event
+	// - msg slot_a: logging level
+	// - msg slot_b: utf8 info ptr
+	// - msg slot_c: utf8 info len
+	TyOnTrace UintPtrT = 0xfffe
 
 	// Request a go buffer be created / giving access to said buffer in resp.
 	// - allowed contexts: Call, Response
@@ -50,8 +58,7 @@ const (
 
 	// Request a new peer connection be opened.
 	// - allowed contexts: Call, Response
-	// - call slot_a: utf8 json config ptr
-	// - call slot_b: utf8 json config len
+	// - call slot_a: config buffer id
 	// - msg slot_a: peer_con id
 	TyPeerConAlloc UintPtrT = 0x9001
 
@@ -63,61 +70,45 @@ const (
 	// Request an existing peer con create an offer.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
-	// - msg slot_a: utf8 json ptr
-	// - msg slot_b: utf8 json len
+	// - call slot_b: config buffer id
+	// - msg slot_a: offer buffer id
 	TyPeerConCreateOffer UintPtrT = 0x9003
 
 	// Request an existing peer con create an answer.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
-	// - msg slot_a: utf8 json ptr
-	// - msg slot_b: utf8 json len
+	// - call slot_b: config buffer id
+	// - msg slot_a: answer buffer id
 	TyPeerConCreateAnswer UintPtrT = 0x9004
 
 	// Request an existing peer con set local description.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: desc buffer id
 	TyPeerConSetLocalDesc UintPtrT = 0x9005
 
 	// Request an existing peer con set rem description.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: desc buffer id
 	TyPeerConSetRemDesc UintPtrT = 0x9006
 
 	// Request an existing peer con add ice candidate.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: ice buffer id
 	TyPeerConAddICECandidate UintPtrT = 0x9007
 
 	// Request an existing peer con create a new data channel.
 	// - allowed contexts: Call, Response
 	// - call slot_a: peer_con id
-	// - call slot_b: utf8 json ptr
-	// - call slot_c: utf8 json len
+	// - call slot_b: config buffer id
 	TyPeerConCreateDataChan UintPtrT = 0x9008
-
-	// Request the remote certificate (if available).
-	// - allowed contexts: Call, Response
-	// - call slot_a: peer_con id
-	// - call slot_b: cert ptr
-	// - call slot_c: cert len
-	TyPeerConRemCert UintPtrT = 0x9009
 
 	// OnICECandidate event on an existing peer con.
 	// - allowed contexts: Event
 	// - msg slot_a: peer_con id
-	// - msg slot_b: utf8 ptr
-	// - msg slot_c: utf8 len
+	// - msg slot_b: ice buffer id
 	TyPeerConOnICECandidate UintPtrT = 0x9801
 
 	// OnConStateChange event on an existing peer con.
@@ -148,6 +139,12 @@ const (
 	// - call slot_a: data_chan id
 	// - call slot_b: buffer id
 	TyDataChanSend UintPtrT = 0xa004
+
+	// Request the label of an existing data channel..
+	// - allowed contexts: Call, Response
+	// - call slot_a: data_chan id
+	// - msg slot_a: label buffer id
+	TyDataChanLabel UintPtrT = 0xa005
 
 	// OnClose event on an existing data chan.
 	// - allowed contexts: Event

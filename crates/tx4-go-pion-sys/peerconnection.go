@@ -6,6 +6,7 @@ import (
 	//"crypto/elliptic"
 	//"crypto/rand"
 	//"fmt"
+	"fmt"
 	"runtime/cgo"
 	"sync"
 	"unsafe"
@@ -41,8 +42,7 @@ type PeerConConfig struct {
 }
 
 func CallPeerConAlloc(
-	config_json UintPtrT,
-	config_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -61,11 +61,16 @@ func CallPeerConAlloc(
 	  }
 	  fmt.Printf("cert:\n%s\n", certPem)
 	*/
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-	buf := LoadBytesSafe(config_json, config_len)
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var tmpConfig PeerConConfig
-	if err := json.Unmarshal(buf.Bytes(), &tmpConfig); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &tmpConfig); err != nil {
 		panic(err)
 	}
 
@@ -91,7 +96,24 @@ func CallPeerConAlloc(
 	handle := UintPtrT(cgo.NewHandle(peerCon))
 	peerCon.handle = handle
 
+	EmitTrace(
+		LvlDebug,
+		fmt.Sprintf(
+			"PeerConnection(%v).PeerConAlloc()",
+			handle,
+		),
+	)
+
 	con.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		EmitTrace(
+			LvlTrace,
+			fmt.Sprintf(
+				"PeerConnection(%v).OnICECandidate(%v)",
+				handle,
+				candidate,
+			),
+		)
+
 		if candidate == nil {
 			return
 		}
@@ -100,13 +122,14 @@ func CallPeerConAlloc(
 		if err != nil {
 			return
 		}
-		bytes := []byte(json)
+
+		buf := NewBuffer([]byte(json))
 
 		EmitEvent(
 			TyPeerConOnICECandidate,
 			handle,
-			VoidStarToPtrT(unsafe.Pointer(&bytes[0])),
-			UintPtrT(len(bytes)),
+			buf.handle,
+			0,
 			0,
 		)
 	})
@@ -123,6 +146,16 @@ func CallPeerConAlloc(
 
 	con.OnDataChannel(func(ch *webrtc.DataChannel) {
 		dataChan := NewDataChan(ch)
+
+		EmitTrace(
+			LvlTrace,
+			fmt.Sprintf(
+				"PeerConnection(%v).OnDataChannel(%v)",
+				handle,
+				dataChan.handle,
+			),
+		)
+
 		EmitEvent(
 			TyPeerConOnDataChannel,
 			handle,
@@ -151,8 +184,7 @@ func CallPeerConFree(peer_con_id UintPtrT) {
 
 func CallPeerConCreateOffer(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -165,15 +197,17 @@ func CallPeerConCreateOffer(
 		panic("PeerConClosed")
 	}
 
-	var opts *webrtc.OfferOptions
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-	if json_data != 0 {
-		buf := LoadBytesSafe(json_data, json_len)
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
-		opts = new(webrtc.OfferOptions)
-		if err := json.Unmarshal(buf.Bytes(), opts); err != nil {
-			panic(err)
-		}
+	opts := new(webrtc.OfferOptions)
+	if err := json.Unmarshal(buf.buf.Bytes(), opts); err != nil {
+		panic(err)
 	}
 
 	offer, err := peerCon.con.CreateOffer(opts)
@@ -186,14 +220,14 @@ func CallPeerConCreateOffer(
 		panic(err)
 	}
 
-	offerBytes := []byte(offerJson)
+	bufOut := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateOffer,
-		VoidStarToPtrT(unsafe.Pointer(&offerBytes[0])),
-		UintPtrT(len(offerBytes)),
+		bufOut.handle,
+		0,
 		0,
 		0,
 	)
@@ -201,8 +235,7 @@ func CallPeerConCreateOffer(
 
 func CallPeerConCreateAnswer(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -215,15 +248,17 @@ func CallPeerConCreateAnswer(
 		panic("PeerConClosed")
 	}
 
-	var opts *webrtc.AnswerOptions
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-	if json_data != 0 {
-		buf := LoadBytesSafe(json_data, json_len)
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
-		opts = new(webrtc.AnswerOptions)
-		if err := json.Unmarshal(buf.Bytes(), opts); err != nil {
-			panic(err)
-		}
+	opts := new(webrtc.AnswerOptions)
+	if err := json.Unmarshal(buf.buf.Bytes(), opts); err != nil {
+		panic(err)
 	}
 
 	offer, err := peerCon.con.CreateAnswer(opts)
@@ -236,14 +271,14 @@ func CallPeerConCreateAnswer(
 		panic(err)
 	}
 
-	offerBytes := []byte(offerJson)
+	bufOut := NewBuffer([]byte(offerJson))
 
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyPeerConCreateAnswer,
-		VoidStarToPtrT(unsafe.Pointer(&offerBytes[0])),
-		UintPtrT(len(offerBytes)),
+		bufOut.handle,
+		0,
 		0,
 		0,
 	)
@@ -251,8 +286,7 @@ func CallPeerConCreateAnswer(
 
 func CallPeerConSetLocalDesc(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	desc_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -265,10 +299,16 @@ func CallPeerConSetLocalDesc(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(desc_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var desc webrtc.SessionDescription
-	if err := json.Unmarshal(buf.Bytes(), &desc); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &desc); err != nil {
 		panic(err)
 	}
 
@@ -289,8 +329,7 @@ func CallPeerConSetLocalDesc(
 
 func CallPeerConSetRemDesc(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	desc_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -303,10 +342,16 @@ func CallPeerConSetRemDesc(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(desc_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var desc webrtc.SessionDescription
-	if err := json.Unmarshal(buf.Bytes(), &desc); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &desc); err != nil {
 		panic(err)
 	}
 
@@ -327,8 +372,7 @@ func CallPeerConSetRemDesc(
 
 func CallPeerConAddICECandidate(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	ice_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -341,10 +385,16 @@ func CallPeerConAddICECandidate(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(ice_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var candidate webrtc.ICECandidateInit
-	if err := json.Unmarshal(buf.Bytes(), &candidate); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &candidate); err != nil {
 		panic(err)
 	}
 
@@ -375,8 +425,7 @@ type DataChanConfig struct {
 
 func CallPeerConCreateDataChan(
 	peer_con_id UintPtrT,
-	json_data UintPtrT,
-	json_len UintPtrT,
+	config_buf_id UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
@@ -389,10 +438,16 @@ func CallPeerConCreateDataChan(
 		panic("PeerConClosed")
 	}
 
-	buf := LoadBytesSafe(json_data, json_len)
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
 
 	var conf DataChanConfig
-	if err := json.Unmarshal(buf.Bytes(), &conf); err != nil {
+	if err := json.Unmarshal(buf.buf.Bytes(), &conf); err != nil {
 		panic(err)
 	}
 
@@ -419,44 +474,6 @@ func CallPeerConCreateDataChan(
 		TyPeerConCreateDataChan,
 		dataChan.handle,
 		0,
-		0,
-		0,
-	)
-}
-
-func CallPeerConRemCert(
-	peer_con_id UintPtrT,
-	response_cb MessageCb,
-	response_usr unsafe.Pointer,
-) {
-	hnd := cgo.Handle(peer_con_id)
-	peerCon := hnd.Value().(*PeerCon)
-	peerCon.mu.Lock()
-	defer peerCon.mu.Unlock()
-
-	if peerCon.closed {
-		panic("PeerConClosed")
-	}
-
-	sctp := peerCon.con.SCTP()
-	if sctp == nil {
-		panic("NoSCTP")
-	}
-	tx := sctp.Transport()
-	if tx == nil {
-		panic("NoDTLS")
-	}
-	cert := tx.GetRemoteCertificate()
-	if cert == nil || len(cert) < 1 {
-		panic("NoRemCert")
-	}
-
-	MessageCbInvoke(
-		response_cb,
-		response_usr,
-		TyPeerConRemCert,
-		VoidStarToPtrT(unsafe.Pointer(&cert[0])),
-		UintPtrT(len(cert)),
 		0,
 		0,
 	)

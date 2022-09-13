@@ -116,6 +116,7 @@ func EmitEvent(
 }
 
 // register the MessageCb that will be invoked for events
+//
 //export OnEvent
 func OnEvent(
 	// the callback to invoke
@@ -135,7 +136,31 @@ func OnEvent(
 	return prev
 }
 
+const (
+	LvlTrace UintPtrT = 0x01
+	LvlDebug UintPtrT = 0x02
+	LvlInfo  UintPtrT = 0x03
+	LvlWarn  UintPtrT = 0x04
+	LvlError UintPtrT = 0x05
+)
+
+func EmitTrace(
+	lvl UintPtrT,
+	msg string,
+) {
+	buf := []byte(msg)
+
+	EmitEvent(
+		TyOnTrace,
+		lvl,
+		C.void_star_to_ptr_t(unsafe.Pointer(&buf[0])),
+		UintPtrT(len(buf)),
+		0,
+	)
+}
+
 // make a call into the library
+//
 //export Call
 func Call(
 	// call type indicator
@@ -166,14 +191,14 @@ func Call(
 				response_cb,
 				response_usr,
 				TyErr,
-				// error code
-				0,
-				// error text ptr
+				// error id ptr
+				C.void_star_to_ptr_t(unsafe.Pointer(&([]byte)("Error")[0])),
+				// error id len
+				UintPtrT(5),
+				// error info ptr
 				C.void_star_to_ptr_t(unsafe.Pointer(&bytes[0])),
-				// error text len
+				// error info len
 				UintPtrT(len(bytes)),
-				// unused
-				0,
 			)
 		}
 	}()
@@ -231,21 +256,21 @@ func callInner(
 	case TyBufferRead:
 		CallBufferRead(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConAlloc:
-		CallPeerConAlloc(slot_a, slot_b, response_cb, response_usr)
+		CallPeerConAlloc(slot_a, response_cb, response_usr)
 	case TyPeerConCreateOffer:
-		CallPeerConCreateOffer(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConCreateOffer(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConCreateAnswer:
-		CallPeerConCreateAnswer(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConCreateAnswer(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConSetLocalDesc:
-		CallPeerConSetLocalDesc(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConSetLocalDesc(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConSetRemDesc:
-		CallPeerConSetRemDesc(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConSetRemDesc(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConAddICECandidate:
-		CallPeerConAddICECandidate(slot_a, slot_b, slot_c, response_cb, response_usr)
+		CallPeerConAddICECandidate(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConCreateDataChan:
-		CallPeerConCreateDataChan(slot_a, slot_b, slot_c, response_cb, response_usr)
-	case TyPeerConRemCert:
-		CallPeerConRemCert(slot_a, response_cb, response_usr)
+		CallPeerConCreateDataChan(slot_a, slot_b, response_cb, response_usr)
+	case TyDataChanLabel:
+		CallDataChanLabel(slot_a, response_cb, response_usr)
 	case TyDataChanReadyState:
 		CallDataChanReadyState(slot_a, response_cb, response_usr)
 	case TyDataChanSend:

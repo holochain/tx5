@@ -9,8 +9,11 @@ use tx4_go_pion_sys::API;
 /// Incoming events related to a PeerConnection.
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
+    /// PeerConnection Error.
+    Error(Error),
+
     /// Received a trickle ICE candidate.
-    ICECandidate(String),
+    ICECandidate(GoBuf),
 
     /// Received an incoming data channel.
     DataChannel(DataChannelSeed),
@@ -27,6 +30,12 @@ pub enum DataChannelEvent {
 
     /// DataChannel incoming message.
     Message(GoBuf),
+}
+
+#[inline]
+pub(crate) fn init_evt_manager() {
+    // ensure initialization
+    MANAGER.is_locked();
 }
 
 pub(crate) fn register_peer_con_evt_cb(id: usize, cb: PeerConEvtCb) {
@@ -66,7 +75,7 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 let maybe_cb =
                     MANAGER.lock().peer_con.get(&peer_con_id).cloned();
                 if let Some(cb) = maybe_cb {
-                    cb(PeerConnectionEvent::ICECandidate(candidate));
+                    cb(PeerConnectionEvent::ICECandidate(GoBuf(candidate)));
                 }
             }
             SysEvent::PeerConStateChange {

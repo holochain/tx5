@@ -1,10 +1,13 @@
 # build context
 FROM alpine:3.16 AS build
 
+# include the source tree for build
+ADD Cargo.toml /Cargo.toml
+ADD crates /crates
+
 # build the executable
-RUN apk add --no-cache build-base cargo git \
-  && git clone https://github.com/holochain/tx4.git \
-  && cargo build --release --manifest-path tx4/crates/tx4-signal-srv/Cargo.toml
+RUN apk add --no-cache build-base cargo \
+  && cargo build --release --manifest-path crates/tx4-signal-srv/Cargo.toml
 
 # run context
 FROM alpine:3.16
@@ -14,7 +17,7 @@ RUN apk add --no-cache libgcc
 
 # copy executable from build context
 COPY --from=build \
-  ./tx4/target/release/tx4-signal-srv /usr/bin/tx4-signal-srv
+  ./target/release/tx4-signal-srv /usr/bin/tx4-signal-srv
 
 # set executable as entrypoint
 ENTRYPOINT ["tx4-signal-srv"]

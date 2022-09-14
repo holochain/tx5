@@ -16,6 +16,11 @@ pub struct Opt {
     #[clap(short, long)]
     pub init: bool,
 
+    /// Run the signal server, generating a config file if one
+    /// does not already exist. Exclusive with "init" option.
+    #[clap(long)]
+    pub run_with_init_if_needed: bool,
+
     /// Configuration file to use for running the tx4-signal-srv.
     /// Defaults to `$user_config_dir_path$/tx4-signal-srv.json`.
     #[clap(short, long)]
@@ -131,9 +136,13 @@ pub async fn config_per_opt(mut opt: Opt) -> Result<ConfigPerOpt> {
 
     let config_path = opt.config.as_ref().unwrap().to_owned();
 
-    if opt.init {
+    if opt.init && opt.run_with_init_if_needed {
+        panic!("--init and --run-with-init-if-needed cannot both be specified");
+    } else if opt.init {
         write_example_config(&config_path).await?;
         return Ok(ConfigPerOpt::ConfigWritten(config_path));
+    } else if opt.run_with_init_if_needed {
+        let _ = write_example_config(&config_path).await;
     }
 
     Ok(ConfigPerOpt::ConfigLoaded(read_config(&config_path).await?))

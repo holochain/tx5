@@ -9,6 +9,21 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tx4_core::wire;
 
+struct IntGaugeGuard(prometheus::IntGauge);
+
+impl Drop for IntGaugeGuard {
+    fn drop(&mut self) {
+        self.0.dec();
+    }
+}
+
+impl IntGaugeGuard {
+    pub fn new(gauge: prometheus::IntGauge) -> Self {
+        gauge.inc();
+        Self(gauge)
+    }
+}
+
 /// [exec_tx4_signal_srv] will return this driver future.
 pub type ServerDriver = std::pin::Pin<Box<dyn Future<Output = ()> + 'static>>;
 
@@ -16,6 +31,16 @@ pub type ServerDriver = std::pin::Pin<Box<dyn Future<Output = ()> + 'static>>;
 pub fn exec_tx4_signal_srv(
     config: Config,
 ) -> Result<(SocketAddr, ServerDriver)> {
+    // make sure our metrics are initialized
+    let _ = &*METRICS_REQ_COUNT;
+    let _ = &*METRICS_REQ_TIME_S;
+    let _ = &*CLIENT_ACTIVE_WS_COUNT;
+    let _ = &*CLIENT_WS_COUNT;
+    let _ = &*CLIENT_AUTH_WS_COUNT;
+    let _ = &*CLIENT_WS_REQ_TIME_S;
+    let _ = &*REQ_FWD_CNT;
+    let _ = &*REQ_DEMO_CNT;
+
     let ice_servers = Arc::new(config.ice_servers);
     let srv_hnd = Srv::spawn();
 
@@ -25,6 +50,9 @@ pub fn exec_tx4_signal_srv(
     let tx4_ws = warp::path!("tx4-ws" / String)
         .and(warp::ws())
         .map(move |client_pub: String, ws: warp::ws::Ws| {
+            let active_ws_g =
+                IntGaugeGuard::new(CLIENT_ACTIVE_WS_COUNT.clone());
+            CLIENT_WS_COUNT.inc();
             let client_pub = match decode_client_pub(&client_pub) {
                 Err(err) => return reply_err(err).into_response(),
                 Ok(client_pub) => client_pub,
@@ -40,12 +68,24 @@ pub fn exec_tx4_signal_srv(
                     {
                         tracing::debug!(?err);
                     }
+                    drop(active_ws_g);
                 })
                 .into_response()
         })
         .with(warp::trace::named("tx4-ws"));
 
-    let routes = tx4_ws.with(warp::trace::request());
+    let prometheus = warp::path!("metrics")
+        .map(move || {
+            METRICS_REQ_COUNT.inc();
+            let _time_g = METRICS_REQ_TIME_S.start_timer();
+
+            let enc = prometheus::TextEncoder::new();
+            let metrics = prometheus::default_registry().gather();
+            enc.encode_to_string(&metrics).unwrap()
+        })
+        .with(warp::trace::named("metrics"));
+
+    let routes = tx4_ws.or(prometheus).with(warp::trace::request());
 
     warp::serve(routes)
         .try_bind_ephemeral(([0, 0, 0, 0], config.port))
@@ -102,6 +142,8 @@ async fn client_task(
 
     srv_hnd.register(client_id, out_send).await?;
 
+    CLIENT_AUTH_WS_COUNT.inc();
+
     let srv_hnd_read = srv_hnd.clone();
     let client_id_read = client_id;
     tokio::select! {
@@ -124,6 +166,8 @@ async fn client_task(
 
         res = async move {
             while let Some(msg) = rx.next().await {
+                let _time_g = CLIENT_WS_REQ_TIME_S.start_timer();
+
                 let msg = match msg {
                     Err(err) => {
                         tracing::debug!(?err);
@@ -143,6 +187,7 @@ async fn client_task(
                         // TODO - pay attention to demo config flag
                         //        right now we just always honor demos
                         srv_hnd_read.broadcast(msg);
+                        REQ_DEMO_CNT.inc();
                     }
                     Ok(wire::Wire::FwdV1 { rem_pub, nonce, cipher }) => {
                         let data = wire::Wire::FwdV1 {
@@ -164,6 +209,7 @@ async fn client_task(
                                 tracing::trace!(?err);
                             }
                         }
+                        REQ_FWD_CNT.inc();
                     }
                     _ => return Err(Error::id("InvalidClientMsg")),
                 }

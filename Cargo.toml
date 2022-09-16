@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/tx4",
   "crates/tx4-core",
   "crates/tx4-go-pion-sys",
   "crates/tx4-go-pion",

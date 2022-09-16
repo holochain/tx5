@@ -13,6 +13,12 @@ Tx4 Holochain WebRTC P2P Communication Ecosystem
 
 ## Crates Managed Within This Monorepo
 
+### Tx4
+
+- [tx4](crates/tx4) - The main holochain tx4 webrtc networking crate integrating the other code in this monorepo.
+
+### Tx4 Support Crates
+
 - [tx4-core](crates/tx4-core) - Core types used in other tx4 crates.
 - [tx4-go-pion-sys](crates/tx4-go-pion-sys) - Low level rust bindings to the go pion webrtc library.
 - [tx4-go-pion](crates/tx4-go-pion) - Higher level rust bindings to the go pion webrtc library.

@@ -1,0 +1,30 @@
+[package]
+name = "tx4"
+version = "0.0.1"
+edition = "2021"
+description = "The main holochain tx4 webrtc networking crate"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/holochain/tx4"
+documentation = "https://docs.rs/tx4"
+authors = [ "Holochain Core Dev Team <devcore@holochain.org>" ]
+keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
+categories = ["network-programming"]
+
+[features]
+default = [ "backend-go-pion" ]
+
+# use the tx4-go-pion crate as the webrtc backend
+backend-go-pion = [ "tx4-go-pion" ]
+
+# use the webrtc-rs crate as the webrtc backend
+backend-webrtc-rs = [ "webrtc" ]
+
+[dependencies]
+tracing = "0.1.36"
+tx4-core = { version = "0.0.1", path = "../tx4-core" }
+tx4-go-pion = { version = "0.0.1", path = "../tx4-go-pion", optional = true }
+webrtc = { version = "0.5.0", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.19.2", features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
+tracing-subscriber = { version = "0.3.11", features = [ "env-filter" ] }

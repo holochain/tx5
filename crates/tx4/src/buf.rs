@@ -65,6 +65,12 @@ pub struct Buf {
     pub(crate) _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }
 
+impl std::fmt::Debug for Buf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.imp.fmt(f)
+    }
+}
+
 impl Buf {
     /// Build a tx4 buffer from a slice.
     #[inline]

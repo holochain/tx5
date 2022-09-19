@@ -9,9 +9,13 @@ mod imp {
 }
 
 /// Events emitted by a PeerConnection.
+#[derive(Debug)]
 pub enum PeerConnectionEvent {
     /// Ice candidate event.
     IceCandidate(Buf),
+
+    /// Incoming data channel seed.
+    DataChannel(DataChannelSeed),
 }
 
 /// ICE server configuration.
@@ -235,6 +239,14 @@ impl PeerConnection {
         B: Into<BufRef<'a>>,
     {
         self.imp.set_remote_description(desc).await
+    }
+
+    /// yo
+    pub async fn add_ice_candidate<'a, B>(&mut self, ice: B) -> Result<()>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        self.imp.add_ice_candidate(ice).await
     }
 
     /// Trigger a data channel to be created. The data channel (when ready)

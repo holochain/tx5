@@ -3,6 +3,7 @@
 use crate::*;
 
 /// Events emitted by a DataChannel.
+#[derive(Debug)]
 pub enum DataChannelEvent {
     /// The DataChannel is closed.
     Close,
@@ -21,6 +22,12 @@ pub(crate) mod imp {
 pub struct DataChannelSeed {
     pub(crate) imp: imp::ImpChanSeed,
     pub(crate) _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
+}
+
+impl std::fmt::Debug for DataChannelSeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DataChannelSeed").finish()
+    }
 }
 
 impl DataChannelSeed {
@@ -60,7 +67,7 @@ impl DataChannel {
     /// Send data to the remote end of this DataChannel.
     pub async fn send<'a, B>(&mut self, data: B) -> Result<()>
     where
-        B: Into<&'a mut Buf>,
+        B: Into<BufRef<'a>>,
     {
         self.imp.send(data).await
     }

@@ -16,6 +16,9 @@ impl ImpConn {
         let conn =
             tx4_go_pion::PeerConnection::new(&mut config.imp.buf, move |evt| {
                 match evt {
+                    tx4_go_pion::PeerConnectionEvent::Error(err) => {
+                        panic!("{:?}", err)
+                    }
                     tx4_go_pion::PeerConnectionEvent::ICECandidate(buf) => {
                         cb(PeerConnectionEvent::IceCandidate(Buf {
                             imp: buf::imp::Imp {
@@ -25,7 +28,14 @@ impl ImpConn {
                             _not_sync: std::marker::PhantomData,
                         }));
                     }
-                    _ => panic!("AHHH"),
+                    tx4_go_pion::PeerConnectionEvent::DataChannel(seed) => {
+                        let seed = crate::chan::imp::ImpChanSeed::new(seed);
+                        let seed = DataChannelSeed {
+                            imp: seed,
+                            _not_sync: std::marker::PhantomData,
+                        };
+                        cb(PeerConnectionEvent::DataChannel(seed));
+                    }
                 }
             })
             .await?;
@@ -83,6 +93,15 @@ impl ImpConn {
         let mut desc = desc.into();
         let desc = desc.as_mut_ref()?;
         self.conn.set_remote_description(&mut desc.imp.buf).await
+    }
+
+    pub async fn add_ice_candidate<'a, B>(&mut self, ice: B) -> Result<()>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        let mut ice = ice.into();
+        let ice = ice.as_mut_ref()?;
+        self.conn.add_ice_candidate(&mut ice.imp.buf).await
     }
 
     pub async fn create_data_channel<'a, B>(

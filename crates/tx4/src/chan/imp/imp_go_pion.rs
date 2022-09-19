@@ -63,9 +63,10 @@ impl ImpChan {
 
     pub async fn send<'a, B>(&mut self, data: B) -> Result<()>
     where
-        B: Into<&'a mut Buf>,
+        B: Into<BufRef<'a>>,
     {
-        let data = data.into();
+        let mut data = data.into();
+        let data = data.as_mut_ref()?;
         self.chan.send(&mut data.imp.buf).await
     }
 }

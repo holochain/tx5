@@ -53,6 +53,12 @@ pub struct Imp {
     pub(crate) _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }
 
+impl std::fmt::Debug for Imp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Buf").finish()
+    }
+}
+
 impl Imp {
     #[inline]
     pub fn from_slice<S: AsRef<[u8]>>(slice: S) -> Result<Self> {

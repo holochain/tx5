@@ -23,6 +23,9 @@ publish:
 		tx4-signal-srv) \
 			export MANIFEST="./crates/tx4-signal-srv/Cargo.toml"; \
 			;; \
+		tx4) \
+			export MANIFEST="./crates/tx4/Cargo.toml"; \
+			;; \
 		tx4-demo) \
 			export MANIFEST="./crates/tx4-demo/Cargo.toml"; \
 			;; \
@@ -32,6 +35,7 @@ publish:
 			echo "USAGE: make publish crate=tx4-go-pion"; \
 			echo "USAGE: make publish crate=tx4-signal"; \
 			echo "USAGE: make publish crate=tx4-signal-srv"; \
+			echo "USAGE: make publish crate=tx4"; \
 			echo "USAGE: make publish crate=tx4-demo"; \
 			exit 1; \
 			;; \
@@ -63,6 +67,7 @@ docs: tools
 	cargo readme -r crates/tx4-go-pion-sys -o README.md
 	cargo readme -r crates/tx4-go-pion -o README.md
 	cargo readme -r crates/tx4-signal -o README.md
+	cargo readme -r crates/tx4 -o README.md
 	cargo readme -r crates/tx4-demo -o README.md
 
 tools: tool_rust tool_fmt tool_clippy tool_readme

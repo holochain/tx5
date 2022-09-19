@@ -50,6 +50,15 @@ pub(crate) fn register_data_chan_evt_cb(id: usize, cb: DataChanEvtCb) {
     MANAGER.lock().data_chan.insert(id, cb);
 }
 
+pub(crate) fn replace_data_chan_evt_cb<F>(id: usize, f: F)
+where
+    F: FnOnce() -> DataChanEvtCb,
+{
+    let mut lock = MANAGER.lock();
+    let cb = f();
+    lock.data_chan.insert(id, cb);
+}
+
 pub(crate) fn unregister_data_chan_evt_cb(id: usize) {
     MANAGER.lock().data_chan.remove(&id);
 }
@@ -89,7 +98,7 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 let maybe_cb =
                     MANAGER.lock().peer_con.get(&peer_con_id).cloned();
                 if let Some(cb) = maybe_cb {
-                    cb(PeerConnectionEvent::DataChannel(DataChannelSeed(
+                    cb(PeerConnectionEvent::DataChannel(DataChannelSeed::new(
                         data_chan_id,
                     )))
                 }

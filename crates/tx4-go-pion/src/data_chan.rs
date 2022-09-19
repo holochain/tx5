@@ -1,10 +1,11 @@
 use crate::*;
+use parking_lot::Mutex;
 use std::sync::Arc;
 use tx4_go_pion_sys::API;
 
 /// A precursor go pion webrtc DataChannel, awaiting an event handler.
 #[derive(Debug)]
-pub struct DataChannelSeed(pub(crate) usize);
+pub struct DataChannelSeed(pub(crate) usize, Arc<Mutex<Vec<DataChannelEvent>>>);
 
 impl Drop for DataChannelSeed {
     fn drop(&mut self) {
@@ -15,6 +16,20 @@ impl Drop for DataChannelSeed {
 }
 
 impl DataChannelSeed {
+    pub(crate) fn new(data_chan_id: usize) -> Self {
+        let hold = Arc::new(Mutex::new(Vec::new()));
+        {
+            let hold = hold.clone();
+            register_data_chan_evt_cb(
+                data_chan_id,
+                Arc::new(move |evt| {
+                    hold.lock().push(evt);
+                }),
+            );
+        }
+        Self(data_chan_id, hold)
+    }
+
     /// Construct a real DataChannel by providing an event handler.
     pub fn handle<Cb>(mut self, cb: Cb) -> DataChannel
     where
@@ -23,7 +38,12 @@ impl DataChannelSeed {
         let cb: DataChanEvtCb = Arc::new(cb);
         let data_chan_id = self.0;
         self.0 = 0;
-        register_data_chan_evt_cb(data_chan_id, cb);
+        replace_data_chan_evt_cb(data_chan_id, move || {
+            for evt in self.1.lock().drain(..) {
+                cb(evt);
+            }
+            cb
+        });
         DataChannel(data_chan_id)
     }
 }

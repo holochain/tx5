@@ -20,6 +20,7 @@ backend-go-pion = [ "tx4-go-pion" ]
 backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
+tokio = { version = "1.19.2", features = [ "rt" ] }
 tracing = "0.1.36"
 tx4-core = { version = "0.0.1", path = "../tx4-core" }
 tx4-go-pion = { version = "0.0.1", path = "../tx4-go-pion", optional = true }

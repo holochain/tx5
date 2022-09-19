@@ -52,6 +52,42 @@ impl AsRef<OfferConfig> for OfferConfig {
     }
 }
 
+/// Configuration for PeerConnection::create_answer.
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct AnswerConfig {}
+
+impl AsRef<AnswerConfig> for AnswerConfig {
+    fn as_ref(&self) -> &AnswerConfig {
+        self
+    }
+}
+
+/// Configuration for a go pion webrtc DataChannel.
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(crate = "tx4_core::deps::serde", rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct DataChannelConfig {
+    /// DataChannel Label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+impl DataChannelConfig {
+    /// Set the label for this DataChannelConfig
+    pub fn with_label(mut self, label: impl std::fmt::Display) -> Self {
+        self.label = Some(label.to_string());
+        self
+    }
+}
+
+impl AsRef<DataChannelConfig> for DataChannelConfig {
+    fn as_ref(&self) -> &DataChannelConfig {
+        self
+    }
+}
+
 /// Tx4 peer connection.
 pub struct PeerConnection {
     imp: imp::ImpConn,
@@ -106,5 +142,126 @@ impl PeerConnection {
         B: Into<BufRef<'a>>,
     {
         self.imp.create_offer(config).await
+    }
+
+    /// Create an "answer" for the remote side of this PeerConnection.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use tx4::*;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let mut conn1 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await.unwrap();
+    /// # conn1.create_data_channel(
+    /// #     DataChannelConfig::default().with_label("data"),
+    /// # ).await.unwrap();
+    /// # let mut offer =
+    /// #     conn1.create_offer(OfferConfig::default()).await.unwrap();
+    /// # conn1.set_local_description(&mut offer).await.unwrap();
+    /// # let mut conn2 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await.unwrap();
+    /// # conn2.set_remote_description(&mut offer).await.unwrap();
+    /// let answer = conn2.create_answer(AnswerConfig::default()).await.unwrap();
+    /// # std::mem::drop(answer);
+    /// # }
+    /// ```
+    pub async fn create_answer<'a, B>(&mut self, config: B) -> Result<Buf>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        self.imp.create_answer(config).await
+    }
+
+    /// Set the local description to the appropriate offer or answer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use tx4::*;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let mut conn1 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await.unwrap();
+    /// # conn1.create_data_channel(
+    /// #     DataChannelConfig::default().with_label("data"),
+    /// # ).await.unwrap();
+    /// # let mut offer =
+    /// #     conn1.create_offer(OfferConfig::default()).await.unwrap();
+    /// conn1.set_local_description(&mut offer).await.unwrap();
+    /// # }
+    /// ```
+    pub async fn set_local_description<'a, B>(&mut self, desc: B) -> Result<()>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        self.imp.set_local_description(desc).await
+    }
+
+    /// Set the remote description to the appropriate offer or answer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use tx4::*;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let mut conn1 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await.unwrap();
+    /// # conn1.create_data_channel(
+    /// #     DataChannelConfig::default().with_label("data"),
+    /// # ).await.unwrap();
+    /// # let mut offer =
+    /// #     conn1.create_offer(OfferConfig::default()).await.unwrap();
+    /// # conn1.set_local_description(&mut offer).await.unwrap();
+    /// # let mut conn2 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await.unwrap();
+    /// conn2.set_remote_description(&mut offer).await.unwrap();
+    /// # }
+    /// ```
+    pub async fn set_remote_description<'a, B>(&mut self, desc: B) -> Result<()>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        self.imp.set_remote_description(desc).await
+    }
+
+    /// Trigger a data channel to be created. The data channel (when ready)
+    /// will be emitted via PeerConnectionEvent::DataChannel.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use tx4::*;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let mut conn1 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await.unwrap();
+    /// conn1.create_data_channel(
+    ///     DataChannelConfig::default().with_label("data"),
+    /// ).await.unwrap();
+    /// # }
+    /// ```
+    pub async fn create_data_channel<'a, B>(
+        &mut self,
+        config: B,
+    ) -> Result<DataChannelSeed>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        self.imp.create_data_channel(config).await
     }
 }

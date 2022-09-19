@@ -202,7 +202,7 @@ impl PeerConnection {
         tokio::task::spawn_blocking(move || unsafe {
             let data_chan_id =
                 API.peer_con_create_data_chan(peer_con, config)?;
-            Ok(DataChannelSeed(data_chan_id))
+            Ok(DataChannelSeed::new(data_chan_id))
         })
         .await?
     }

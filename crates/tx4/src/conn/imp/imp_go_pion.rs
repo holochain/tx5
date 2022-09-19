@@ -50,4 +50,56 @@ impl ImpConn {
             _not_sync: std::marker::PhantomData,
         })
     }
+
+    pub async fn create_answer<'a, B>(&mut self, config: B) -> Result<Buf>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        let mut config = config.into();
+        let config = config.as_mut_ref()?;
+        let buf = self.conn.create_answer(&mut config.imp.buf).await?;
+        Ok(Buf {
+            imp: buf::imp::Imp {
+                buf,
+                _not_sync: std::marker::PhantomData,
+            },
+            _not_sync: std::marker::PhantomData,
+        })
+    }
+
+    pub async fn set_local_description<'a, B>(&mut self, desc: B) -> Result<()>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        let mut desc = desc.into();
+        let desc = desc.as_mut_ref()?;
+        self.conn.set_local_description(&mut desc.imp.buf).await
+    }
+
+    pub async fn set_remote_description<'a, B>(&mut self, desc: B) -> Result<()>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        let mut desc = desc.into();
+        let desc = desc.as_mut_ref()?;
+        self.conn.set_remote_description(&mut desc.imp.buf).await
+    }
+
+    pub async fn create_data_channel<'a, B>(
+        &mut self,
+        config: B,
+    ) -> Result<DataChannelSeed>
+    where
+        B: Into<BufRef<'a>>,
+    {
+        let mut config = config.into();
+        let config = config.as_mut_ref()?;
+        let seed = self.conn.create_data_channel(&mut config.imp.buf).await?;
+        let seed = crate::chan::imp::ImpChanSeed::new(seed);
+        let seed = DataChannelSeed {
+            imp: seed,
+            _not_sync: std::marker::PhantomData,
+        };
+        Ok(seed)
+    }
 }

@@ -106,12 +106,13 @@ impl PeerConnection {
     /// ```
     /// # use tx4::*;
     /// # #[tokio::main]
-    /// # async fn main() {
+    /// # async fn main() -> Result<()> {
     /// let conn = PeerConnection::new(
     ///     PeerConnectionConfig::default(),
     ///     |_evt| {},
-    /// ).await.unwrap();
+    /// ).await?;
     /// # std::mem::drop(conn);
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn new<'a, B, Cb>(config: B, cb: Cb) -> Result<Self>
@@ -132,13 +133,14 @@ impl PeerConnection {
     /// ```
     /// # use tx4::*;
     /// # #[tokio::main]
-    /// # async fn main() {
+    /// # async fn main() -> Result<()> {
     /// # let mut conn = PeerConnection::new(
     /// #     PeerConnectionConfig::default(),
     /// #     |_evt| {},
-    /// # ).await.unwrap();
-    /// let offer = conn.create_offer(OfferConfig::default()).await.unwrap();
+    /// # ).await?;
+    /// let offer = conn.create_offer(OfferConfig::default()).await?;
     /// # std::mem::drop(offer);
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn create_offer<'a, B>(&mut self, config: B) -> Result<Buf>
@@ -155,24 +157,25 @@ impl PeerConnection {
     /// ```
     /// # use tx4::*;
     /// # #[tokio::main]
-    /// # async fn main() {
+    /// # async fn main() -> Result<()> {
     /// # let mut conn1 = PeerConnection::new(
     /// #     PeerConnectionConfig::default(),
     /// #     |_evt| {},
-    /// # ).await.unwrap();
+    /// # ).await?;
     /// # conn1.create_data_channel(
     /// #     DataChannelConfig::default().with_label("data"),
-    /// # ).await.unwrap();
+    /// # ).await?;
     /// # let mut offer =
-    /// #     conn1.create_offer(OfferConfig::default()).await.unwrap();
-    /// # conn1.set_local_description(&mut offer).await.unwrap();
+    /// #     conn1.create_offer(OfferConfig::default()).await?;
+    /// # conn1.set_local_description(&mut offer).await?;
     /// # let mut conn2 = PeerConnection::new(
     /// #     PeerConnectionConfig::default(),
     /// #     |_evt| {},
-    /// # ).await.unwrap();
-    /// # conn2.set_remote_description(&mut offer).await.unwrap();
-    /// let answer = conn2.create_answer(AnswerConfig::default()).await.unwrap();
+    /// # ).await?;
+    /// # conn2.set_remote_description(&mut offer).await?;
+    /// let answer = conn2.create_answer(AnswerConfig::default()).await?;
     /// # std::mem::drop(answer);
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn create_answer<'a, B>(&mut self, config: B) -> Result<Buf>
@@ -189,17 +192,18 @@ impl PeerConnection {
     /// ```
     /// # use tx4::*;
     /// # #[tokio::main]
-    /// # async fn main() {
+    /// # async fn main() -> Result<()> {
     /// # let mut conn1 = PeerConnection::new(
     /// #     PeerConnectionConfig::default(),
     /// #     |_evt| {},
-    /// # ).await.unwrap();
+    /// # ).await?;
     /// # conn1.create_data_channel(
     /// #     DataChannelConfig::default().with_label("data"),
-    /// # ).await.unwrap();
+    /// # ).await?;
     /// # let mut offer =
-    /// #     conn1.create_offer(OfferConfig::default()).await.unwrap();
-    /// conn1.set_local_description(&mut offer).await.unwrap();
+    /// #     conn1.create_offer(OfferConfig::default()).await?;
+    /// conn1.set_local_description(offer).await?;
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn set_local_description<'a, B>(&mut self, desc: B) -> Result<()>
@@ -216,22 +220,23 @@ impl PeerConnection {
     /// ```
     /// # use tx4::*;
     /// # #[tokio::main]
-    /// # async fn main() {
+    /// # async fn main() -> Result<()> {
     /// # let mut conn1 = PeerConnection::new(
     /// #     PeerConnectionConfig::default(),
     /// #     |_evt| {},
-    /// # ).await.unwrap();
+    /// # ).await?;
     /// # conn1.create_data_channel(
     /// #     DataChannelConfig::default().with_label("data"),
-    /// # ).await.unwrap();
+    /// # ).await?;
     /// # let mut offer =
-    /// #     conn1.create_offer(OfferConfig::default()).await.unwrap();
-    /// # conn1.set_local_description(&mut offer).await.unwrap();
+    /// #     conn1.create_offer(OfferConfig::default()).await?;
+    /// # conn1.set_local_description(&mut offer).await?;
     /// # let mut conn2 = PeerConnection::new(
     /// #     PeerConnectionConfig::default(),
     /// #     |_evt| {},
-    /// # ).await.unwrap();
-    /// conn2.set_remote_description(&mut offer).await.unwrap();
+    /// # ).await?;
+    /// conn2.set_remote_description(offer).await?;
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn set_remote_description<'a, B>(&mut self, desc: B) -> Result<()>
@@ -241,7 +246,36 @@ impl PeerConnection {
         self.imp.set_remote_description(desc).await
     }
 
-    /// yo
+    /// Add an ice candidate to a PeerConnection.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use tx4::*;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
+    /// # let mut conn1 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await?;
+    /// # conn1.create_data_channel(
+    /// #     DataChannelConfig::default().with_label("data"),
+    /// # ).await?;
+    /// # let mut offer =
+    /// #     conn1.create_offer(OfferConfig::default()).await?;
+    /// # conn1.set_local_description(&mut offer).await?;
+    /// # let mut conn2 = PeerConnection::new(
+    /// #     PeerConnectionConfig::default(),
+    /// #     |_evt| {},
+    /// # ).await?;
+    /// # conn2.set_remote_description(&mut offer).await?;
+    /// # let answer = conn2.create_answer(AnswerConfig::default()).await?;
+    /// # conn2.set_local_description(answer).await?;
+    /// # let ice_candidate = Buf::from_slice("{}")?;
+    /// conn2.add_ice_candidate(ice_candidate).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn add_ice_candidate<'a, B>(&mut self, ice: B) -> Result<()>
     where
         B: Into<BufRef<'a>>,
@@ -257,14 +291,15 @@ impl PeerConnection {
     /// ```
     /// # use tx4::*;
     /// # #[tokio::main]
-    /// # async fn main() {
+    /// # async fn main() -> Result<()> {
     /// # let mut conn1 = PeerConnection::new(
     /// #     PeerConnectionConfig::default(),
     /// #     |_evt| {},
-    /// # ).await.unwrap();
+    /// # ).await?;
     /// conn1.create_data_channel(
     ///     DataChannelConfig::default().with_label("data"),
-    /// ).await.unwrap();
+    /// ).await?;
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn create_data_channel<'a, B>(

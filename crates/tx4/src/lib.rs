@@ -38,11 +38,14 @@ compile_error!("Must specify exactly 1 webrtc backend");
 pub mod deps {
     pub use tx4_core;
     pub use tx4_core::deps::*;
+    pub use tx4_signal;
+    pub use tx4_signal::deps::*;
 }
 
 use deps::serde;
 
 pub use tx4_core::{Error, ErrorExt, Result};
+pub use tx4_signal::{Cli, CliBuilder};
 
 mod buf;
 pub use buf::*;
@@ -53,9 +56,18 @@ pub use chan::*;
 mod conn;
 pub use conn::*;
 
+// TODO un-pub
+pub mod state;
+
+mod endpoint;
+pub use endpoint::*;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deps::*;
+    use lair_keystore_api::prelude::*;
+    use std::sync::Arc;
 
     const STUN: &str = r#"{
     "iceServers": [
@@ -91,10 +103,126 @@ mod tests {
         let _ = tracing::subscriber::set_global_default(subscriber);
     }
 
+    pub struct TestSignal {
+        addr: std::net::SocketAddr,
+        abort: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for TestSignal {
+        fn drop(&mut self) {
+            self.abort.abort();
+        }
+    }
+
+    impl TestSignal {
+        pub async fn new() -> Self {
+            let mut config = tx4_signal_srv::Config::default();
+            config.port = 0;
+            config.ice_servers = serde_json::from_str(STUN).unwrap();
+            config.demo = true;
+            let (addr, driver) =
+                tx4_signal_srv::exec_tx4_signal_srv(config).unwrap();
+
+            let abort = tokio::task::spawn(driver);
+
+            Self { addr, abort }
+        }
+
+        pub fn local_addr(&self) -> &std::net::SocketAddr {
+            &self.addr
+        }
+    }
+
+    pub struct TestLair {
+        lair_client: lair_keystore_api::LairClient,
+        tag: Arc<str>,
+    }
+
+    impl TestLair {
+        pub async fn new() -> Self {
+            let passphrase = sodoken::BufRead::new_no_lock(b"test-passphrase");
+            let keystore_config = PwHashLimits::Minimum
+                .with_exec(|| {
+                    LairServerConfigInner::new("/", passphrase.clone())
+                })
+                .await
+                .unwrap();
+
+            let keystore = PwHashLimits::Minimum
+                .with_exec(|| {
+                    lair_keystore_api::in_proc_keystore::InProcKeystore::new(
+                        Arc::new(keystore_config),
+                        lair_keystore_api::mem_store::create_mem_store_factory(
+                        ),
+                        passphrase,
+                    )
+                })
+                .await
+                .unwrap();
+
+            let lair_client = keystore.new_client().await.unwrap();
+            let tag: Arc<str> =
+                rand_utf8::rand_utf8(&mut rand::thread_rng(), 32).into();
+
+            lair_client
+                .new_seed(tag.clone(), None, false)
+                .await
+                .unwrap();
+
+            Self { lair_client, tag }
+        }
+
+        pub fn lair_client(&self) -> &LairClient {
+            &self.lair_client
+        }
+
+        pub fn tag(&self) -> &Arc<str> {
+            &self.tag
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn happy_path() {
         init_tracing();
 
+        let srv = TestSignal::new().await;
+        let srv_addr = url::Url::parse(&format!(
+            "ws://localhost:{}",
+            srv.local_addr().port()
+        ))
+        .unwrap();
+
+        let lair1 = TestLair::new().await;
+
+        let ep1 = Endpoint::new(
+            lair1.lair_client().clone(),
+            lair1.tag().clone(),
+            |evt| {
+                tracing::debug!("EP1:EVT:{:?}", evt);
+            },
+        )
+        .unwrap();
+        ep1.listen(srv_addr.clone()).await.unwrap();
+        let addr1 = ep1.url_list().await.unwrap().remove(0);
+        println!("addr1: {}", addr1);
+
+        let lair2 = TestLair::new().await;
+
+        let ep2 = Endpoint::new(
+            lair2.lair_client().clone(),
+            lair2.tag().clone(),
+            |evt| {
+                tracing::debug!("EP2:EVT:{:?}", evt);
+            },
+        )
+        .unwrap();
+        ep2.listen(srv_addr).await.unwrap();
+        let addr2 = ep2.url_list().await.unwrap().remove(0);
+        println!("addr2: {}", addr2);
+
+        //ep1.connect(addr2).await.unwrap();
+
+        /*
         let (conn_send, mut conn_recv) = tokio::sync::mpsc::unbounded_channel();
 
         let conn_send_1 = conn_send.clone();
@@ -186,5 +314,6 @@ mod tests {
             _ => unreachable!(),
         };
         assert_eq!(b"world", res.to_vec().unwrap().as_slice());
+        */
     }
 }

@@ -25,7 +25,8 @@ impl IntGaugeGuard {
 }
 
 /// [exec_tx4_signal_srv] will return this driver future.
-pub type ServerDriver = std::pin::Pin<Box<dyn Future<Output = ()> + 'static>>;
+pub type ServerDriver =
+    std::pin::Pin<Box<dyn Future<Output = ()> + 'static + Send>>;
 
 /// The main entrypoint tx4-signal-server logic task.
 pub fn exec_tx4_signal_srv(

@@ -14,6 +14,9 @@
 
 /// Re-exported dependencies.
 pub mod deps {
+    pub use hc_seed_bundle::dependencies::sodoken;
+    pub use lair_keystore_api;
+    pub use lair_keystore_api::dependencies::hc_seed_bundle;
     pub use tx4_core::deps::*;
 }
 

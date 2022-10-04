@@ -2,8 +2,7 @@
 
 use crate::*;
 
-use std::sync::Arc;
-use tx4_core::Id;
+use tx4_core::{Id, Tx4Url};
 
 mod store;
 pub(crate) use store::*;
@@ -13,6 +12,9 @@ pub(crate) use state_data::*;
 
 mod sig_state;
 pub use sig_state::*;
+
+#[cfg(test)]
+mod state_test;
 
 /// Respond type.
 pub struct OneSnd<T: 'static + Send>(
@@ -66,7 +68,7 @@ pub enum StateEvt {
 
     /// Incoming data received on a peer connection.
     /// The recv buffer will only decrement once the future resolves.
-    RcvData(Arc<str>, Buf, OneSnd<()>),
+    RcvData(Tx4Url, Buf, OneSnd<()>),
 }
 
 /// Handle to a state tracking instance.
@@ -75,17 +77,19 @@ pub struct State(StateData);
 
 impl State {
     /// Construct a new state instance.
-    pub fn new() -> (Self, ManyRcv<StateEvt>) {
+    pub fn new() -> (Self, ManyRcv<Result<StateEvt>>) {
         let (state_snd, state_rcv) = tokio::sync::mpsc::unbounded_channel();
         let state_data = StateData::new(state_snd);
         (Self(state_data), ManyRcv(state_rcv))
     }
 
     /// Shutdown the state system instance.
-    pub fn shutdown(&self, _maybe_err: Option<Error>) {}
+    pub fn shutdown(&self, maybe_err: Option<std::io::Error>) {
+        self.0.shutdown_full(maybe_err);
+    }
 
     /// Establish a new listening connection through signal server.
-    pub async fn listener_sig(&self, url: Arc<str>) -> Result<()> {
+    pub async fn listener_sig(&self, url: Tx4Url) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.0.check_new_listener_sig(url, s)?;
         r.await.map_err(|_| Error::id("Closed"))?
@@ -94,7 +98,7 @@ impl State {
     /// Schedule data to be sent out over a channel managed by the state system.
     /// The future will resolve immediately if there is still space
     /// in the outgoing buffer, or once there is again space in the buffer.
-    pub async fn snd_data(&self, _url: Arc<str>, _data: Buf) -> Result<()> {
+    pub async fn snd_data(&self, _url: Tx4Url, _data: Buf) -> Result<()> {
         todo!()
     }
 }

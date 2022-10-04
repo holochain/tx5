@@ -4,7 +4,7 @@ use super::*;
 pub struct SigStateSeed {
     pub(crate) done: bool,
     pub(crate) key: u64,
-    pub(crate) url: Arc<str>,
+    pub(crate) url: Tx4Url,
     pub(crate) state_data: StateData,
     pub(crate) sig_evt: Option<ManyRcv<Result<SigStateEvt>>>,
 }

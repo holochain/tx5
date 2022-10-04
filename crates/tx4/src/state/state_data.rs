@@ -38,12 +38,14 @@ impl SigStateData {
 }
 
 struct StateDataInner {
-    evt: tokio::sync::mpsc::UnboundedSender<StateEvt>,
-    signal_map: HashMap<Arc<str>, SigStateData>,
+    evt: tokio::sync::mpsc::UnboundedSender<Result<StateEvt>>,
+    signal_map: HashMap<Tx4Url, SigStateData>,
 }
 
 impl StateDataInner {
-    pub fn new(evt: tokio::sync::mpsc::UnboundedSender<StateEvt>) -> Self {
+    pub fn new(
+        evt: tokio::sync::mpsc::UnboundedSender<Result<StateEvt>>,
+    ) -> Self {
         Self {
             evt,
             signal_map: HashMap::new(),
@@ -55,11 +57,26 @@ impl StateDataInner {
 pub struct StateData(Store<StateDataInner>);
 
 impl StateData {
-    pub fn new(evt: tokio::sync::mpsc::UnboundedSender<StateEvt>) -> Self {
+    pub fn new(
+        evt: tokio::sync::mpsc::UnboundedSender<Result<StateEvt>>,
+    ) -> Self {
         Self(Store::new(StateDataInner::new(evt)))
     }
 
-    pub fn new_listener_sig_ok(&self, key: u64, url: &Arc<str>) {
+    pub fn shutdown_full(&self, maybe_err: Option<std::io::Error>) {
+        let _ = self.0.access_mut(move |inner| {
+            inner.close();
+            if let Some(err) = maybe_err {
+                for (_, sig) in inner.signal_map.iter_mut() {
+                    let _ = sig.sig_evt.send(Err(err.err_clone()));
+                }
+                let _ = inner.evt.send(Err(err));
+            }
+            Ok(())
+        });
+    }
+
+    pub fn new_listener_sig_ok(&self, key: u64, url: &Tx4Url) {
         let _ = self.0.access_mut(move |inner| {
             if let Some(mut sig) = inner.signal_map.get_mut(url) {
                 if sig.key != key {
@@ -81,7 +98,7 @@ impl StateData {
     pub fn new_listener_sig_err(
         &self,
         key: u64,
-        url: &Arc<str>,
+        url: &Tx4Url,
         err: std::io::Error,
     ) {
         let _ = self.0.access_mut(move |inner| {
@@ -104,7 +121,7 @@ impl StateData {
 
     pub fn check_new_listener_sig(
         &self,
-        url: Arc<str>,
+        url: Tx4Url,
         respond: tokio::sync::oneshot::Sender<Result<()>>,
     ) -> Result<()> {
         let this = self.clone();
@@ -131,7 +148,7 @@ impl StateData {
                         state_data: this,
                         sig_evt: Some(sig_evt),
                     };
-                    let _ = inner.evt.send(StateEvt::NewSig(seed));
+                    let _ = inner.evt.send(Ok(StateEvt::NewSig(seed)));
                     Ok(())
                 }
             }

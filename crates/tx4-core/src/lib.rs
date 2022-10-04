@@ -24,6 +24,9 @@ pub use error::*;
 mod id;
 pub use id::*;
 
+mod url;
+pub use crate::url::*;
+
 pub mod wire;
 
 /// Websocket configuration constants.

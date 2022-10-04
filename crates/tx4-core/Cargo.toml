@@ -11,6 +11,6 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
-base64 = "0.13.0"
-serde = { version = "1.0.144", features = [ "derive", "rc" ] }
-serde_json = { version = "1.0.85", features = [ "preserve_order" ] }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

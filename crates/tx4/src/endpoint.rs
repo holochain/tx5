@@ -124,6 +124,7 @@ async fn endpoint_task_inner(
     while let Some(cmd) = cmd_recv.recv().await {
         match cmd {
             Cmd::Shutdown => break,
+            #[allow(clippy::match_single_binding)] // obvs this is temp
             Cmd::SigEvt(_url, evt) => match evt {
                 _ => todo!(),
             },

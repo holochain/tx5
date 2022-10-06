@@ -4,34 +4,42 @@ use crate::*;
 
 use tx4_core::{Id, Tx4Url};
 
-mod store;
-pub(crate) use store::*;
+//mod store;
+//pub(crate) use store::*;
 
-mod state_data;
-pub(crate) use state_data::*;
+mod data;
+pub(crate) use data::*;
 
-mod sig_state;
-pub use sig_state::*;
+mod sig;
+pub use sig::*;
+
+mod conn;
+pub use conn::*;
 
 #[cfg(test)]
-mod state_test;
+mod test;
 
 /// Respond type.
 pub struct OneSnd<T: 'static + Send>(
-    Option<Box<dyn FnOnce(T) + 'static + Send>>,
+    Option<Box<dyn FnOnce(Result<T>) + 'static + Send>>,
 );
 
+impl<T: 'static + Send> Drop for OneSnd<T> {
+    fn drop(&mut self) {
+        self.send(Err(Error::id("Dropped")))
+    }
+}
+
 impl<T: 'static + Send> OneSnd<T> {
-    #[allow(dead_code)]
     pub(crate) fn new<Cb>(cb: Cb) -> Self
     where
-        Cb: FnOnce(T) + 'static + Send,
+        Cb: FnOnce(Result<T>) + 'static + Send,
     {
         Self(Some(Box::new(cb)))
     }
 
     /// Send data on this single sender respond type.
-    pub fn send(&mut self, t: T) {
+    pub fn send(&mut self, t: Result<T>) {
         if let Some(sender) = self.0.take() {
             sender(t);
         }
@@ -41,7 +49,7 @@ impl<T: 'static + Send> OneSnd<T> {
     /// This is especially useful when `T` is a `Result<_>`.
     pub fn with<Cb>(&mut self, cb: Cb)
     where
-        Cb: FnOnce() -> T,
+        Cb: FnOnce() -> Result<T>,
     {
         self.send(cb());
     }
@@ -63,12 +71,14 @@ pub enum StateEvt {
     /// Request to create a new signal client connection.
     NewSig(SigStateSeed),
 
+    /// Indicates the current node is addressable at the given url.
+    Address(Tx4Url),
+
     /// Request to create a new webrtc peer connection.
-    NewConn(ManyRcv<Result</*ConnStateEvt*/ bool>>),
+    NewConn(ConnStateSeed),
 
     /// Incoming data received on a peer connection.
-    /// The recv buffer will only decrement once the future resolves.
-    RcvData(Tx4Url, Buf, OneSnd<()>),
+    RcvData(Tx4Url, Buf),
 }
 
 /// Handle to a state tracking instance.
@@ -84,101 +94,35 @@ impl State {
     }
 
     /// Shutdown the state system instance.
-    pub fn shutdown(&self, maybe_err: Option<std::io::Error>) {
-        self.0.shutdown_full(maybe_err);
+    pub fn shutdown(&self, err: std::io::Error) {
+        self.0.shutdown(err);
     }
 
     /// Establish a new listening connection through signal server.
     pub async fn listener_sig(&self, url: Tx4Url) -> Result<()> {
-        let (s, r) = tokio::sync::oneshot::channel();
-        self.0.check_new_listener_sig(url, s)?;
-        r.await.map_err(|_| Error::id("Closed"))?
+        if !url.is_server() {
+            return Err(Error::err("Invalid tx4 client url, expected signal server url"));
+        }
+        self.0.assert_listener_sig(url).await
     }
 
     /// Schedule data to be sent out over a channel managed by the state system.
     /// The future will resolve immediately if there is still space
     /// in the outgoing buffer, or once there is again space in the buffer.
-    pub async fn snd_data(&self, _url: Tx4Url, _data: Buf) -> Result<()> {
-        todo!()
+    pub async fn snd_data(&self, url: Tx4Url, data: Buf) -> Result<()> {
+        if !url.is_client() {
+            return Err(Error::err("Invalid tx4 signal server url, expect client url"));
+        }
+
+        // Verify open channel to signal server.
+        // TODO - we may not need to be addressable at this possible other
+        //        signal server...
+        // TODO - if we have an open peer con, do we really need to
+        //        first ensure an open signal server channel?
+        let sig_url = url.to_server();
+        self.listener_sig(sig_url).await?;
+
+        // Now assert a connection is open, forwarding it the data to send.
+        self.0.assert_conn_for_send(url, data).await
     }
 }
-
-/*
-use tx4_core::Id;
-use parking_lot::Mutex;
-
-
-mod sig_state;
-pub use sig_state::*;
-
-mod state;
-pub use state::*;
-
-/// Boxed future type.
-pub type BoxFut<'lt, T> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = T> + 'lt + Send>,
->;
-
-/// Indication of the current buffer state.
-pub enum BufState {
-    /// Buffer is low, we can buffer more data.
-    Low,
-
-    /// Buffer is high, we should wait / apply backpressure.
-    High,
-}
-
-
-/// State wishes to invoke an action on a connection instance.
-pub enum ConnStateEvt {
-    /// Request to create an offer.
-    CreateOffer(OneSnd<Result<Buf>>),
-
-    /// Request to create an answer.
-    CreateAnswer(OneSnd<Result<Buf>>),
-
-    /// Request to set a local description.
-    SetLoc(Buf, OneSnd<Result<()>>),
-
-    /// Request to set a remote description.
-    SetRem(Buf, OneSnd<Result<()>>),
-
-    /// Request to append a trickle ICE candidate.
-    SetIce(Buf, OneSnd<Result<()>>),
-
-    /// Request to send a message on the data channel.
-    SndData(Buf, OneSnd<Result<BufState>>),
-}
-
-/// A handle for notifying the state system of connection events.
-pub struct ConnState {}
-
-impl ConnState {
-    /// Shutdown the connection with an optional error.
-    pub fn shutdown(&self, _maybe_err: Option<Error>) {
-        todo!()
-    }
-
-    /// The connection generated an ice candidate for the remote.
-    pub fn ice(&self, _data: Buf) -> Result<()> {
-        todo!()
-    }
-
-    /// The connection received data on the data channel.
-    /// This synchronous function must not block for now...
-    /// (we'll need to test some blocking strategies
-    /// for the goroutine in tx4-go-pion)... but we also can't just
-    /// fill up memory if the application is processing slowly.
-    /// So it will error / trigger connection shutdown if we get
-    /// too much of a backlog.
-    pub fn rcv_data(&self, _data: Buf) -> Result<()> {
-        todo!()
-    }
-
-    /// The send buffer *was* high, but has now transitioned to low.
-    pub fn buf_amt_low(&self) -> Result<()> {
-        todo!()
-    }
-}
-
-*/

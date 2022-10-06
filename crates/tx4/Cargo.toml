@@ -21,7 +21,7 @@ backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
 parking_lot = { workspace = true }
-tokio = { workspace = true, features = [ "sync" ] }
+tokio = { workspace = true, features = [ "rt", "sync" ] }
 tracing = { workspace = true }
 tx4-core = { version = "0.0.1", path = "../tx4-core" }
 tx4-go-pion = { version = "0.0.1", path = "../tx4-go-pion", optional = true }

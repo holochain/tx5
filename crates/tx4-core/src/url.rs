@@ -64,16 +64,18 @@ impl Tx4Url {
             Some(mut seg) => {
                 // None on the first next is still okay
                 if let Some(first) = seg.next() {
-                    if first != "tx4-ws" {
-                        return Err(Error::err(format!(
-                            "invalid first path segment, expected \"tx4-ws\", got: {:?}",
-                            first,
-                        )));
-                    }
-                    match seg.next() {
-                        None => return Err(Error::id("InvalidPubKey")),
-                        Some(pk) => {
-                            let _id = Id::from_b64(pk)?;
+                    if !first.is_empty() {
+                        if first != "tx4-ws" {
+                            return Err(Error::err(format!(
+                                "invalid first path segment, expected \"tx4-ws\", got: {:?}",
+                                first,
+                            )));
+                        }
+                        match seg.next() {
+                            None => return Err(Error::id("InvalidPubKey")),
+                            Some(pk) => {
+                                let _id = Id::from_b64(pk)?;
+                            }
                         }
                     }
                 }
@@ -99,9 +101,15 @@ impl Tx4Url {
             None => false,
             Some(mut seg) => match seg.next() {
                 None => false,
-                Some(_) => true,
+                Some(first) => !first.is_empty(),
             },
         }
+    }
+
+    /// If this is a client url, convert it into a server (signal) url,
+    /// by dropping the path components.
+    pub fn to_server(&self) -> Self {
+        Self::new(format!("{}://{}", self.0.scheme(), self.endpoint())).unwrap()
     }
 
     /// Parse the "id" path segment of this url, if it is a client url.

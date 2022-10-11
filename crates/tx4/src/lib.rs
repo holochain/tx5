@@ -47,6 +47,10 @@ use deps::serde;
 pub use tx4_core::{Error, ErrorExt, Result};
 pub use tx4_signal::{Cli, CliBuilder};
 
+// TODO un-pub
+pub mod actor;
+use actor::*;
+
 mod buf;
 pub use buf::*;
 

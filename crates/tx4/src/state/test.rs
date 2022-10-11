@@ -32,7 +32,8 @@ async fn state_sanity() {
     )
     .unwrap();
 
-    let (sig_state, mut sig_evt) = sig_seed.result_ok(cli_a.clone());
+    let (sig_state, mut sig_evt) =
+        sig_seed.result_ok(cli_a.clone()).await.unwrap();
 
     task.await.unwrap();
 
@@ -55,10 +56,10 @@ async fn state_sanity() {
         let state = state.clone();
 
         tokio::task::spawn(async move {
-            state.snd_data(
-                cli_b.clone(),
-                Buf::from_slice(b"hello").unwrap(),
-            ).await.unwrap()
+            state
+                .snd_data(cli_b.clone(), Buf::from_slice(b"hello").unwrap())
+                .await
+                .unwrap()
         })
     };
 
@@ -89,7 +90,9 @@ async fn state_sanity() {
         _ => panic!("unexpected"),
     }
 
-    sig_state.answer(id_b, Buf::from_slice(b"answer").unwrap());
+    sig_state
+        .answer(id_b, Buf::from_slice(b"answer").unwrap())
+        .unwrap();
 
     match conn_evt.recv().await {
         Some(Ok(ConnStateEvt::SetRem(mut answer, mut resp))) => {
@@ -103,7 +106,7 @@ async fn state_sanity() {
 
     // -- cleanup -- //
 
-    state.shutdown(Error::id("TestShutdown"));
+    state.close(Error::id("TestShutdown"));
 
     assert!(matches!(
         state_evt.recv().await,

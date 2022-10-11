@@ -34,7 +34,9 @@ type SysChan<T> = std::ops::ControlFlow<
     Box<dyn Logic<T>>,
 >;
 
-pub struct Sys<T: 'static + Send>(tokio::sync::mpsc::UnboundedSender<SysChan<T>>);
+pub struct Sys<T: 'static + Send>(
+    tokio::sync::mpsc::UnboundedSender<SysChan<T>>,
+);
 
 impl<T: 'static + Send> Clone for Sys<T> {
     fn clone(&self) -> Self {
@@ -44,8 +46,7 @@ impl<T: 'static + Send> Clone for Sys<T> {
 
 impl<T: 'static + Send> Sys<T> {
     pub fn new(mut t: T) -> Self {
-        let (s, mut r) =
-            tokio::sync::mpsc::unbounded_channel::<SysChan<T>>();
+        let (s, mut r) = tokio::sync::mpsc::unbounded_channel::<SysChan<T>>();
         tokio::task::spawn(async move {
             while let Some(l) = r.recv().await {
                 match l {
@@ -64,14 +65,18 @@ impl<T: 'static + Send> Sys<T> {
 
     #[inline]
     pub fn run<L: Logic<T>>(&self, logic: L) {
-        let _ = self.0.send(std::ops::ControlFlow::Continue(Box::new(logic)));
+        let _ = self
+            .0
+            .send(std::ops::ControlFlow::Continue(Box::new(logic)));
     }
 
     pub fn run_closure<Cb>(&self, cb: Cb)
     where
         Cb: FnOnce(&mut T) + 'static + Send,
     {
-        struct ClosureLogic<T: 'static + Send>(Box<dyn FnOnce(&mut T) + 'static + Send>);
+        struct ClosureLogic<T: 'static + Send>(
+            Box<dyn FnOnce(&mut T) + 'static + Send>,
+        );
         impl<T: 'static + Send> Logic<T> for ClosureLogic<T> {
             fn exec(self: Box<Self>, t: &mut T) {
                 self.0(t);
@@ -81,19 +86,26 @@ impl<T: 'static + Send> Sys<T> {
     }
 
     #[inline]
-    pub fn run_final<L: Logic<T>>(&self, logic: L, maybe_err: Option<std::io::Error>)
-    {
-        let _ = self.0.send(std::ops::ControlFlow::Break((
-            Box::new(logic),
-            maybe_err,
-        )));
+    pub fn run_final<L: Logic<T>>(
+        &self,
+        logic: L,
+        maybe_err: Option<std::io::Error>,
+    ) {
+        let _ = self
+            .0
+            .send(std::ops::ControlFlow::Break((Box::new(logic), maybe_err)));
     }
 
-    pub fn run_final_closure<Cb>(&self, cb: Cb, maybe_err: Option<std::io::Error>)
-    where
+    pub fn run_final_closure<Cb>(
+        &self,
+        cb: Cb,
+        maybe_err: Option<std::io::Error>,
+    ) where
         Cb: FnOnce(&mut T) + 'static + Send,
     {
-        struct ClosureLogic<T: 'static + Send>(Box<dyn FnOnce(&mut T) + 'static + Send>);
+        struct ClosureLogic<T: 'static + Send>(
+            Box<dyn FnOnce(&mut T) + 'static + Send>,
+        );
         impl<T: 'static + Send> Logic<T> for ClosureLogic<T> {
             fn exec(self: Box<Self>, t: &mut T) {
                 self.0(t);
@@ -139,21 +151,20 @@ impl SigStateData {
             sig_evt: sig_evt_send,
         };
 
-        (
-            Self(Sys::new(inner)),
-            key,
-            ManyRcv(sig_evt_recv),
-        )
+        (Self(Sys::new(inner)), key, ManyRcv(sig_evt_recv))
     }
 
     pub fn shutdown(&self, err: std::io::Error) {
         let err2 = err.err_clone();
-        self.0.run_final_closure(move |inner| {
-            for resp in inner.init_cb_list.drain(..) {
-                let _ = resp.send(Err(err2.err_clone()));
-            }
-            let _ = inner.sig_evt.send(Err(err2));
-        }, Some(err));
+        self.0.run_final_closure(
+            move |inner| {
+                for resp in inner.init_cb_list.drain(..) {
+                    let _ = resp.send(Err(err2.err_clone()));
+                }
+                let _ = inner.sig_evt.send(Err(err2));
+            },
+            Some(err),
+        );
     }
 
     pub fn push_assert_respond(
@@ -190,16 +201,18 @@ impl SigStateData {
         self.0.run_closure(move |inner| {
             let snd = OneSnd::new(move |res| {
                 if let Err(err) = res {
-                    state.new_listener_sig_err(sig_key, sig_url, err.err_clone());
+                    state.new_listener_sig_err(
+                        sig_key,
+                        sig_url,
+                        err.err_clone(),
+                    );
                     state.new_conn_err(conn_key, rem_id, err);
                 }
             });
 
-            let _ = inner.sig_evt.send(Ok(SigStateEvt::SndOffer(
-                rem_id,
-                offer,
-                snd,
-            )));
+            let _ = inner
+                .sig_evt
+                .send(Ok(SigStateEvt::SndOffer(rem_id, offer, snd)));
         });
     }
 }
@@ -234,21 +247,20 @@ impl ConnStateData {
             conn_evt: conn_evt_send,
         };
 
-        (
-            Self(Sys::new(inner)),
-            key,
-            ManyRcv(conn_evt_recv),
-        )
+        (Self(Sys::new(inner)), key, ManyRcv(conn_evt_recv))
     }
 
     pub fn shutdown(&self, err: std::io::Error) {
         let err2 = err.err_clone();
-        self.0.run_final_closure(move |inner| {
-            for (_, resp) in inner.send_list.drain(..) {
-                let _ = resp.send(Err(err2.err_clone()));
-            }
-            let _ = inner.conn_evt.send(Err(err2));
-        }, Some(err));
+        self.0.run_final_closure(
+            move |inner| {
+                for (_, resp) in inner.send_list.drain(..) {
+                    let _ = resp.send(Err(err2.err_clone()));
+                }
+                let _ = inner.conn_evt.send(Err(err2));
+            },
+            Some(err),
+        );
     }
 
     pub fn create_offer(&self, snd: OneSnd<Buf>) {
@@ -259,9 +271,7 @@ impl ConnStateData {
 
     pub fn set_rem(&self, answer: Buf) {
         self.0.run_closure(move |inner| {
-            let snd = OneSnd::new(move |_res| {
-                todo!()
-            });
+            let snd = OneSnd::new(move |_res| todo!());
             let _ = inner.conn_evt.send(Ok(ConnStateEvt::SetRem(answer, snd)));
         });
     }
@@ -289,15 +299,18 @@ impl StateData {
 
     pub fn shutdown(&self, err: std::io::Error) {
         let err2 = err.err_clone();
-        self.0.run_final_closure(move |inner| {
-            for (_, (_, sig)) in inner.signal_map.drain() {
-                sig.shutdown(err2.err_clone());
-            }
-            for (_, (_, conn)) in inner.conn_map.drain() {
-                conn.shutdown(err2.err_clone());
-            }
-            let _ = inner.evt.send(Err(err2));
-        }, Some(err));
+        self.0.run_final_closure(
+            move |inner| {
+                for (_, (_, sig)) in inner.signal_map.drain() {
+                    sig.shutdown(err2.err_clone());
+                }
+                for (_, (_, conn)) in inner.conn_map.drain() {
+                    conn.shutdown(err2.err_clone());
+                }
+                let _ = inner.evt.send(Err(err2));
+            },
+            Some(err),
+        );
     }
 
     pub async fn assert_listener_sig(&self, sig_url: Tx4Url) -> Result<()> {
@@ -363,12 +376,7 @@ impl StateData {
         r.await.map_err(|_| Error::id("Closed"))?
     }
 
-    pub fn new_conn_ok(
-        &self,
-        key: Key,
-        rem_id: Id,
-        sig_url: Tx4Url,
-    ) {
+    pub fn new_conn_ok(&self, key: Key, rem_id: Id, sig_url: Tx4Url) {
         let state = self.clone();
         self.0.run_closure(move |inner| {
             if let Some((conn_key, conn)) = inner.conn_map.get_mut(&rem_id) {
@@ -378,23 +386,18 @@ impl StateData {
                 }
                 let rem_id = rem_id.clone();
                 let sig_url = sig_url.clone();
-                let snd = OneSnd::new(move |offer| {
-                    match offer {
-                        Ok(offer) => state.new_conn_send_offer(key, rem_id, sig_url, offer),
-                        Err(err) => state.new_conn_err(key, rem_id, err),
+                let snd = OneSnd::new(move |offer| match offer {
+                    Ok(offer) => {
+                        state.new_conn_send_offer(key, rem_id, sig_url, offer)
                     }
+                    Err(err) => state.new_conn_err(key, rem_id, err),
                 });
                 conn.create_offer(snd);
             }
         });
     }
 
-    pub fn new_conn_err(
-        &self,
-        key: Key,
-        rem_id: Id,
-        err: std::io::Error,
-    ) {
+    pub fn new_conn_err(&self, key: Key, rem_id: Id, err: std::io::Error) {
         self.0.run_closure(move |inner| {
             if let Some((conn_key, conn)) = inner.conn_map.remove(&rem_id) {
                 if conn_key != key {
@@ -458,13 +461,18 @@ impl AssertListenerSig {
             state,
             sig_url,
             maybe_respond,
-        }).exec(inner);
+        })
+        .exec(inner);
     }
 }
 
 impl Logic<StateDataInner> for AssertListenerSig {
     fn exec(self: Box<Self>, inner: &mut StateDataInner) {
-        let AssertListenerSig { state, sig_url, maybe_respond } = *self;
+        let AssertListenerSig {
+            state,
+            sig_url,
+            maybe_respond,
+        } = *self;
         match inner.signal_map.entry(sig_url.clone()) {
             hash_map::Entry::Occupied(e) => {
                 if let Some(respond) = maybe_respond {
@@ -497,7 +505,12 @@ struct AssertConn {
 
 impl Logic<StateDataInner> for AssertConn {
     fn exec(self: Box<Self>, inner: &mut StateDataInner) {
-        let AssertConn { state, sig_url, rem_id, maybe_send } = *self;
+        let AssertConn {
+            state,
+            sig_url,
+            rem_id,
+            maybe_send,
+        } = *self;
         if let hash_map::Entry::Vacant(e) = inner.conn_map.entry(rem_id) {
             let (conn_state_data, key, conn_evt) =
                 ConnStateData::new(maybe_send);

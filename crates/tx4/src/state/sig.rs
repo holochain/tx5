@@ -5,11 +5,7 @@ use std::collections::HashMap;
 /// Temporary indicating we want a new signal instance.
 pub struct SigStateSeed {
     done: bool,
-    #[allow(dead_code)]
-    sig_url: Tx4Url,
-    sig: SigStateWeak,
-    #[allow(dead_code)]
-    sig_evt: Option<ManyRcv<Result<SigStateEvt>>>,
+    output: Option<(SigState, ManyRcv<Result<SigStateEvt>>)>,
 }
 
 impl Drop for SigStateSeed {
@@ -25,12 +21,9 @@ impl SigStateSeed {
         cli_url: Tx4Url,
     ) -> Result<(SigState, ManyRcv<Result<SigStateEvt>>)> {
         self.done = true;
-        if let Some(sig) = self.sig.upgrade() {
-            sig.notify_connected(cli_url).await?;
-            Ok((sig, self.sig_evt.take().unwrap()))
-        } else {
-            Err(Error::id("Closed"))
-        }
+        let (sig, sig_evt) = self.output.take().unwrap();
+        sig.notify_connected(cli_url).await?;
+        Ok((sig, sig_evt))
     }
 
     /// Finalize this sig_state seed by indicating an error connecting.
@@ -41,23 +34,19 @@ impl SigStateSeed {
     // -- //
 
     pub(crate) fn new(
-        sig_url: Tx4Url,
-        sig: SigStateWeak,
+        sig: SigState,
         sig_evt: ManyRcv<Result<SigStateEvt>>,
     ) -> Self {
         Self {
             done: false,
-            sig_url,
-            sig,
-            sig_evt: Some(sig_evt),
+            output: Some((sig, sig_evt)),
         }
     }
 
     fn result_err_inner(&mut self, err: std::io::Error) {
         if !self.done {
             self.done = true;
-
-            if let Some(sig) = self.sig.upgrade() {
+            if let Some((sig, _)) = self.output.take() {
                 sig.close(err);
             }
         }
@@ -316,8 +305,7 @@ impl SigState {
             .await;
     }
 
-    #[allow(dead_code)]
-    async fn register_conn(
+    pub(crate) async fn register_conn(
         &self,
         rem_id: Id,
         conn: ConnStateWeak,

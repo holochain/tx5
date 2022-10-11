@@ -3,8 +3,7 @@ use super::*;
 /// Temporary indicating we want a new conn instance.
 pub struct ConnStateSeed {
     done: bool,
-    conn: ConnStateWeak,
-    //conn_evt: Option<ManyRcv<Result<ConnStateEvt>>>,
+    output: Option<(ConnState, ManyRcv<Result<ConnStateEvt>>)>,
 }
 
 impl Drop for ConnStateSeed {
@@ -14,32 +13,37 @@ impl Drop for ConnStateSeed {
 }
 
 impl ConnStateSeed {
-    /// Finalize this sig_state seed by indicating a successful sig connection.
-    pub fn result_ok(mut self) -> (ConnState, ManyRcv<Result<ConnStateEvt>>) {
+    /// Finalize this conn_state seed by indicating a successful connection.
+    pub async fn result_ok(
+        mut self,
+    ) -> Result<(ConnState, ManyRcv<Result<ConnStateEvt>>)> {
         self.done = true;
-        /*
-        self.state_data.new_conn_ok(
-            self.key,
-            self.rem_id.clone(),
-            self.sig_url.clone(),
-        );
-        let conn_state = ConnState {};
-        let conn_evt = self.conn_evt.take().unwrap();
-        (conn_state, conn_evt)
-        */
-        todo!()
+        let (conn, conn_evt) = self.output.take().unwrap();
+        conn.notify_connected().await?;
+        Ok((conn, conn_evt))
     }
 
-    /// Finalize this sig_state seed by indicating an error connecting.
+    /// Finalize this conn_state seed by indicating an error connecting.
     pub fn result_err(mut self, err: std::io::Error) {
         self.result_err_inner(err);
+    }
+
+    // -- //
+
+    pub(crate) fn new(
+        conn: ConnState,
+        conn_evt: ManyRcv<Result<ConnStateEvt>>,
+    ) -> Self {
+        Self {
+            done: false,
+            output: Some((conn, conn_evt)),
+        }
     }
 
     fn result_err_inner(&mut self, err: std::io::Error) {
         if !self.done {
             self.done = true;
-
-            if let Some(conn) = self.conn.upgrade() {
+            if let Some((conn, _)) = self.output.take() {
                 conn.close(err);
             }
         }
@@ -93,6 +97,7 @@ struct ConnStateData {
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
+    connected: bool,
 }
 
 impl Drop for ConnStateData {
@@ -148,6 +153,11 @@ impl PartialEq<ConnStateWeak> for ConnState {
 }
 
 impl ConnState {
+    /// Get a weak version of this ConnState instance.
+    pub fn weak(&self) -> ConnStateWeak {
+        ConnStateWeak(self.0.weak())
+    }
+
     /// Returns `true` if this ConnState is closed.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
@@ -205,6 +215,97 @@ impl ConnState {
         if self.0.is_closed() {
             return Err(Error::id("Closed"));
         }
+        todo!()
+    }
+
+    // -- //
+
+    pub(crate) fn new(
+        state: StateWeak,
+        sig_state: SigStateWeak,
+        rem_id: Id,
+        sig_ready: tokio::sync::oneshot::Receiver<Result<()>>,
+    ) -> (Self, ManyRcv<Result<ConnStateEvt>>) {
+        let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
+        let actor = Actor::new(|this| ConnStateData {
+            this: ConnStateWeak(this),
+            state,
+            rem_id,
+            conn_evt: ConnStateEvtSnd(conn_snd),
+            sig_state,
+            connected: false,
+        });
+        let weak = ConnStateWeak(actor.weak());
+        tokio::task::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            if let Some(actor) = weak.upgrade() {
+                actor.check_connected_timeout().await;
+            }
+        });
+        {
+            let actor = actor.clone();
+            tokio::task::spawn(async move {
+                actor
+                    .exec(move |mut inner| async move {
+                        // first, we have to await our signal con being ready
+                        if let Err(err) = match sig_ready.await {
+                            Err(_) => Err(Error::id("Closed")),
+                            Ok(Err(err)) => Err(err),
+                            _ => Ok(()),
+                        } {
+                            inner.shutdown(err);
+                            return (None, Ok(()));
+                        }
+
+                        match inner.sig_state.upgrade() {
+                            Some(sig) => {
+                                if let Err(err) = sig
+                                    .register_conn(
+                                        inner.rem_id,
+                                        inner.this.clone(),
+                                    )
+                                    .await
+                                {
+                                    inner.shutdown(err);
+                                    return (None, Ok(()));
+                                }
+                            }
+                            None => {
+                                inner.shutdown(Error::id("SigClosed"));
+                                return (None, Ok(()));
+                            }
+                        }
+
+                        (Some(inner), Ok(()))
+                    })
+                    .await
+            });
+        }
+        (Self(actor), ManyRcv(conn_rcv))
+    }
+
+    async fn check_connected_timeout(&self) {
+        let _ = self
+            .0
+            .exec(move |mut inner| async move {
+                if !inner.connected {
+                    inner.shutdown(Error::id("Timeout"));
+                }
+                (None, Ok(()))
+            })
+            .await;
+    }
+
+    async fn notify_connected(&self) -> Result<()> {
+        self.0
+            .exec(move |mut inner| async move {
+                inner.connected = true;
+                (Some(inner), Ok(()))
+            })
+            .await
+    }
+
+    pub(crate) async fn notify_send_waiting(&self) {
         todo!()
     }
 }

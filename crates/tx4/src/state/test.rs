@@ -70,7 +70,7 @@ async fn state_sanity() {
         _ => panic!("unexpected"),
     };
 
-    let (_conn_state, mut conn_evt) = conn_seed.result_ok();
+    let (_conn_state, mut conn_evt) = conn_seed.result_ok().await.unwrap();
 
     // -- generate an offer -- //
 

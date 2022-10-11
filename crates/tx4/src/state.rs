@@ -104,6 +104,7 @@ struct StateData {
     this: StateWeak,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx4Url, SigState>,
+    conn_map: HashMap<Id, ConnState>,
 }
 
 impl Drop for StateData {
@@ -117,6 +118,9 @@ impl StateData {
         for (_, sig) in self.signal_map.drain() {
             sig.close(err.err_clone());
         }
+        for (_, conn) in self.conn_map.drain() {
+            conn.close(err.err_clone());
+        }
         self.evt.err(err);
     }
 
@@ -125,21 +129,56 @@ impl StateData {
         state: StateWeak,
         sig_url: Tx4Url,
         maybe_resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
-    ) -> Result<()> {
+    ) -> Result<SigState> {
         match self.signal_map.entry(sig_url.clone()) {
             hash_map::Entry::Occupied(e) => {
+                let sig = e.get().clone();
                 if let Some(resp) = maybe_resp {
-                    e.get().push_assert_respond(resp).await;
+                    sig.push_assert_respond(resp).await;
                 }
+                Ok(sig)
             }
             hash_map::Entry::Vacant(e) => {
                 let (sig, sig_evt) =
                     SigState::new(state, sig_url.clone(), maybe_resp);
                 e.insert(sig.clone());
-                let seed = SigStateSeed::new(sig_url, sig.weak(), sig_evt);
+                let seed = SigStateSeed::new(sig.clone(), sig_evt);
                 let _ = self.evt.publish(StateEvt::NewSig(seed));
+                Ok(sig)
             }
         }
+    }
+
+    async fn assert_conn(
+        &mut self,
+        state: StateWeak,
+        cli_url: Tx4Url,
+        maybe_send: Option<(Buf, tokio::sync::oneshot::Sender<Result<()>>)>,
+    ) -> Result<()> {
+        let have_send = maybe_send.is_some();
+        let rem_id = cli_url.id().unwrap();
+
+        if let Some((_data, _snd_resp)) = maybe_send {
+            todo!()
+        }
+
+        if let Some(e) = self.conn_map.get(&rem_id) {
+            if have_send {
+                e.notify_send_waiting().await;
+            }
+            return Ok(());
+        }
+
+        let sig_url = cli_url.to_server();
+        let (s, r) = tokio::sync::oneshot::channel();
+        let sig = self
+            .assert_listener_sig(state.clone(), sig_url, Some(s))
+            .await?;
+
+        let (conn, conn_evt) = ConnState::new(state, sig.weak(), rem_id, r);
+        self.conn_map.insert(rem_id, conn.clone());
+        let seed = ConnStateSeed::new(conn, conn_evt);
+        let _ = self.evt.publish(StateEvt::NewConn(seed));
         Ok(())
     }
 }
@@ -179,6 +218,7 @@ impl State {
             this: StateWeak(this),
             evt: StateEvtSnd(state_snd),
             signal_map: HashMap::new(),
+            conn_map: HashMap::new(),
         });
         (Self(actor), ManyRcv(state_rcv))
     }
@@ -230,14 +270,33 @@ impl State {
     /// Schedule data to be sent out over a channel managed by the state system.
     /// The future will resolve immediately if there is still space
     /// in the outgoing buffer, or once there is again space in the buffer.
-    pub async fn snd_data(&self, url: Tx4Url, _data: Buf) -> Result<()> {
-        if !url.is_client() {
-            return Err(Error::err(
-                "Invalid tx4 signal server url, expect client url",
-            ));
-        }
+    pub fn snd_data(
+        &self,
+        cli_url: Tx4Url,
+        data: Buf,
+    ) -> impl Future<Output = Result<()>> + 'static + Send {
+        let this = self.clone();
+        async move {
+            if !cli_url.is_client() {
+                return Err(Error::err(
+                    "Invalid tx4 signal server url, expect client url",
+                ));
+            }
 
-        todo!()
+            let (s, r) = tokio::sync::oneshot::channel();
+
+            let state = this.weak();
+            this.0
+                .exec(move |mut inner| async move {
+                    let r = inner
+                        .assert_conn(state, cli_url, Some((data, s)))
+                        .await;
+                    (Some(inner), r)
+                })
+                .await?;
+
+            r.await.map_err(|_| Error::id("Closed"))?
+        }
     }
 
     // -- //

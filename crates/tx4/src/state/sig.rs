@@ -1,11 +1,10 @@
 use super::*;
-//use std::future::Future;
-use std::collections::HashMap;
+//use std::collections::HashMap;
 
 /// Temporary indicating we want a new signal instance.
 pub struct SigStateSeed {
     done: bool,
-    output: Option<(SigState, ManyRcv<Result<SigStateEvt>>)>,
+    output: Option<(SigState, ManyRcv<SigStateEvt>)>,
 }
 
 impl Drop for SigStateSeed {
@@ -16,13 +15,13 @@ impl Drop for SigStateSeed {
 
 impl SigStateSeed {
     /// Finalize this sig_state seed by indicating a successful sig connection.
-    pub async fn result_ok(
+    pub fn result_ok(
         mut self,
         cli_url: Tx4Url,
-    ) -> Result<(SigState, ManyRcv<Result<SigStateEvt>>)> {
+    ) -> Result<(SigState, ManyRcv<SigStateEvt>)> {
         self.done = true;
         let (sig, sig_evt) = self.output.take().unwrap();
-        sig.notify_connected(cli_url).await?;
+        sig.notify_connected(cli_url)?;
         Ok((sig, sig_evt))
     }
 
@@ -35,7 +34,7 @@ impl SigStateSeed {
 
     pub(crate) fn new(
         sig: SigState,
-        sig_evt: ManyRcv<Result<SigStateEvt>>,
+        sig_evt: ManyRcv<SigStateEvt>,
     ) -> Self {
         Self {
             done: false,
@@ -52,61 +51,6 @@ impl SigStateSeed {
         }
     }
 }
-
-/*
-/// Temporary indicating we want a new signal instance.
-pub struct SigStateSeed {
-    pub(crate) done: bool,
-    pub(crate) key: Key,
-    pub(crate) sig_url: Tx4Url,
-    pub(crate) state_data: StateData,
-    pub(crate) sig_evt: Option<ManyRcv<Result<SigStateEvt>>>,
-}
-
-impl Drop for SigStateSeed {
-    fn drop(&mut self) {
-        if !self.done {
-            self.result_err_inner(Error::id("Dropped"));
-        }
-    }
-}
-
-impl SigStateSeed {
-    /// Finalize this sig_state seed by indicating a successful sig connection.
-    pub fn result_ok(
-        mut self,
-        cli_url: Tx4Url,
-    ) -> (SigState, ManyRcv<Result<SigStateEvt>>) {
-        self.done = true;
-        self.state_data.new_listener_sig_ok(
-            self.key,
-            self.sig_url.clone(),
-            cli_url,
-        );
-        let sig_state = SigState {
-            inner: self.state_data.clone(),
-            key: self.key,
-            sig_url: self.sig_url.clone(),
-        };
-        let sig_evt = self.sig_evt.take().unwrap();
-        (sig_state, sig_evt)
-    }
-
-    /// Finalize this sig_state seed by indicating an error connecting.
-    pub fn result_err(mut self, err: std::io::Error) {
-        self.result_err_inner(err);
-    }
-
-    fn result_err_inner(&mut self, err: std::io::Error) {
-        self.done = true;
-        self.state_data.new_listener_sig_err(
-            self.key,
-            self.sig_url.clone(),
-            err,
-        );
-    }
-}
-*/
 
 /// State wishes to invoke an action on a signal instance.
 pub enum SigStateEvt {
@@ -136,7 +80,7 @@ struct SigStateData {
     sig_evt: SigStateEvtSnd,
     connected: bool,
     pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<()>>>,
-    registered_conn_map: HashMap<Id, ConnStateWeak>,
+    //registered_conn_map: HashMap<Id, ConnStateWeak>,
 }
 
 impl Drop for SigStateData {
@@ -147,6 +91,10 @@ impl Drop for SigStateData {
 
 impl SigStateData {
     fn shutdown(&mut self, err: std::io::Error) {
+        if true {
+            todo!()
+        }
+        /*
         if let Some(state) = self.state.upgrade() {
             state.close_sig(
                 self.sig_url.clone(),
@@ -160,13 +108,160 @@ impl SigStateData {
             }
             drop(conn);
         }
+        */
         self.sig_evt.err(err);
     }
+
+    async fn exec(&mut self, cmd: SigCmd) -> Result<()> {
+        match cmd {
+            SigCmd::CheckConnectedTimeout =>
+                self.check_connected_timeout().await,
+            SigCmd::PushAssertRespond { resp } =>
+                self.push_assert_respond(resp).await,
+            SigCmd::NotifyConnected { cli_url } =>
+                self.notify_connected(cli_url).await,
+            SigCmd::RegisterConn { rem_id, conn } =>
+                self.register_conn(rem_id, conn).await,
+            SigCmd::UnregisterConn { rem_id, conn } =>
+                self.unregister_conn(rem_id, conn).await,
+            SigCmd::Offer { rem_id, data } =>
+                self.offer(rem_id, data).await,
+            SigCmd::Answer { rem_id, data } =>
+                self.answer(rem_id, data).await,
+            SigCmd::Ice { rem_id, data } =>
+                self.ice(rem_id, data).await,
+            SigCmd::SndIce { rem_id, data } =>
+                self.snd_ice(rem_id, data).await,
+        }
+    }
+
+    async fn check_connected_timeout(&mut self) -> Result<()> {
+        if !self.connected {
+            Err(Error::id("Timeout"))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn push_assert_respond(
+        &mut self,
+        resp: tokio::sync::oneshot::Sender<Result<()>>,
+    ) -> Result<()> {
+        if self.connected {
+            let _ = resp.send(Ok(()));
+        } else {
+            self.pending_sig_resp.push(resp);
+        }
+        Ok(())
+    }
+
+    async fn notify_connected(&mut self, _cli_url: Tx4Url) -> Result<()> {
+        self.connected = true;
+        for resp in self.pending_sig_resp.drain(..) {
+            let _ = resp.send(Ok(()));
+        }
+        if true {
+            todo!()
+        }
+        /*
+        if let Some(state) = inner.state.upgrade() {
+            state.publish(StateEvt::Address(cli_url)).await?;
+        }
+        */
+        Ok(())
+    }
+
+    async fn register_conn(&mut self, _rem_id: Id, _conn: ConnStateWeak) -> Result<()> {
+        todo!()
+    }
+
+    async fn unregister_conn(&mut self, _rem_id: Id, _conn: ConnStateWeak) -> Result<()> {
+        todo!()
+    }
+
+    async fn offer(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
+        todo!()
+    }
+
+    async fn answer(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
+        todo!()
+    }
+
+    async fn ice(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
+        todo!()
+    }
+
+    async fn snd_ice(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
+        todo!()
+    }
+}
+
+enum SigCmd {
+    CheckConnectedTimeout,
+    PushAssertRespond {
+        resp: tokio::sync::oneshot::Sender<Result<()>>,
+    },
+    NotifyConnected {
+        cli_url: Tx4Url,
+    },
+    RegisterConn {
+        rem_id: Id,
+        conn: ConnStateWeak,
+    },
+    UnregisterConn {
+        rem_id: Id,
+        conn: ConnStateWeak,
+    },
+    Offer {
+        rem_id: Id,
+        data: Buf,
+    },
+    Answer {
+        rem_id: Id,
+        data: Buf,
+    },
+    Ice {
+        rem_id: Id,
+        data: Buf,
+    },
+    SndIce {
+        rem_id: Id,
+        data: Buf,
+    },
+}
+
+async fn sig_state_task(
+    mut rcv: ManyRcv<SigCmd>,
+    this: SigStateWeak,
+    state: StateWeak,
+    sig_url: Tx4Url,
+    sig_evt: SigStateEvtSnd,
+    pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<()>>>,
+) -> Result<()> {
+    let mut data = SigStateData {
+        this,
+        state,
+        sig_url,
+        sig_evt,
+        connected: false,
+        pending_sig_resp,
+    };
+    let err = match async {
+        while let Some(cmd) = rcv.recv().await {
+            data.exec(cmd?).await?;
+        }
+        Ok(())
+    }.await {
+        Err(err) => err,
+        Ok(_) => Error::id("Dropped"),
+    };
+    data.shutdown(err.err_clone());
+    Err(err)
 }
 
 /// Weak version of SigState.
 #[derive(Clone, PartialEq, Eq)]
-pub struct SigStateWeak(ActorWeak<SigStateData>);
+pub struct SigStateWeak(ActorWeak<SigCmd>);
 
 impl PartialEq<SigState> for SigStateWeak {
     fn eq(&self, rhs: &SigState) -> bool {
@@ -183,7 +278,7 @@ impl SigStateWeak {
 
 /// A handle for notifying the state system of signal events.
 #[derive(Clone, PartialEq, Eq)]
-pub struct SigState(Actor<SigStateData>);
+pub struct SigState(Actor<SigCmd>);
 
 impl PartialEq<SigStateWeak> for SigState {
     fn eq(&self, rhs: &SigStateWeak) -> bool {
@@ -204,61 +299,22 @@ impl SigState {
 
     /// Shutdown the signal client with an error.
     pub fn close(&self, err: std::io::Error) {
-        tokio::task::spawn(self.0.exec_close(|mut inner| async move {
-            inner.shutdown(err);
-            (None, Ok(()))
-        }));
+        self.0.close(err);
     }
 
     /// Receive an incoming offer from a remote.
     pub fn offer(&self, rem_id: Id, data: Buf) -> Result<()> {
-        // not super atomic, but a best effort : )
-        if self.0.is_closed() {
-            return Err(Error::id("Closed"));
-        }
-        tokio::task::spawn(self.0.exec(move |inner| async move {
-            #[allow(clippy::redundant_pattern_matching)]
-            if let Some(_) = inner.registered_conn_map.get(&rem_id) {
-                // TODO : conn.offer(rem_id, data);
-                drop(data);
-            }
-            (Some(inner), Ok(()))
-        }));
-        Ok(())
+        self.0.send(Ok(SigCmd::Offer { rem_id, data }))
     }
 
     /// Receive an incoming answer from a remote.
     pub fn answer(&self, rem_id: Id, data: Buf) -> Result<()> {
-        // not super atomic, but a best effort : )
-        if self.0.is_closed() {
-            return Err(Error::id("Closed"));
-        }
-        tokio::task::spawn(self.0.exec(move |inner| async move {
-            #[allow(clippy::redundant_pattern_matching)]
-            if let Some(_) = inner.registered_conn_map.get(&rem_id) {
-                // TODO : conn.answer(rem_id, data);
-                drop(data);
-            }
-            (Some(inner), Ok(()))
-        }));
-        Ok(())
+        self.0.send(Ok(SigCmd::Answer { rem_id, data }))
     }
 
     /// Receive an incoming ice candidate from a remote.
     pub fn ice(&self, rem_id: Id, data: Buf) -> Result<()> {
-        // not super atomic, but a best effort : )
-        if self.0.is_closed() {
-            return Err(Error::id("Closed"));
-        }
-        tokio::task::spawn(self.0.exec(move |inner| async move {
-            #[allow(clippy::redundant_pattern_matching)]
-            if let Some(_) = inner.registered_conn_map.get(&rem_id) {
-                // TODO : conn.ice(rem_id, data);
-                drop(data);
-            }
-            (Some(inner), Ok(()))
-        }));
-        Ok(())
+        self.0.send(Ok(SigCmd::Ice { rem_id, data }))
     }
 
     // -- //
@@ -266,23 +322,17 @@ impl SigState {
     pub(crate) fn new(
         state: StateWeak,
         sig_url: Tx4Url,
-        maybe_resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
-    ) -> (Self, ManyRcv<Result<SigStateEvt>>) {
+        resp: tokio::sync::oneshot::Sender<Result<()>>,
+    ) -> (Self, ManyRcv<SigStateEvt>) {
         let (sig_snd, sig_rcv) = tokio::sync::mpsc::unbounded_channel();
-        let pending_sig_resp = if let Some(resp) = maybe_resp {
-            vec![resp]
-        } else {
-            Vec::new()
-        };
-        let actor = Actor::new(|this| SigStateData {
-            this: SigStateWeak(this),
+        let actor = Actor::new(move |this, rcv| sig_state_task(
+            rcv,
+            SigStateWeak(this),
             state,
             sig_url,
-            sig_evt: SigStateEvtSnd(sig_snd),
-            connected: false,
-            pending_sig_resp,
-            registered_conn_map: HashMap::new(),
-        });
+            SigStateEvtSnd(sig_snd),
+            vec![resp],
+        ));
         let weak = SigStateWeak(actor.weak());
         tokio::task::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
@@ -293,32 +343,37 @@ impl SigState {
         (Self(actor), ManyRcv(sig_rcv))
     }
 
-    async fn check_connected_timeout(&self) {
-        let _ = self
-            .0
-            .exec(move |mut inner| async move {
-                if !inner.connected {
-                    inner.shutdown(Error::id("Timeout"));
-                }
-                (None, Ok(()))
-            })
-            .await;
+    pub(crate) fn snd_ice(
+        &self,
+        rem_id: Id,
+        data: Buf,
+    ) -> Result<()> {
+        self.0.send(Ok(SigCmd::SndIce { rem_id, data }))
     }
 
-    pub(crate) async fn register_conn(
+    async fn check_connected_timeout(&self) {
+        let _ = self.0.send(Ok(SigCmd::CheckConnectedTimeout));
+    }
+
+    pub(crate) fn register_conn(
         &self,
         rem_id: Id,
         conn: ConnStateWeak,
     ) -> Result<()> {
+        self.0.send(Ok(SigCmd::RegisterConn { rem_id, conn }))
+        /*
         self.0
             .exec(move |mut inner| async move {
                 inner.registered_conn_map.insert(rem_id, conn);
                 (Some(inner), Ok(()))
             })
             .await
+        */
     }
 
     pub(crate) fn unregister_conn(&self, rem_id: Id, conn: ConnStateWeak) {
+        let _ = self.0.send(Ok(SigCmd::UnregisterConn { rem_id, conn }));
+        /*
         let fut = self.0.exec(move |mut inner| async move {
             if let Some(oth_conn) = inner.registered_conn_map.remove(&rem_id) {
                 if oth_conn != conn {
@@ -329,86 +384,17 @@ impl SigState {
             (Some(inner), Ok(()))
         });
         tokio::task::spawn(fut);
+        */
     }
 
     pub(crate) async fn push_assert_respond(
         &self,
         resp: tokio::sync::oneshot::Sender<Result<()>>,
     ) {
-        let _ = self
-            .0
-            .exec(move |mut inner| async move {
-                if inner.connected {
-                    let _ = resp.send(Ok(()));
-                } else {
-                    inner.pending_sig_resp.push(resp);
-                }
-                (Some(inner), Ok(()))
-            })
-            .await;
+        let _ = self.0.send(Ok(SigCmd::PushAssertRespond { resp }));
     }
 
-    async fn notify_connected(&self, cli_url: Tx4Url) -> Result<()> {
-        self.0
-            .exec(move |mut inner| async move {
-                let r = {
-                    let inner = &mut inner;
-                    async move {
-                        inner.connected = true;
-                        for resp in inner.pending_sig_resp.drain(..) {
-                            let _ = resp.send(Ok(()));
-                        }
-                        if let Some(state) = inner.state.upgrade() {
-                            state.publish(StateEvt::Address(cli_url)).await?;
-                        }
-                        Ok(())
-                    }
-                }
-                .await;
-                (Some(inner), r)
-            })
-            .await
+    fn notify_connected(&self, cli_url: Tx4Url) -> Result<()> {
+        self.0.send(Ok(SigCmd::NotifyConnected { cli_url }))
     }
 }
-
-/*
-/// A handle for notifying the state system of signal events.
-pub struct SigState {
-    inner: StateData,
-    key: Key,
-    sig_url: Tx4Url,
-}
-
-impl SigState {
-    /// Shutdown the signal client with an optional error.
-    pub fn shutdown(&self, err: std::io::Error) {
-        // might need to not use the "new" listener err fn
-        // if the side effects are ever incorrect.
-        self.inner
-            .new_listener_sig_err(self.key, self.sig_url.clone(), err);
-    }
-
-    /// Receive an incoming offer from a remote.
-    pub fn offer(&self, _rem_id: Id, _data: Buf) -> Result<()> {
-        /*
-        self.inner.check_incoming_offer(
-            &self.sig_url,
-            id,
-            data,
-        )
-        */
-        todo!()
-    }
-
-    /// Receive an incoming answer from a remote.
-    pub fn answer(&self, rem_id: Id, data: Buf) {
-        self.inner
-            .check_incoming_answer(self.sig_url.clone(), rem_id, data)
-    }
-
-    /// Receive an incoming ice candidate from a remote.
-    pub fn ice(&self, _rem_id: Id, _data: Buf) -> Result<()> {
-        todo!()
-    }
-}
-*/

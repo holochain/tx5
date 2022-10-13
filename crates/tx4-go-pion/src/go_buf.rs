@@ -157,6 +157,12 @@ impl GoBuf {
         Ok(b)
     }
 
+    /// Get the lengthe of this buffer.
+    #[inline]
+    pub fn len(&mut self) -> Result<usize> {
+        self.access(|bytes| Ok(bytes?.len()))
+    }
+
     /// Deserialize this go buffer as json bytes
     /// into a type implementing serde::DeserializeOwned.
     #[inline]

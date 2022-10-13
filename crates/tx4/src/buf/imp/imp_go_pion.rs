@@ -80,6 +80,12 @@ impl Imp {
 
     #[inline]
     #[allow(clippy::wrong_self_convention)] // ya, well, we need it mut
+    pub fn len(&mut self) -> Result<usize> {
+        self.buf.len()
+    }
+
+    #[inline]
+    #[allow(clippy::wrong_self_convention)] // ya, well, we need it mut
     pub fn to_vec(&mut self) -> Result<Vec<u8>> {
         self.buf.to_vec()
     }

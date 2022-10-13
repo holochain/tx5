@@ -96,6 +96,12 @@ impl Buf {
         })
     }
 
+    /// Get the length of this buffer.
+    #[inline]
+    pub fn len(&mut self) -> Result<usize> {
+        self.imp.len()
+    }
+
     /// Copy the buffer out into a rust Vec<u8>.
     #[inline]
     pub fn to_vec(&mut self) -> Result<Vec<u8>> {

@@ -42,6 +42,8 @@ async fn state_sanity() {
         Some(Ok(StateEvt::Address(tmp))) if tmp == cli_a,
     ));
 
+    println!("got addr");
+
     // -- send data to a "peer" (causes connecting to that peer) -- //
 
     let cli_b: Tx4Url = Tx4Url::new(
@@ -70,7 +72,11 @@ async fn state_sanity() {
         _ => panic!("unexpected"),
     };
 
+    println!("got new conn");
+
     let (_conn_state, mut conn_evt) = conn_seed.result_ok().await.unwrap();
+
+    println!("respondend naotehunadc");
 
     // -- generate an offer -- //
 
@@ -80,6 +86,8 @@ async fn state_sanity() {
     };
 
     resp.send(Buf::from_slice(b"offer"));
+
+    println!("got create_offer");
 
     match sig_evt.recv().await {
         Some(Ok(SigStateEvt::SndOffer(id, mut buf, mut resp))) => {

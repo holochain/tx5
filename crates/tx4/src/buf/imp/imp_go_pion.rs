@@ -79,6 +79,14 @@ impl Imp {
     }
 
     #[inline]
+    pub fn try_clone(&mut self) -> Result<Self> {
+        Ok(Self {
+            buf: self.buf.try_clone()?,
+            _not_sync: std::marker::PhantomData,
+        })
+    }
+
+    #[inline]
     #[allow(clippy::wrong_self_convention)] // ya, well, we need it mut
     pub fn len(&mut self) -> Result<usize> {
         self.buf.len()

@@ -32,8 +32,7 @@ async fn state_sanity() {
     )
     .unwrap();
 
-    let (sig_state, mut sig_evt) =
-        sig_seed.result_ok(cli_a.clone()).await.unwrap();
+    let (sig_state, mut sig_evt) = sig_seed.result_ok(cli_a.clone()).unwrap();
 
     task.await.unwrap();
 
@@ -74,7 +73,7 @@ async fn state_sanity() {
 
     println!("got new conn");
 
-    let (_conn_state, mut conn_evt) = conn_seed.result_ok().await.unwrap();
+    let (_conn_state, mut conn_evt) = conn_seed.result_ok().unwrap();
 
     println!("respondend naotehunadc");
 
@@ -98,6 +97,18 @@ async fn state_sanity() {
         _ => panic!("unexpected"),
     }
 
+    println!("sent offer");
+
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SetLoc(mut offer, mut resp))) => {
+            assert_eq!(&offer.to_vec().unwrap(), b"offer");
+            resp.send(Ok(()));
+        }
+        _ => panic!("unexpected"),
+    }
+
+    println!("set loc");
+
     sig_state
         .answer(id_b, Buf::from_slice(b"answer").unwrap())
         .unwrap();
@@ -109,6 +120,8 @@ async fn state_sanity() {
         }
         _ => panic!("unexpected"),
     };
+
+    println!("set rem");
 
     task.await.unwrap();
 

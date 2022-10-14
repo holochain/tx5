@@ -60,6 +60,7 @@ impl std::io::Write for BufWriter {
 }
 
 /// Tx4 buffer type for sending and receiving data.
+#[allow(clippy::len_without_is_empty)]
 pub struct Buf {
     pub(crate) imp: imp::Imp,
     pub(crate) _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
@@ -100,6 +101,15 @@ impl Buf {
     #[inline]
     pub fn len(&mut self) -> Result<usize> {
         self.imp.len()
+    }
+
+    /// Attempt to clone this buffer.
+    #[inline]
+    pub fn try_clone(&mut self) -> Result<Self> {
+        Ok(Self {
+            imp: self.imp.try_clone()?,
+            _not_sync: std::marker::PhantomData,
+        })
     }
 
     /// Copy the buffer out into a rust Vec<u8>.

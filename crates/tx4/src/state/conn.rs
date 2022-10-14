@@ -3,7 +3,7 @@ use super::*;
 /// Temporary indicating we want a new conn instance.
 pub struct ConnStateSeed {
     done: bool,
-    output: Option<(ConnState, ManyRcv<Result<ConnStateEvt>>)>,
+    output: Option<(ConnState, ManyRcv<ConnStateEvt>)>,
 }
 
 impl Drop for ConnStateSeed {
@@ -14,9 +14,7 @@ impl Drop for ConnStateSeed {
 
 impl ConnStateSeed {
     /// Finalize this conn_state seed by indicating a successful connection.
-    pub fn result_ok(
-        mut self,
-    ) -> Result<(ConnState, ManyRcv<Result<ConnStateEvt>>)> {
+    pub fn result_ok(mut self) -> Result<(ConnState, ManyRcv<ConnStateEvt>)> {
         self.done = true;
         let (conn, conn_evt) = self.output.take().unwrap();
         conn.notify_constructed()?;
@@ -32,7 +30,7 @@ impl ConnStateSeed {
 
     pub(crate) fn new(
         conn: ConnState,
-        conn_evt: ManyRcv<Result<ConnStateEvt>>,
+        conn_evt: ManyRcv<ConnStateEvt>,
     ) -> Self {
         Self {
             done: false,
@@ -90,21 +88,41 @@ impl ConnStateEvtSnd {
         let _ = self.0.send(Err(err));
     }
 
-    pub fn create_offer(&self) -> impl Future<Output = Result<Buf>> + 'static + Send {
-        let (s, r) = tokio::sync::oneshot::channel();
+    pub fn create_offer(&self, conn: ConnStateWeak) {
         let s = OneSnd::new(move |result| {
-            let _ = s.send(result);
+            if let Some(conn) = conn.upgrade() {
+                conn.self_offer(result);
+            }
         });
         let _ = self.0.send(Ok(ConnStateEvt::CreateOffer(s)));
-        async move {
-            r.await.map_err(|_| Error::id("Closed"))?
-        }
+    }
+
+    pub fn set_loc(&self, conn: ConnStateWeak, data: Buf) {
+        let s = OneSnd::new(move |result| {
+            if let Err(err) = result {
+                if let Some(conn) = conn.upgrade() {
+                    conn.close(err);
+                }
+            }
+        });
+        let _ = self.0.send(Ok(ConnStateEvt::SetLoc(data, s)));
+    }
+
+    pub fn set_rem(&self, conn: ConnStateWeak, data: Buf) {
+        let s = OneSnd::new(move |result| {
+            if let Err(err) = result {
+                if let Some(conn) = conn.upgrade() {
+                    conn.close(err);
+                }
+            }
+        });
+        let _ = self.0.send(Ok(ConnStateEvt::SetRem(data, s)));
     }
 }
 
 struct ConnStateData {
     this: ConnStateWeak,
-    //state: StateWeak,
+    state: StateWeak,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
@@ -119,14 +137,9 @@ impl Drop for ConnStateData {
 
 impl ConnStateData {
     fn shutdown(&mut self, err: std::io::Error) {
-        if true {
-            todo!()
-        }
-        /*
         if let Some(state) = self.state.upgrade() {
             state.close_conn(self.rem_id, self.this.clone(), err.err_clone());
         }
-        */
         if let Some(sig) = self.sig_state.upgrade() {
             sig.unregister_conn(self.rem_id, self.this.clone());
         }
@@ -136,23 +149,28 @@ impl ConnStateData {
     fn get_sig(&mut self) -> Result<SigState> {
         match self.sig_state.upgrade() {
             Some(sig) => Ok(sig),
-            None => Err(Error::id("SignalConnectionLost")),
+            None => Err(Error::id("SigClosed")),
         }
     }
 
     async fn exec(&mut self, cmd: ConnCmd) -> Result<()> {
         match cmd {
-            ConnCmd::NotifyConstructed =>
-                self.notify_constructed().await,
-            ConnCmd::CheckConnectedTimeout =>
-                self.check_connected_timeout().await,
-            ConnCmd::Ice { data } =>
-                self.ice(data).await,
+            ConnCmd::NotifyConstructed => self.notify_constructed().await,
+            ConnCmd::CheckConnectedTimeout => {
+                self.check_connected_timeout().await
+            }
+            ConnCmd::Ice { data } => self.ice(data).await,
+            ConnCmd::SelfOffer { offer } => self.self_offer(offer).await,
+            ConnCmd::InAnswer { answer } => self.in_answer(answer).await,
         }
     }
 
     async fn notify_constructed(&mut self) -> Result<()> {
-        todo!()
+        // Kick off connection initialization by requesting
+        // an outgoing offer be created by this connection.
+        // This will result in a `self_offer` call.
+        self.conn_evt.create_offer(self.this.clone());
+        Ok(())
     }
 
     async fn check_connected_timeout(&mut self) -> Result<()> {
@@ -164,12 +182,20 @@ impl ConnStateData {
     }
 
     async fn ice(&mut self, data: Buf) -> Result<()> {
-        match self.sig_state.upgrade() {
-            None => Err(Error::id("SigClosed")),
-            Some(sig) => {
-                sig.snd_ice(self.rem_id, data)
-            }
-        }
+        let sig = self.get_sig()?;
+        sig.snd_ice(self.rem_id, data)
+    }
+
+    async fn self_offer(&mut self, offer: Result<Buf>) -> Result<()> {
+        let sig = self.get_sig()?;
+        let mut offer = offer?;
+        self.conn_evt.set_loc(self.this.clone(), offer.try_clone()?);
+        sig.snd_offer(self.rem_id, offer)
+    }
+
+    async fn in_answer(&mut self, answer: Buf) -> Result<()> {
+        self.conn_evt.set_rem(self.this.clone(), answer);
+        Ok(())
     }
 }
 
@@ -177,12 +203,14 @@ enum ConnCmd {
     NotifyConstructed,
     CheckConnectedTimeout,
     Ice { data: Buf },
+    SelfOffer { offer: Result<Buf> },
+    InAnswer { answer: Buf },
 }
 
 async fn conn_state_task(
     mut rcv: ManyRcv<ConnCmd>,
     this: ConnStateWeak,
-    // state: StateWeak,
+    state: StateWeak,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
@@ -190,24 +218,25 @@ async fn conn_state_task(
 ) -> Result<()> {
     let mut data = ConnStateData {
         this,
-        //state,
+        state,
         rem_id,
         conn_evt,
         sig_state,
         connected: false,
     };
     let err = match async {
-        sig_ready.await.map_err(|_| Error::id("Closed"))??;
-        match data.sig_state.upgrade() {
-            None => return Err(Error::id("SigClosed")),
-            Some(sig) =>
-                sig.register_conn(data.rem_id, data.this.clone())?,
-        }
+        sig_ready.await.map_err(|_| Error::id("SigClosed"))??;
+
+        let sig = data.get_sig()?;
+        sig.register_conn(data.rem_id, data.this.clone())?;
+
         while let Some(cmd) = rcv.recv().await {
             data.exec(cmd?).await?;
         }
         Ok(())
-    }.await {
+    }
+    .await
+    {
         Err(err) => err,
         Ok(_) => Error::id("Dropped"),
     };
@@ -271,40 +300,34 @@ impl ConnState {
     /// So it will error / trigger connection shutdown if we get
     /// too much of a backlog.
     pub fn rcv_data(&self, _data: Buf) -> Result<()> {
-        // not super atomic, but a best effort : )
-        if self.0.is_closed() {
-            return Err(Error::id("Closed"));
-        }
         todo!()
     }
 
     /// The send buffer *was* high, but has now transitioned to low.
     pub fn buf_amt_low(&self) -> Result<()> {
-        // not super atomic, but a best effort : )
-        if self.0.is_closed() {
-            return Err(Error::id("Closed"));
-        }
         todo!()
     }
 
     // -- //
 
     pub(crate) fn new(
-        //state: StateWeak,
+        state: StateWeak,
         sig_state: SigStateWeak,
         rem_id: Id,
         sig_ready: tokio::sync::oneshot::Receiver<Result<()>>,
     ) -> (Self, ManyRcv<ConnStateEvt>) {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
-        let actor = Actor::new(move |this, rcv| conn_state_task(
-            rcv,
-            ConnStateWeak(this),
-            // state,
-            rem_id,
-            ConnStateEvtSnd(conn_snd),
-            sig_state,
-            sig_ready,
-        ));
+        let actor = Actor::new(move |this, rcv| {
+            conn_state_task(
+                rcv,
+                ConnStateWeak(this),
+                state,
+                rem_id,
+                ConnStateEvtSnd(conn_snd),
+                sig_state,
+                sig_ready,
+            )
+        });
         let weak = ConnStateWeak(actor.weak());
         tokio::task::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
@@ -321,44 +344,14 @@ impl ConnState {
 
     fn notify_constructed(&self) -> Result<()> {
         self.0.send(Ok(ConnCmd::NotifyConstructed))
-        /*
-        let offer_fut = self.0
-            .exec(move |inner| async move {
-                let fut = inner.conn_evt.create_offer();
-                (Some(inner), Ok(fut))
-            })
-            .await?;
-        let this = self.clone();
-        println!("GotOFFER");
-        tokio::task::spawn(async move {
-            let _offer = match offer_fut.await {
-                Err(err) => {
-                    this.close(err);
-                    return;
-                }
-                Ok(offer) => offer,
-            };
-            let _ = this.0.exec(move |mut inner| async move {
-                if let Err(err) = {
-                    let inner = &mut inner;
-                    async move {
-                        let _sig = inner.get_sig()?;
-                        //sig.send_offer(offer).await?;
-                        if true {
-                            todo!()
-                        }
-                        Ok(())
-                    }.await
-                } {
-                    inner.shutdown(err);
-                    return (None, Ok(()));
-                }
-                (Some(inner), Ok(()))
-            }).await;
-            println!("SENT OFFERR");
-        });
-        Ok(())
-        */
+    }
+
+    fn self_offer(&self, offer: Result<Buf>) {
+        let _ = self.0.send(Ok(ConnCmd::SelfOffer { offer }));
+    }
+
+    pub(crate) fn in_answer(&self, answer: Buf) {
+        let _ = self.0.send(Ok(ConnCmd::InAnswer { answer }));
     }
 
     pub(crate) async fn notify_send_waiting(&self) {

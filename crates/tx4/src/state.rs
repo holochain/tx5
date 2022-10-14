@@ -1,7 +1,7 @@
 //! Tx4 high-level conn mgmt state.
 
-use crate::*;
 use crate::actor::*;
+use crate::*;
 
 use std::collections::{hash_map, HashMap};
 use std::future::Future;
@@ -9,22 +9,14 @@ use std::sync::Arc;
 
 use tx4_core::{Id, Tx4Url};
 
-//mod store;
-//pub(crate) use store::*;
-
-//mod data;
-//pub(crate) use data::*;
-
 mod sig;
 pub use sig::*;
 
 mod conn;
 pub use conn::*;
 
-/*
 #[cfg(test)]
 mod test;
-*/
 
 const SEND_LIMIT: u32 = 16 * 1024 * 1024;
 
@@ -134,21 +126,34 @@ impl StateData {
     async fn exec(&mut self, cmd: StateCmd) -> Result<()> {
         match cmd {
             StateCmd::Tick => self.tick().await,
-            StateCmd::AssertListenerSig { sig_url, resp } =>
-                self.assert_listener_sig(sig_url, resp).await,
-            StateCmd::SendData { rem_id, data, send_permit, resp, cli_url } =>
-                self.send_data(rem_id, data, send_permit, resp, cli_url).await,
-            StateCmd::CloseSig { sig_url, sig, err } =>
-                self.close_sig(sig_url, sig, err).await,
-            StateCmd::CloseConn { rem_id, conn, err } =>
-                self.close_conn(rem_id, conn, err).await,
+            StateCmd::AssertListenerSig { sig_url, resp } => {
+                self.assert_listener_sig(sig_url, resp).await
+            }
+            StateCmd::SendData {
+                rem_id,
+                data,
+                send_permit,
+                resp,
+                cli_url,
+            } => {
+                self.send_data(rem_id, data, send_permit, resp, cli_url)
+                    .await
+            }
+            StateCmd::Publish { evt } => self.publish(evt).await,
+            StateCmd::CloseSig { sig_url, sig, err } => {
+                self.close_sig(sig_url, sig, err).await
+            }
+            StateCmd::CloseConn { rem_id, conn, err } => {
+                self.close_conn(rem_id, conn, err).await
+            }
         }
     }
 
     async fn tick(&mut self) -> Result<()> {
         self.send_map.retain(|_, list| {
             list.retain_mut(|info| {
-                if info.timestamp.elapsed() < std::time::Duration::from_secs(20) {
+                if info.timestamp.elapsed() < std::time::Duration::from_secs(20)
+                {
                     true
                 } else {
                     if let Some(resp) = info.resp.take() {
@@ -175,15 +180,13 @@ impl StateData {
             sig
         };
         match self.signal_map.entry(sig_url.clone()) {
-            hash_map::Entry::Occupied(mut e) => {
-                match e.get().upgrade() {
-                    Some(sig) => sig.push_assert_respond(resp).await,
-                    None => {
-                        let sig = new_sig(resp);
-                        e.insert(sig.weak());
-                    }
+            hash_map::Entry::Occupied(mut e) => match e.get().upgrade() {
+                Some(sig) => sig.push_assert_respond(resp).await,
+                None => {
+                    let sig = new_sig(resp);
+                    e.insert(sig.weak());
                 }
-            }
+            },
             hash_map::Entry::Vacant(e) => {
                 let sig = new_sig(resp);
                 e.insert(sig.weak());
@@ -200,33 +203,40 @@ impl StateData {
         data_sent: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx4Url,
     ) -> Result<()> {
-        self.send_map
-            .entry(rem_id)
-            .or_default()
-            .push(SendData {
-                data,
-                timestamp: std::time::Instant::now(),
-                resp: Some(data_sent),
-                _send_permit: send_permit,
-            });
+        self.send_map.entry(rem_id).or_default().push(SendData {
+            data,
+            timestamp: std::time::Instant::now(),
+            resp: Some(data_sent),
+            _send_permit: send_permit,
+        });
 
         let rem_id = cli_url.id().unwrap();
 
         if let Some(e) = self.conn_map.get(&rem_id) {
-            e.notify_send_waiting().await;
-            return Ok(());
+            if let Some(conn) = e.upgrade() {
+                conn.notify_send_waiting().await;
+                return Ok(());
+            } else {
+                self.conn_map.remove(&rem_id);
+            }
         }
 
         let sig_url = cli_url.to_server();
         let (s, r) = tokio::sync::oneshot::channel();
-        let sig = self
-            .assert_listener_sig(sig_url, Some(s))
-            .await?;
+        self.assert_listener_sig(sig_url.clone(), s).await?;
 
-        let (conn, conn_evt) = ConnState::new(state, sig.weak(), rem_id, r);
-        self.conn_map.insert(rem_id, conn.clone());
+        let sig = self.signal_map.get(&sig_url).unwrap().clone();
+
+        let (conn, conn_evt) =
+            ConnState::new(self.this.clone(), sig, rem_id, r);
+        self.conn_map.insert(rem_id, conn.weak());
         let seed = ConnStateSeed::new(conn, conn_evt);
         let _ = self.evt.publish(StateEvt::NewConn(seed));
+        Ok(())
+    }
+
+    async fn publish(&mut self, evt: StateEvt) -> Result<()> {
+        let _ = self.evt.publish(evt);
         Ok(())
     }
 
@@ -282,6 +292,9 @@ enum StateCmd {
         resp: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx4Url,
     },
+    Publish {
+        evt: StateEvt,
+    },
     CloseSig {
         sig_url: Tx4Url,
         sig: SigStateWeak,
@@ -311,7 +324,9 @@ async fn state_task(
             data.exec(cmd?).await?;
         }
         Ok(())
-    }.await {
+    }
+    .await
+    {
         Err(err) => err,
         Ok(_) => Error::id("Dropped"),
     };
@@ -343,11 +358,13 @@ impl State {
         let (state_snd, state_rcv) = tokio::sync::mpsc::unbounded_channel();
         let actor = {
             let send_limit = send_limit.clone();
-            Actor::new(move |this, rcv| state_task(
-                rcv,
-                StateWeak(this, send_limit),
-                StateEvtSnd(state_snd),
-            ))
+            Actor::new(move |this, rcv| {
+                state_task(
+                    rcv,
+                    StateWeak(this, send_limit),
+                    StateEvtSnd(state_snd),
+                )
+            })
         };
 
         let weak = StateWeak(actor.weak(), send_limit.clone());
@@ -396,7 +413,8 @@ impl State {
                 ));
             }
             let (s, r) = tokio::sync::oneshot::channel();
-            this.0.send(Ok(StateCmd::AssertListenerSig { sig_url, resp: s }))?;
+            this.0
+                .send(Ok(StateCmd::AssertListenerSig { sig_url, resp: s }))?;
             r.await.map_err(|_| Error::id("Closed"))?
         }
     }
@@ -437,7 +455,7 @@ impl State {
                 send_permit,
                 resp: s_sent,
                 cli_url,
-            }));
+            }))?;
 
             r_sent.await.map_err(|_| Error::id("Closed"))?
         }
@@ -447,6 +465,10 @@ impl State {
 
     fn tick(&self) -> Result<()> {
         self.0.send(Ok(StateCmd::Tick))
+    }
+
+    pub(crate) fn publish(&self, evt: StateEvt) {
+        let _ = self.0.send(Ok(StateCmd::Publish { evt }));
     }
 
     pub(crate) fn close_sig(

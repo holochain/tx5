@@ -32,10 +32,7 @@ impl SigStateSeed {
 
     // -- //
 
-    pub(crate) fn new(
-        sig: SigState,
-        sig_evt: ManyRcv<SigStateEvt>,
-    ) -> Self {
+    pub(crate) fn new(sig: SigState, sig_evt: ManyRcv<SigStateEvt>) -> Self {
         Self {
             done: false,
             output: Some((sig, sig_evt)),
@@ -71,6 +68,17 @@ impl SigStateEvtSnd {
     pub fn err(&self, err: std::io::Error) {
         let _ = self.0.send(Err(err));
     }
+
+    pub fn snd_offer(&self, sig: SigStateWeak, rem_id: Id, offer: Buf) {
+        let s = OneSnd::new(move |result| {
+            if let Err(err) = result {
+                if let Some(sig) = sig.upgrade() {
+                    sig.close(err);
+                }
+            }
+        });
+        let _ = self.0.send(Ok(SigStateEvt::SndOffer(rem_id, offer, s)));
+    }
 }
 
 struct SigStateData {
@@ -80,7 +88,7 @@ struct SigStateData {
     sig_evt: SigStateEvtSnd,
     connected: bool,
     pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<()>>>,
-    //registered_conn_map: HashMap<Id, ConnStateWeak>,
+    registered_conn_map: HashMap<Id, ConnStateWeak>,
 }
 
 impl Drop for SigStateData {
@@ -91,10 +99,6 @@ impl Drop for SigStateData {
 
 impl SigStateData {
     fn shutdown(&mut self, err: std::io::Error) {
-        if true {
-            todo!()
-        }
-        /*
         if let Some(state) = self.state.upgrade() {
             state.close_sig(
                 self.sig_url.clone(),
@@ -108,30 +112,33 @@ impl SigStateData {
             }
             drop(conn);
         }
-        */
         self.sig_evt.err(err);
     }
 
     async fn exec(&mut self, cmd: SigCmd) -> Result<()> {
         match cmd {
-            SigCmd::CheckConnectedTimeout =>
-                self.check_connected_timeout().await,
-            SigCmd::PushAssertRespond { resp } =>
-                self.push_assert_respond(resp).await,
-            SigCmd::NotifyConnected { cli_url } =>
-                self.notify_connected(cli_url).await,
-            SigCmd::RegisterConn { rem_id, conn } =>
-                self.register_conn(rem_id, conn).await,
-            SigCmd::UnregisterConn { rem_id, conn } =>
-                self.unregister_conn(rem_id, conn).await,
-            SigCmd::Offer { rem_id, data } =>
-                self.offer(rem_id, data).await,
-            SigCmd::Answer { rem_id, data } =>
-                self.answer(rem_id, data).await,
-            SigCmd::Ice { rem_id, data } =>
-                self.ice(rem_id, data).await,
-            SigCmd::SndIce { rem_id, data } =>
-                self.snd_ice(rem_id, data).await,
+            SigCmd::CheckConnectedTimeout => {
+                self.check_connected_timeout().await
+            }
+            SigCmd::PushAssertRespond { resp } => {
+                self.push_assert_respond(resp).await
+            }
+            SigCmd::NotifyConnected { cli_url } => {
+                self.notify_connected(cli_url).await
+            }
+            SigCmd::RegisterConn { rem_id, conn } => {
+                self.register_conn(rem_id, conn).await
+            }
+            SigCmd::UnregisterConn { rem_id, conn } => {
+                self.unregister_conn(rem_id, conn).await
+            }
+            SigCmd::Offer { rem_id, data } => self.offer(rem_id, data).await,
+            SigCmd::Answer { rem_id, data } => self.answer(rem_id, data).await,
+            SigCmd::Ice { rem_id, data } => self.ice(rem_id, data).await,
+            SigCmd::SndOffer { rem_id, data } => {
+                self.snd_offer(rem_id, data).await
+            }
+            SigCmd::SndIce { rem_id, data } => self.snd_ice(rem_id, data).await,
         }
     }
 
@@ -155,40 +162,60 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn notify_connected(&mut self, _cli_url: Tx4Url) -> Result<()> {
+    async fn notify_connected(&mut self, cli_url: Tx4Url) -> Result<()> {
         self.connected = true;
         for resp in self.pending_sig_resp.drain(..) {
             let _ = resp.send(Ok(()));
         }
-        if true {
-            todo!()
+        if let Some(state) = self.state.upgrade() {
+            state.publish(StateEvt::Address(cli_url));
         }
-        /*
-        if let Some(state) = inner.state.upgrade() {
-            state.publish(StateEvt::Address(cli_url)).await?;
-        }
-        */
         Ok(())
     }
 
-    async fn register_conn(&mut self, _rem_id: Id, _conn: ConnStateWeak) -> Result<()> {
-        todo!()
+    async fn register_conn(
+        &mut self,
+        rem_id: Id,
+        conn: ConnStateWeak,
+    ) -> Result<()> {
+        self.registered_conn_map.insert(rem_id, conn);
+        Ok(())
     }
 
-    async fn unregister_conn(&mut self, _rem_id: Id, _conn: ConnStateWeak) -> Result<()> {
-        todo!()
+    async fn unregister_conn(
+        &mut self,
+        rem_id: Id,
+        conn: ConnStateWeak,
+    ) -> Result<()> {
+        if let Some(cur_conn) = self.registered_conn_map.remove(&rem_id) {
+            if cur_conn != conn {
+                // Whoops!
+                self.registered_conn_map.insert(rem_id, cur_conn);
+            }
+        }
+        Ok(())
     }
 
     async fn offer(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
         todo!()
     }
 
-    async fn answer(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
-        todo!()
+    async fn answer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+        if let Some(conn) = self.registered_conn_map.get(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.in_answer(data);
+            }
+        }
+        Ok(())
     }
 
     async fn ice(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
         todo!()
+    }
+
+    async fn snd_offer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+        self.sig_evt.snd_offer(self.this.clone(), rem_id, data);
+        Ok(())
     }
 
     async fn snd_ice(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
@@ -224,6 +251,10 @@ enum SigCmd {
         rem_id: Id,
         data: Buf,
     },
+    SndOffer {
+        rem_id: Id,
+        data: Buf,
+    },
     SndIce {
         rem_id: Id,
         data: Buf,
@@ -245,13 +276,16 @@ async fn sig_state_task(
         sig_evt,
         connected: false,
         pending_sig_resp,
+        registered_conn_map: HashMap::new(),
     };
     let err = match async {
         while let Some(cmd) = rcv.recv().await {
             data.exec(cmd?).await?;
         }
         Ok(())
-    }.await {
+    }
+    .await
+    {
         Err(err) => err,
         Ok(_) => Error::id("Dropped"),
     };
@@ -325,14 +359,16 @@ impl SigState {
         resp: tokio::sync::oneshot::Sender<Result<()>>,
     ) -> (Self, ManyRcv<SigStateEvt>) {
         let (sig_snd, sig_rcv) = tokio::sync::mpsc::unbounded_channel();
-        let actor = Actor::new(move |this, rcv| sig_state_task(
-            rcv,
-            SigStateWeak(this),
-            state,
-            sig_url,
-            SigStateEvtSnd(sig_snd),
-            vec![resp],
-        ));
+        let actor = Actor::new(move |this, rcv| {
+            sig_state_task(
+                rcv,
+                SigStateWeak(this),
+                state,
+                sig_url,
+                SigStateEvtSnd(sig_snd),
+                vec![resp],
+            )
+        });
         let weak = SigStateWeak(actor.weak());
         tokio::task::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
@@ -343,11 +379,11 @@ impl SigState {
         (Self(actor), ManyRcv(sig_rcv))
     }
 
-    pub(crate) fn snd_ice(
-        &self,
-        rem_id: Id,
-        data: Buf,
-    ) -> Result<()> {
+    pub(crate) fn snd_offer(&self, rem_id: Id, data: Buf) -> Result<()> {
+        self.0.send(Ok(SigCmd::SndOffer { rem_id, data }))
+    }
+
+    pub(crate) fn snd_ice(&self, rem_id: Id, data: Buf) -> Result<()> {
         self.0.send(Ok(SigCmd::SndIce { rem_id, data }))
     }
 
@@ -361,30 +397,10 @@ impl SigState {
         conn: ConnStateWeak,
     ) -> Result<()> {
         self.0.send(Ok(SigCmd::RegisterConn { rem_id, conn }))
-        /*
-        self.0
-            .exec(move |mut inner| async move {
-                inner.registered_conn_map.insert(rem_id, conn);
-                (Some(inner), Ok(()))
-            })
-            .await
-        */
     }
 
     pub(crate) fn unregister_conn(&self, rem_id: Id, conn: ConnStateWeak) {
         let _ = self.0.send(Ok(SigCmd::UnregisterConn { rem_id, conn }));
-        /*
-        let fut = self.0.exec(move |mut inner| async move {
-            if let Some(oth_conn) = inner.registered_conn_map.remove(&rem_id) {
-                if oth_conn != conn {
-                    // Whoops!
-                    inner.registered_conn_map.insert(rem_id, oth_conn);
-                }
-            }
-            (Some(inner), Ok(()))
-        });
-        tokio::task::spawn(fut);
-        */
     }
 
     pub(crate) async fn push_assert_respond(

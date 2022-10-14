@@ -79,6 +79,17 @@ impl SigStateEvtSnd {
         });
         let _ = self.0.send(Ok(SigStateEvt::SndOffer(rem_id, offer, s)));
     }
+
+    pub fn snd_ice(&self, sig: SigStateWeak, rem_id: Id, ice: Buf) {
+        let s = OneSnd::new(move |result| {
+            if let Err(err) = result {
+                if let Some(sig) = sig.upgrade() {
+                    sig.close(err);
+                }
+            }
+        });
+        let _ = self.0.send(Ok(SigStateEvt::SndIce(rem_id, ice, s)));
+    }
 }
 
 struct SigStateData {
@@ -209,8 +220,13 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn ice(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
-        todo!()
+    async fn ice(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+        if let Some(conn) = self.registered_conn_map.get(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.in_ice(data);
+            }
+        }
+        Ok(())
     }
 
     async fn snd_offer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
@@ -218,8 +234,9 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn snd_ice(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
-        todo!()
+    async fn snd_ice(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+        self.sig_evt.snd_ice(self.this.clone(), rem_id, data);
+        Ok(())
     }
 }
 

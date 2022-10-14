@@ -73,7 +73,7 @@ async fn state_sanity() {
 
     println!("got new conn");
 
-    let (_conn_state, mut conn_evt) = conn_seed.result_ok().unwrap();
+    let (conn_state, mut conn_evt) = conn_seed.result_ok().unwrap();
 
     println!("respondend naotehunadc");
 
@@ -122,6 +122,37 @@ async fn state_sanity() {
     };
 
     println!("set rem");
+
+    conn_state.ice(Buf::from_slice(b"ice").unwrap()).unwrap();
+
+    match sig_evt.recv().await {
+        Some(Ok(SigStateEvt::SndIce(id, mut buf, mut resp))) => {
+            assert_eq!(id, id_b);
+            assert_eq!(&buf.to_vec().unwrap(), b"ice");
+            resp.send(Ok(()));
+        }
+        _ => panic!("unexpected"),
+    }
+
+    sig_state
+        .ice(id_b, Buf::from_slice(b"rem_ice").unwrap())
+        .unwrap();
+
+    println!("sent ice");
+
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SetIce(mut ice, mut resp))) => {
+            assert_eq!(&ice.to_vec().unwrap(), b"rem_ice");
+            resp.send(Ok(()));
+        }
+        _ => panic!("unexpected"),
+    };
+
+    println!("set rem ice");
+
+    conn_state.ready().unwrap();
+
+    println!("ready");
 
     task.await.unwrap();
 

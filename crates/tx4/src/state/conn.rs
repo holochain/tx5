@@ -118,6 +118,17 @@ impl ConnStateEvtSnd {
         });
         let _ = self.0.send(Ok(ConnStateEvt::SetRem(data, s)));
     }
+
+    pub fn set_ice(&self, conn: ConnStateWeak, data: Buf) {
+        let s = OneSnd::new(move |result| {
+            if let Err(err) = result {
+                if let Some(conn) = conn.upgrade() {
+                    conn.close(err);
+                }
+            }
+        });
+        let _ = self.0.send(Ok(ConnStateEvt::SetIce(data, s)));
+    }
 }
 
 struct ConnStateData {
@@ -162,6 +173,10 @@ impl ConnStateData {
             ConnCmd::Ice { data } => self.ice(data).await,
             ConnCmd::SelfOffer { offer } => self.self_offer(offer).await,
             ConnCmd::InAnswer { answer } => self.in_answer(answer).await,
+            ConnCmd::InIce { ice } => self.in_ice(ice).await,
+            ConnCmd::Ready => self.ready().await,
+            ConnCmd::MaybeFetchForSend => self.maybe_fetch_for_send().await,
+            ConnCmd::Send { to_send } => self.send(to_send).await,
         }
     }
 
@@ -197,6 +212,35 @@ impl ConnStateData {
         self.conn_evt.set_rem(self.this.clone(), answer);
         Ok(())
     }
+
+    async fn in_ice(&mut self, ice: Buf) -> Result<()> {
+        self.conn_evt.set_ice(self.this.clone(), ice);
+        Ok(())
+    }
+
+    async fn ready(&mut self) -> Result<()> {
+        self.connected = true;
+        self.maybe_fetch_for_send().await
+    }
+
+    async fn maybe_fetch_for_send(&mut self) -> Result<()> {
+        if !self.connected {
+            return Ok(());
+        }
+
+        // TODO - also check our buffer amt low status
+
+        if let Some(state) = self.state.upgrade() {
+            state.fetch_for_send(self.this.clone(), self.rem_id)?;
+            Ok(())
+        } else {
+            Err(Error::id("StateClosed"))
+        }
+    }
+
+    async fn send(&mut self, _to_send: SendData) -> Result<()> {
+        todo!()
+    }
 }
 
 enum ConnCmd {
@@ -205,6 +249,10 @@ enum ConnCmd {
     Ice { data: Buf },
     SelfOffer { offer: Result<Buf> },
     InAnswer { answer: Buf },
+    InIce { ice: Buf },
+    Ready,
+    MaybeFetchForSend,
+    Send { to_send: SendData },
 }
 
 async fn conn_state_task(
@@ -292,6 +340,11 @@ impl ConnState {
         self.0.send(Ok(ConnCmd::Ice { data }))
     }
 
+    /// The connection is ready to send and receive data.
+    pub fn ready(&self) -> Result<()> {
+        self.0.send(Ok(ConnCmd::Ready))
+    }
+
     /// The connection received data on the data channel.
     /// This synchronous function must not block for now...
     /// (we'll need to test some blocking strategies
@@ -354,7 +407,15 @@ impl ConnState {
         let _ = self.0.send(Ok(ConnCmd::InAnswer { answer }));
     }
 
+    pub(crate) fn in_ice(&self, ice: Buf) {
+        let _ = self.0.send(Ok(ConnCmd::InIce { ice }));
+    }
+
     pub(crate) async fn notify_send_waiting(&self) {
-        todo!()
+        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend));
+    }
+
+    pub(crate) fn send(&self, to_send: SendData) {
+        let _ = self.0.send(Ok(ConnCmd::Send { to_send }));
     }
 }

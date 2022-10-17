@@ -7,6 +7,12 @@ pub struct SigStateSeed {
     output: Option<(SigState, ManyRcv<SigStateEvt>)>,
 }
 
+impl std::fmt::Debug for SigStateSeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigStateSeed").finish()
+    }
+}
+
 impl Drop for SigStateSeed {
     fn drop(&mut self) {
         self.result_err_inner(Error::id("Dropped"));

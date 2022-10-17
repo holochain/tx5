@@ -75,8 +75,6 @@ async fn state_sanity() {
 
     let (conn_state, mut conn_evt) = conn_seed.result_ok().unwrap();
 
-    println!("respondend naotehunadc");
-
     // -- generate an offer -- //
 
     let mut resp = match conn_evt.recv().await {
@@ -154,6 +152,16 @@ async fn state_sanity() {
 
     println!("ready");
 
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            assert_eq!(&data.to_vec().unwrap(), b"hello");
+            resp.send(Ok(BufState::Low));
+        }
+        _ => panic!("unexpected"),
+    };
+
+    println!("snd data");
+
     task.await.unwrap();
 
     // -- cleanup -- //
@@ -163,6 +171,12 @@ async fn state_sanity() {
     assert!(matches!(
         state_evt.recv().await,
         Some(Err(err)) if &err.to_string() == "TestShutdown",
+    ));
+
+    // erm... is this what we want??
+    assert!(matches!(
+        state_evt.recv().await,
+        Some(Err(err)) if &err.to_string() == "Dropped",
     ));
 
     assert!(matches!(state_evt.recv().await, None));

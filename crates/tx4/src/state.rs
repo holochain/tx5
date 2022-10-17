@@ -3,8 +3,8 @@
 use crate::actor::*;
 use crate::*;
 
-use std::collections::{hash_map, HashMap};
 use std::collections::VecDeque;
+use std::collections::{hash_map, HashMap};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -60,6 +60,7 @@ impl<T: 'static + Send> OneSnd<T> {
 }
 
 /// State wishes to invoke an action.
+#[derive(Debug)]
 pub enum StateEvt {
     /// Request to create a new signal client connection.
     NewSig(SigStateSeed),
@@ -92,15 +93,7 @@ pub(crate) struct SendData {
     data: Buf,
     timestamp: std::time::Instant,
     resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
-    _send_permit: tokio::sync::OwnedSemaphorePermit,
-}
-
-impl Drop for SendData {
-    fn drop(&mut self) {
-        if let Some(resp) = self.resp.take() {
-            let _ = resp.send(Err(Error::id("Dropped")));
-        }
-    }
+    send_permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 struct StateData {
@@ -149,8 +142,9 @@ impl StateData {
                     .await
             }
             StateCmd::Publish { evt } => self.publish(evt).await,
-            StateCmd::FetchForSend { conn, rem_id } =>
-                self.fetch_for_send(conn, rem_id).await,
+            StateCmd::FetchForSend { conn, rem_id } => {
+                self.fetch_for_send(conn, rem_id).await
+            }
             StateCmd::CloseSig { sig_url, sig, err } => {
                 self.close_sig(sig_url, sig, err).await
             }
@@ -214,12 +208,15 @@ impl StateData {
         data_sent: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx4Url,
     ) -> Result<()> {
-        self.send_map.entry(rem_id).or_default().push_back(SendData {
-            data,
-            timestamp: std::time::Instant::now(),
-            resp: Some(data_sent),
-            _send_permit: send_permit,
-        });
+        self.send_map
+            .entry(rem_id)
+            .or_default()
+            .push_back(SendData {
+                data,
+                timestamp: std::time::Instant::now(),
+                resp: Some(data_sent),
+                send_permit,
+            });
 
         let rem_id = cli_url.id().unwrap();
 
@@ -251,7 +248,11 @@ impl StateData {
         Ok(())
     }
 
-    async fn fetch_for_send(&mut self, want_conn: ConnStateWeak, rem_id: Id) -> Result<()> {
+    async fn fetch_for_send(
+        &mut self,
+        want_conn: ConnStateWeak,
+        rem_id: Id,
+    ) -> Result<()> {
         let conn = match self.conn_map.get(&rem_id) {
             None => return Ok(()),
             Some(cur_conn) => {
@@ -266,12 +267,10 @@ impl StateData {
         };
         let to_send = match self.send_map.get_mut(&rem_id) {
             None => return Ok(()),
-            Some(to_send) => {
-                match to_send.pop_front() {
-                    None => return Ok(()),
-                    Some(to_send) => to_send,
-                }
-            }
+            Some(to_send) => match to_send.pop_front() {
+                None => return Ok(()),
+                Some(to_send) => to_send,
+            },
         };
         conn.send(to_send);
         Ok(())

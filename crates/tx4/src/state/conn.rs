@@ -6,6 +6,12 @@ pub struct ConnStateSeed {
     output: Option<(ConnState, ManyRcv<ConnStateEvt>)>,
 }
 
+impl std::fmt::Debug for ConnStateSeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnStateSeed").finish()
+    }
+}
+
 impl Drop for ConnStateSeed {
     fn drop(&mut self) {
         self.result_err_inner(Error::id("Dropped"));
@@ -129,6 +135,37 @@ impl ConnStateEvtSnd {
         });
         let _ = self.0.send(Ok(ConnStateEvt::SetIce(data, s)));
     }
+
+    pub fn snd_data(
+        &self,
+        conn: ConnStateWeak,
+        data: Buf,
+        resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
+        send_permit: tokio::sync::OwnedSemaphorePermit,
+    ) {
+        let s = OneSnd::new(move |result| {
+            let _send_permit = send_permit;
+            match result {
+                Err(err) => {
+                    if let Some(conn) = conn.upgrade() {
+                        conn.close(err.err_clone());
+                    }
+                    if let Some(resp) = resp {
+                        let _ = resp.send(Err(err));
+                    }
+                }
+                Ok(buffer_state) => {
+                    if let Some(conn) = conn.upgrade() {
+                        conn.set_buffer_state(buffer_state);
+                    }
+                    if let Some(resp) = resp {
+                        let _ = resp.send(Ok(()));
+                    }
+                }
+            }
+        });
+        let _ = self.0.send(Ok(ConnStateEvt::SndData(data, s)));
+    }
 }
 
 struct ConnStateData {
@@ -238,8 +275,18 @@ impl ConnStateData {
         }
     }
 
-    async fn send(&mut self, _to_send: SendData) -> Result<()> {
-        todo!()
+    async fn send(&mut self, to_send: SendData) -> Result<()> {
+        let SendData {
+            data,
+            resp,
+            send_permit,
+            ..
+        } = to_send;
+
+        self.conn_evt
+            .snd_data(self.this.clone(), data, resp, send_permit);
+
+        Ok(())
     }
 }
 
@@ -418,4 +465,6 @@ impl ConnState {
     pub(crate) fn send(&self, to_send: SendData) {
         let _ = self.0.send(Ok(ConnCmd::Send { to_send }));
     }
+
+    pub(crate) fn set_buffer_state(&self, _buffer_state: BufState) {}
 }

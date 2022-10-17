@@ -20,6 +20,7 @@ backend-go-pion = [ "tx4-go-pion" ]
 backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
+futures = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = [ "rt", "sync" ] }
 tracing = { workspace = true }

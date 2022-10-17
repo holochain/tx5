@@ -3238,6 +3238,7 @@ dependencies = [
 name = "tx4"
 version = "0.0.1"
 dependencies = [
+ "futures",
  "parking_lot 0.12.1",
  "rand",
  "rand-utf8",

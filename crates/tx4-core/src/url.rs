@@ -112,6 +112,18 @@ impl Tx4Url {
         Self::new(format!("{}://{}", self.0.scheme(), self.endpoint())).unwrap()
     }
 
+    /// If this is a server url, convert it to a client (peer) url,
+    /// by providing the client id/pubkey.
+    pub fn to_client(&self, id: Id) -> Self {
+        Self::new(format!(
+            "{}://{}/tx4-ws/{}",
+            self.0.scheme(),
+            self.endpoint(),
+            id,
+        ))
+        .unwrap()
+    }
+
     /// Parse the "id" path segment of this url, if it is a client url.
     pub fn id(&self) -> Option<Id> {
         match self.0.path_segments() {

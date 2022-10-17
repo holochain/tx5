@@ -86,6 +86,17 @@ impl SigStateEvtSnd {
         let _ = self.0.send(Ok(SigStateEvt::SndOffer(rem_id, offer, s)));
     }
 
+    pub fn snd_answer(&self, sig: SigStateWeak, rem_id: Id, offer: Buf) {
+        let s = OneSnd::new(move |result| {
+            if let Err(err) = result {
+                if let Some(sig) = sig.upgrade() {
+                    sig.close(err);
+                }
+            }
+        });
+        let _ = self.0.send(Ok(SigStateEvt::SndAnswer(rem_id, offer, s)));
+    }
+
     pub fn snd_ice(&self, sig: SigStateWeak, rem_id: Id, ice: Buf) {
         let s = OneSnd::new(move |result| {
             if let Err(err) = result {
@@ -155,6 +166,9 @@ impl SigStateData {
             SigCmd::SndOffer { rem_id, data } => {
                 self.snd_offer(rem_id, data).await
             }
+            SigCmd::SndAnswer { rem_id, data } => {
+                self.snd_answer(rem_id, data).await
+            }
             SigCmd::SndIce { rem_id, data } => self.snd_ice(rem_id, data).await,
         }
     }
@@ -213,8 +227,11 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn offer(&mut self, _rem_id: Id, _data: Buf) -> Result<()> {
-        todo!()
+    async fn offer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+        if let Some(state) = self.state.upgrade() {
+            state.in_offer(self.sig_url.clone(), rem_id, data)?;
+        }
+        Ok(())
     }
 
     async fn answer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
@@ -237,6 +254,11 @@ impl SigStateData {
 
     async fn snd_offer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
         self.sig_evt.snd_offer(self.this.clone(), rem_id, data);
+        Ok(())
+    }
+
+    async fn snd_answer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+        self.sig_evt.snd_answer(self.this.clone(), rem_id, data);
         Ok(())
     }
 
@@ -275,6 +297,10 @@ enum SigCmd {
         data: Buf,
     },
     SndOffer {
+        rem_id: Id,
+        data: Buf,
+    },
+    SndAnswer {
         rem_id: Id,
         data: Buf,
     },
@@ -404,6 +430,10 @@ impl SigState {
 
     pub(crate) fn snd_offer(&self, rem_id: Id, data: Buf) -> Result<()> {
         self.0.send(Ok(SigCmd::SndOffer { rem_id, data }))
+    }
+
+    pub(crate) fn snd_answer(&self, rem_id: Id, data: Buf) -> Result<()> {
+        self.0.send(Ok(SigCmd::SndAnswer { rem_id, data }))
     }
 
     pub(crate) fn snd_ice(&self, rem_id: Id, data: Buf) -> Result<()> {

@@ -20,6 +20,7 @@ pub use conn::*;
 mod test;
 
 const SEND_LIMIT: u32 = 16 * 1024 * 1024;
+const RECV_LIMIT: u32 = 16 * 1024 * 1024;
 
 /// Respond type.
 #[must_use]
@@ -59,6 +60,15 @@ impl<T: 'static + Send> OneSnd<T> {
     }
 }
 
+/// Drop this when you consider the data "received".
+pub struct Permit(tokio::sync::OwnedSemaphorePermit);
+
+impl std::fmt::Debug for Permit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Permit").finish()
+    }
+}
+
 /// State wishes to invoke an action.
 #[derive(Debug)]
 pub enum StateEvt {
@@ -72,7 +82,7 @@ pub enum StateEvt {
     NewConn(ConnStateSeed),
 
     /// Incoming data received on a peer connection.
-    RcvData(Tx4Url, Buf),
+    RcvData(Tx4Url, Buf, Permit),
 }
 
 #[derive(Clone)]
@@ -89,7 +99,6 @@ impl StateEvtSnd {
 }
 
 pub(crate) struct SendData {
-    #[allow(dead_code)]
     data: Buf,
     timestamp: std::time::Instant,
     resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
@@ -102,6 +111,7 @@ struct StateData {
     signal_map: HashMap<Tx4Url, SigStateWeak>,
     conn_map: HashMap<Id, ConnStateWeak>,
     send_map: HashMap<Id, VecDeque<SendData>>,
+    recv_limit: Arc<tokio::sync::Semaphore>,
 }
 
 impl Drop for StateData {
@@ -145,6 +155,11 @@ impl StateData {
             StateCmd::FetchForSend { conn, rem_id } => {
                 self.fetch_for_send(conn, rem_id).await
             }
+            StateCmd::InOffer {
+                sig_url,
+                rem_id,
+                data,
+            } => self.in_offer(sig_url, rem_id, data).await,
             StateCmd::CloseSig { sig_url, sig, err } => {
                 self.close_sig(sig_url, sig, err).await
             }
@@ -169,6 +184,13 @@ impl StateData {
             });
             !list.is_empty()
         });
+        if self.conn_map.len() > 20 {
+            for (_, conn) in self.conn_map.iter() {
+                if let Some(conn) = conn.upgrade() {
+                    conn.check_short_inactive();
+                }
+            }
+        }
         Ok(())
     }
 
@@ -197,6 +219,36 @@ impl StateData {
                 e.insert(sig.weak());
             }
         }
+        Ok(())
+    }
+
+    async fn create_new_conn(
+        &mut self,
+        sig_url: Tx4Url,
+        rem_id: Id,
+        maybe_offer: Option<Buf>,
+    ) -> Result<()> {
+        let (s, r) = tokio::sync::oneshot::channel();
+        self.assert_listener_sig(sig_url.clone(), s).await?;
+
+        let sig = self.signal_map.get(&sig_url).unwrap().clone();
+
+        let cli_url = sig_url.to_client(rem_id);
+        let (conn, conn_evt) = ConnState::new(
+            self.this.clone(),
+            sig,
+            cli_url,
+            rem_id,
+            self.recv_limit.clone(),
+            r,
+        );
+        self.conn_map.insert(rem_id, conn.weak());
+        if let Some(offer) = maybe_offer {
+            conn.in_offer(offer);
+        }
+        let seed = ConnStateSeed::new(conn, conn_evt);
+        let _ = self.evt.publish(StateEvt::NewConn(seed));
+
         Ok(())
     }
 
@@ -230,17 +282,7 @@ impl StateData {
         }
 
         let sig_url = cli_url.to_server();
-        let (s, r) = tokio::sync::oneshot::channel();
-        self.assert_listener_sig(sig_url.clone(), s).await?;
-
-        let sig = self.signal_map.get(&sig_url).unwrap().clone();
-
-        let (conn, conn_evt) =
-            ConnState::new(self.this.clone(), sig, rem_id, r);
-        self.conn_map.insert(rem_id, conn.weak());
-        let seed = ConnStateSeed::new(conn, conn_evt);
-        let _ = self.evt.publish(StateEvt::NewConn(seed));
-        Ok(())
+        self.create_new_conn(sig_url, rem_id, None).await
     }
 
     async fn publish(&mut self, evt: StateEvt) -> Result<()> {
@@ -274,6 +316,24 @@ impl StateData {
         };
         conn.send(to_send);
         Ok(())
+    }
+
+    async fn in_offer(
+        &mut self,
+        sig_url: Tx4Url,
+        rem_id: Id,
+        offer: Buf,
+    ) -> Result<()> {
+        if let Some(e) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = e.upgrade() {
+                conn.in_offer(offer);
+                return Ok(());
+            } else {
+                self.conn_map.remove(&rem_id);
+            }
+        }
+
+        self.create_new_conn(sig_url, rem_id, Some(offer)).await
     }
 
     async fn close_sig(
@@ -335,6 +395,11 @@ enum StateCmd {
         conn: ConnStateWeak,
         rem_id: Id,
     },
+    InOffer {
+        sig_url: Tx4Url,
+        rem_id: Id,
+        data: Buf,
+    },
     CloseSig {
         sig_url: Tx4Url,
         sig: SigStateWeak,
@@ -351,6 +416,7 @@ async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
     this: StateWeak,
     evt: StateEvtSnd,
+    recv_limit: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
     let mut data = StateData {
         this,
@@ -358,6 +424,7 @@ async fn state_task(
         signal_map: HashMap::new(),
         conn_map: HashMap::new(),
         send_map: HashMap::new(),
+        recv_limit,
     };
     let err = match async {
         while let Some(cmd) = rcv.recv().await {
@@ -394,6 +461,8 @@ impl State {
     pub fn new() -> (Self, ManyRcv<StateEvt>) {
         let send_limit =
             Arc::new(tokio::sync::Semaphore::new(SEND_LIMIT as usize));
+        let recv_limit =
+            Arc::new(tokio::sync::Semaphore::new(RECV_LIMIT as usize));
 
         let (state_snd, state_rcv) = tokio::sync::mpsc::unbounded_channel();
         let actor = {
@@ -403,6 +472,7 @@ impl State {
                     rcv,
                     StateWeak(this, send_limit),
                     StateEvtSnd(state_snd),
+                    recv_limit,
                 )
             })
         };
@@ -517,6 +587,19 @@ impl State {
         rem_id: Id,
     ) -> Result<()> {
         self.0.send(Ok(StateCmd::FetchForSend { conn, rem_id }))
+    }
+
+    pub(crate) fn in_offer(
+        &self,
+        sig_url: Tx4Url,
+        rem_id: Id,
+        data: Buf,
+    ) -> Result<()> {
+        self.0.send(Ok(StateCmd::InOffer {
+            sig_url,
+            rem_id,
+            data,
+        }))
     }
 
     pub(crate) fn close_sig(

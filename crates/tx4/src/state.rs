@@ -354,7 +354,8 @@ impl StateData {
 
                 match self.this_id.as_ref().unwrap().cmp(&rem_id) {
                     std::cmp::Ordering::Less => {
-                        println!("OFFER_CONFLICT:BEING_POLITE");
+                        //println!("OFFER_CONFLICT:BEING_POLITE");
+
                         // we are the POLITE node, delete our connection
                         // and set up a new one with the incoming offer.
                         self.conn_map.remove(&rem_id);
@@ -363,7 +364,8 @@ impl StateData {
                         ));
                     }
                     std::cmp::Ordering::Greater => {
-                        println!("OFFER_CONFLICT:BEING_IMPOLITE");
+                        //println!("OFFER_CONFLICT:BEING_IMPOLITE");
+
                         // we are the IMPOLITE node, we'll ignore this
                         // offer and continue with our existing connection.
                         drop(offer);

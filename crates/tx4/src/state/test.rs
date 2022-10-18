@@ -3,7 +3,7 @@ use super::*;
 #[allow(dead_code)]
 struct Test {
     shutdown: bool,
-    sig_a: Tx4Url,
+    sig: Tx4Url,
     cli_a: Tx4Url,
     id_a: Id,
     cli_b: Tx4Url,
@@ -23,15 +23,15 @@ impl Drop for Test {
 }
 
 impl Test {
-    pub async fn new() -> Self {
-        let sig_a: Tx4Url = Tx4Url::new("wss://a").unwrap();
+    pub async fn new(as_a: bool) -> Self {
+        let sig: Tx4Url = Tx4Url::new("wss://s").unwrap();
         let cli_a: Tx4Url = Tx4Url::new(
-            "wss://a/tx4-ws/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "wss://s/tx4-ws/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         )
         .unwrap();
         let id_a = cli_a.id().unwrap();
         let cli_b: Tx4Url = Tx4Url::new(
-            "wss://a/tx4-ws/BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "wss://s/tx4-ws/BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         )
         .unwrap();
         let id_b = cli_b.id().unwrap();
@@ -41,12 +41,13 @@ impl Test {
 
         let task = {
             let state = state.clone();
-            let sig_a = sig_a.clone();
+            let sig = sig.clone();
+
             // can't do this inline, since it won't resolve until result_ok
             // call on the seed below
-            tokio::task::spawn(async move {
-                state.listener_sig(sig_a).await.unwrap()
-            })
+            tokio::task::spawn(
+                async move { state.listener_sig(sig).await.unwrap() },
+            )
         };
 
         let sig_seed = match state_evt.recv().await {
@@ -54,20 +55,28 @@ impl Test {
             oth => panic!("unexpected: {:?}", oth),
         };
 
-        let (sig_state, sig_evt) = sig_seed.result_ok(cli_a.clone()).unwrap();
+        let cli = if as_a { cli_a.clone() } else { cli_b.clone() };
+        let (sig_state, sig_evt) = sig_seed.result_ok(cli).unwrap();
 
         task.await.unwrap();
 
-        assert!(matches!(
-            state_evt.recv().await,
-            Some(Ok(StateEvt::Address(tmp))) if tmp == cli_a,
-        ));
+        if as_a {
+            assert!(matches!(
+                state_evt.recv().await,
+                Some(Ok(StateEvt::Address(tmp))) if tmp == cli_a,
+            ));
+        } else {
+            assert!(matches!(
+                state_evt.recv().await,
+                Some(Ok(StateEvt::Address(tmp))) if tmp == cli_b,
+            ));
+        }
 
         println!("got addr");
 
         Self {
             shutdown: false,
-            sig_a,
+            sig,
             cli_a,
             id_a,
             cli_b,
@@ -101,7 +110,7 @@ impl Test {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn extended_outgoing() {
-    let mut test = Test::new().await;
+    let mut test = Test::new(true).await;
 
     // -- send data to a "peer" (causes connecting to that peer) -- //
 
@@ -238,7 +247,7 @@ async fn extended_outgoing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn short_incoming() {
-    let mut test = Test::new().await;
+    let mut test = Test::new(true).await;
 
     // -- receive an incoming offer -- //
 
@@ -302,7 +311,7 @@ async fn short_incoming() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn polite_in_offer() {
-    let mut test = Test::new().await;
+    let mut test = Test::new(true).await;
 
     // -- send data to a "peer" (causes connecting to that peer) -- //
 
@@ -421,6 +430,109 @@ async fn polite_in_offer() {
     }
 
     println!("sent answer");
+
+    conn_state.ready().unwrap();
+
+    println!("ready");
+
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            assert_eq!(&data.to_vec().unwrap(), b"hello");
+            resp.send(Ok(BufState::Low));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
+    println!("snd data");
+
+    // finally the data is sent
+    task.await.unwrap();
+
+    test.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn impolite_in_offer() {
+    let mut test = Test::new(false).await;
+
+    // -- send data to a "peer" (causes connecting to that peer) -- //
+
+    let task = {
+        let state = test.state.clone();
+        let cli_a = test.cli_a.clone();
+
+        tokio::task::spawn(async move {
+            state
+                .snd_data(cli_a.clone(), Buf::from_slice(b"hello").unwrap())
+                .await
+                .unwrap()
+        })
+    };
+
+    let conn_seed = match test.state_evt.recv().await {
+        Some(Ok(StateEvt::NewConn(seed))) => seed,
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
+    println!("got new conn");
+
+    let (conn_state, mut conn_evt) = conn_seed.result_ok().unwrap();
+
+    // -- generate an offer -- //
+
+    let mut resp = match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::CreateOffer(resp))) => resp,
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
+    resp.send(Buf::from_slice(b"offer"));
+
+    println!("got create_offer");
+
+    match test.sig_evt.recv().await {
+        Some(Ok(SigStateEvt::SndOffer(id, mut buf, mut resp))) => {
+            assert_eq!(id, test.id_a);
+            assert_eq!(&buf.to_vec().unwrap(), b"offer");
+            resp.send(Ok(()));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    println!("sent offer");
+
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SetLoc(mut offer, mut resp))) => {
+            assert_eq!(&offer.to_vec().unwrap(), b"offer");
+            resp.send(Ok(()));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    println!("set loc");
+
+    // - BUT, instead we get an new incoming OFFER
+    //   maybe because the other node started a racy try to connect to us too?
+
+    test.sig_state
+        .offer(test.id_a, Buf::from_slice(b"in_offer").unwrap())
+        .unwrap();
+
+    // since we're the IMPOLITE node, we just ignore this offer
+    // and continue with the negotiation of the original connection.
+
+    test.sig_state
+        .answer(test.id_a, Buf::from_slice(b"answer").unwrap())
+        .unwrap();
+
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SetRem(mut answer, mut resp))) => {
+            assert_eq!(&answer.to_vec().unwrap(), b"answer");
+            resp.send(Ok(()));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
+    println!("set rem");
 
     conn_state.ready().unwrap();
 

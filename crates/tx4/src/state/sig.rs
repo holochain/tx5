@@ -1,5 +1,4 @@
 use super::*;
-//use std::collections::HashMap;
 
 /// Temporary indicating we want a new signal instance.
 pub struct SigStateSeed {
@@ -65,6 +64,16 @@ pub enum SigStateEvt {
 
     /// Forward an ICE candidate to a remote
     SndIce(Id, Buf, OneSnd<()>),
+}
+
+impl std::fmt::Debug for SigStateEvt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SigStateEvt::SndOffer(_, _, _) => f.write_str("SndOffer"),
+            SigStateEvt::SndAnswer(_, _, _) => f.write_str("SndAnswer"),
+            SigStateEvt::SndIce(_, _, _) => f.write_str("SndIce"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -199,7 +208,7 @@ impl SigStateData {
             let _ = resp.send(Ok(()));
         }
         if let Some(state) = self.state.upgrade() {
-            state.publish(StateEvt::Address(cli_url));
+            state.sig_connected(cli_url);
         }
         Ok(())
     }

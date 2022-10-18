@@ -652,7 +652,6 @@ impl ConnState {
     }
 
     fn notify_constructed(&self) -> Result<()> {
-        println!("CONSTRUCTED");
         self.0.send(Ok(ConnCmd::NotifyConstructed))
     }
 
@@ -661,7 +660,6 @@ impl ConnState {
     }
 
     fn req_self_answer(&self) {
-        println!("SELF_ANSWER");
         let _ = self.0.send(Ok(ConnCmd::ReqSelfAnswer));
     }
 
@@ -670,7 +668,6 @@ impl ConnState {
     }
 
     pub(crate) fn in_offer(&self, offer: Buf) {
-        println!("IN_OFFER");
         let _ = self.0.send(Ok(ConnCmd::InOffer { offer }));
     }
 

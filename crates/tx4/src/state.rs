@@ -106,6 +106,7 @@ pub(crate) struct SendData {
 }
 
 struct StateData {
+    this_id: Option<Id>,
     this: StateWeak,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx4Url, SigStateWeak>,
@@ -152,6 +153,9 @@ impl StateData {
                     .await
             }
             StateCmd::Publish { evt } => self.publish(evt).await,
+            StateCmd::SigConnected { cli_url } => {
+                self.sig_connected(cli_url).await
+            }
             StateCmd::FetchForSend { conn, rem_id } => {
                 self.fetch_for_send(conn, rem_id).await
             }
@@ -290,6 +294,19 @@ impl StateData {
         Ok(())
     }
 
+    async fn sig_connected(&mut self, cli_url: Tx4Url) -> Result<()> {
+        let loc_id = cli_url.id().unwrap();
+        if let Some(this_id) = &self.this_id {
+            if this_id != &loc_id {
+                return Err(Error::err("MISMATCH LOCAL ID, please use the same lair instance for every sig connection"));
+            }
+        } else {
+            self.this_id = Some(loc_id);
+        }
+        let _ = self.evt.publish(StateEvt::Address(cli_url));
+        Ok(())
+    }
+
     async fn fetch_for_send(
         &mut self,
         want_conn: ConnStateWeak,
@@ -326,8 +343,36 @@ impl StateData {
     ) -> Result<()> {
         if let Some(e) = self.conn_map.get(&rem_id) {
             if let Some(conn) = e.upgrade() {
-                conn.in_offer(offer);
-                return Ok(());
+                // we seem to have a valid conn here... but
+                // we're receiving an incoming offer:
+                // activate PERFECT NEGOTIATION
+                // (https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation)
+
+                if self.this_id.is_none() {
+                    return Err(Error::err("Somehow we ended up receiving a webrtc offer before establishing a signal connection... this should be impossible"));
+                }
+
+                match self.this_id.as_ref().unwrap().cmp(&rem_id) {
+                    std::cmp::Ordering::Less => {
+                        println!("OFFER_CONFLICT:BEING_POLITE");
+                        // we are the POLITE node, delete our connection
+                        // and set up a new one with the incoming offer.
+                        self.conn_map.remove(&rem_id);
+                        conn.close(Error::id(
+                            "PoliteShutdownToAcceptIncomingOffer",
+                        ));
+                    }
+                    std::cmp::Ordering::Greater => {
+                        println!("OFFER_CONFLICT:BEING_IMPOLITE");
+                        // we are the IMPOLITE node, we'll ignore this
+                        // offer and continue with our existing connection.
+                        drop(offer);
+                        return Ok(());
+                    }
+                    std::cmp::Ordering::Equal => {
+                        return Err(Error::err("Invalid incoming webrtc offer with id matching our local id. Please don't share lair connections"));
+                    }
+                }
             } else {
                 self.conn_map.remove(&rem_id);
             }
@@ -349,7 +394,7 @@ impl StateData {
                 }
             } else {
                 // Whoops!
-                self.signal_map.insert(sig_url, sig);
+                self.signal_map.insert(sig_url, cur_sig);
             }
         }
         Ok(())
@@ -368,7 +413,7 @@ impl StateData {
                 }
             } else {
                 // Whoops!
-                self.conn_map.insert(rem_id, conn);
+                self.conn_map.insert(rem_id, cur_conn);
             }
         }
         Ok(())
@@ -390,6 +435,9 @@ enum StateCmd {
     },
     Publish {
         evt: StateEvt,
+    },
+    SigConnected {
+        cli_url: Tx4Url,
     },
     FetchForSend {
         conn: ConnStateWeak,
@@ -419,6 +467,7 @@ async fn state_task(
     recv_limit: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
     let mut data = StateData {
+        this_id: None,
         this,
         evt,
         signal_map: HashMap::new(),
@@ -579,6 +628,10 @@ impl State {
 
     pub(crate) fn publish(&self, evt: StateEvt) {
         let _ = self.0.send(Ok(StateCmd::Publish { evt }));
+    }
+
+    pub(crate) fn sig_connected(&self, cli_url: Tx4Url) {
+        let _ = self.0.send(Ok(StateCmd::SigConnected { cli_url }));
     }
 
     pub(crate) fn fetch_for_send(

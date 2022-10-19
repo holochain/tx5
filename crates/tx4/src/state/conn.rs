@@ -437,7 +437,7 @@ async fn conn_state_task(
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
-    sig_ready: tokio::sync::oneshot::Receiver<Result<()>>,
+    sig_ready: tokio::sync::oneshot::Receiver<Result<Tx4Url>>,
 ) -> Result<()> {
     let mut data = ConnStateData {
         this,
@@ -594,7 +594,7 @@ impl ConnState {
         cli_url: Tx4Url,
         rem_id: Id,
         recv_limit: Arc<tokio::sync::Semaphore>,
-        sig_ready: tokio::sync::oneshot::Receiver<Result<()>>,
+        sig_ready: tokio::sync::oneshot::Receiver<Result<Tx4Url>>,
     ) -> (Self, ManyRcv<ConnStateEvt>) {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
         let actor = {

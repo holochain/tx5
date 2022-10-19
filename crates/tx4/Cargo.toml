@@ -21,7 +21,10 @@ backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
 futures = { workspace = true }
+once_cell = { workspace = true }
 parking_lot = { workspace = true }
+rand = { workspace = true }
+rand-utf8 = { workspace = true }
 tokio = { workspace = true, features = [ "rt", "sync" ] }
 tracing = { workspace = true }
 tx4-core = { version = "0.0.1", path = "../tx4-core" }

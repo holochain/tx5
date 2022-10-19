@@ -73,7 +73,7 @@ impl std::fmt::Debug for Permit {
 #[derive(Debug)]
 pub enum StateEvt {
     /// Request to create a new signal client connection.
-    NewSig(SigStateSeed),
+    NewSig(Tx4Url, SigStateSeed),
 
     /// Indicates the current node is addressable at the given url.
     Address(Tx4Url),
@@ -201,13 +201,13 @@ impl StateData {
     async fn assert_listener_sig(
         &mut self,
         sig_url: Tx4Url,
-        resp: tokio::sync::oneshot::Sender<Result<()>>,
+        resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
     ) -> Result<()> {
         let new_sig = |resp| -> SigState {
             let (sig, sig_evt) =
                 SigState::new(self.this.clone(), sig_url.clone(), resp);
             let seed = SigStateSeed::new(sig.clone(), sig_evt);
-            let _ = self.evt.publish(StateEvt::NewSig(seed));
+            let _ = self.evt.publish(StateEvt::NewSig(sig_url.clone(), seed));
             sig
         };
         match self.signal_map.entry(sig_url.clone()) {
@@ -426,7 +426,7 @@ enum StateCmd {
     Tick,
     AssertListenerSig {
         sig_url: Tx4Url,
-        resp: tokio::sync::oneshot::Sender<Result<()>>,
+        resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
     },
     SendData {
         rem_id: Id,
@@ -565,7 +565,7 @@ impl State {
     pub fn listener_sig(
         &self,
         sig_url: Tx4Url,
-    ) -> impl Future<Output = Result<()>> + 'static + Send {
+    ) -> impl Future<Output = Result<Tx4Url>> + 'static + Send {
         let this = self.clone();
         async move {
             if !sig_url.is_server() {

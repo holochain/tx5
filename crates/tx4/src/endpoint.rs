@@ -1,10 +1,68 @@
 //! Tx4 endpoint.
 
-use crate::deps::lair_keystore_api::prelude::*;
+//use crate::deps::lair_keystore_api::prelude::*;
 use crate::*;
-use std::collections::HashMap;
+//use std::collections::HashMap;
 use std::sync::Arc;
+use tx4_core::Tx4Url;
 
+/// EpEvt
+pub enum EpEvt {
+    /// Received data from a remote.
+    Data(Tx4Url, Buf, state::Permit),
+}
+
+/// Ep
+pub struct Ep {
+    state: state::State,
+}
+
+impl Ep {
+    /// Construct a new tx4 endpoint.
+    pub fn new<C: Config>(config: C) -> (Self, actor::ManyRcv<EpEvt>) {
+        let config = Arc::new(config);
+        let (state, mut state_evt) = state::State::new();
+        tokio::task::spawn(async move {
+            while let Some(evt) = state_evt.recv().await {
+                match evt {
+                    Ok(state::StateEvt::NewSig(sig_url, seed)) => {
+                        config.on_new_sig(sig_url, seed);
+                    }
+                    Ok(state::StateEvt::Address(_cli_url)) => {}
+                    Ok(state::StateEvt::NewConn(seed)) => {
+                        config.on_new_conn(seed);
+                    }
+                    Ok(state::StateEvt::RcvData(_url, _buf, _permit)) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+        let _out = Self { state };
+        todo!()
+    }
+
+    /// Establish a listening connection to a signal server,
+    /// from which we can accept incoming remote connections.
+    /// Returns the client url at which this endpoint may now be addressed.
+    pub fn listen(
+        &self,
+        sig_url: Tx4Url,
+    ) -> impl std::future::Future<Output = Result<Tx4Url>> + 'static + Send
+    {
+        self.state.listener_sig(sig_url)
+    }
+
+    /// Send data to a remote on this tx4 endpoint.
+    pub fn send(
+        &self,
+        cli_url: Tx4Url,
+        data: Buf,
+    ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
+        self.state.snd_data(cli_url, data)
+    }
+}
+
+/*
 /// Tx4 Endpoint Event.
 #[derive(Debug)]
 pub enum EndpointEvent {
@@ -188,3 +246,4 @@ async fn endpoint_task_inner(
 //async fn connect_task(
 //    id: tx4_signal::Id,
 //    cli: Arc<tx4_signal::Cli>,
+*/

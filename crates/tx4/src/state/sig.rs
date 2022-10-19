@@ -124,7 +124,8 @@ struct SigStateData {
     sig_url: Tx4Url,
     sig_evt: SigStateEvtSnd,
     connected: bool,
-    pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<()>>>,
+    cli_url: Option<Tx4Url>,
+    pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<Tx4Url>>>,
     registered_conn_map: HashMap<Id, ConnStateWeak>,
 }
 
@@ -192,10 +193,10 @@ impl SigStateData {
 
     async fn push_assert_respond(
         &mut self,
-        resp: tokio::sync::oneshot::Sender<Result<()>>,
+        resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
     ) -> Result<()> {
         if self.connected {
-            let _ = resp.send(Ok(()));
+            let _ = resp.send(Ok(self.cli_url.clone().unwrap()));
         } else {
             self.pending_sig_resp.push(resp);
         }
@@ -205,7 +206,7 @@ impl SigStateData {
     async fn notify_connected(&mut self, cli_url: Tx4Url) -> Result<()> {
         self.connected = true;
         for resp in self.pending_sig_resp.drain(..) {
-            let _ = resp.send(Ok(()));
+            let _ = resp.send(Ok(self.cli_url.clone().unwrap()));
         }
         if let Some(state) = self.state.upgrade() {
             state.sig_connected(cli_url);
@@ -280,7 +281,7 @@ impl SigStateData {
 enum SigCmd {
     CheckConnectedTimeout,
     PushAssertRespond {
-        resp: tokio::sync::oneshot::Sender<Result<()>>,
+        resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
     },
     NotifyConnected {
         cli_url: Tx4Url,
@@ -325,7 +326,7 @@ async fn sig_state_task(
     state: StateWeak,
     sig_url: Tx4Url,
     sig_evt: SigStateEvtSnd,
-    pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<()>>>,
+    pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<Tx4Url>>>,
 ) -> Result<()> {
     let mut data = SigStateData {
         this,
@@ -333,6 +334,7 @@ async fn sig_state_task(
         sig_url,
         sig_evt,
         connected: false,
+        cli_url: None,
         pending_sig_resp,
         registered_conn_map: HashMap::new(),
     };
@@ -414,7 +416,7 @@ impl SigState {
     pub(crate) fn new(
         state: StateWeak,
         sig_url: Tx4Url,
-        resp: tokio::sync::oneshot::Sender<Result<()>>,
+        resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
     ) -> (Self, ManyRcv<SigStateEvt>) {
         let (sig_snd, sig_rcv) = tokio::sync::mpsc::unbounded_channel();
         let actor = Actor::new(move |this, rcv| {
@@ -467,7 +469,7 @@ impl SigState {
 
     pub(crate) async fn push_assert_respond(
         &self,
-        resp: tokio::sync::oneshot::Sender<Result<()>>,
+        resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
     ) {
         let _ = self.0.send(Ok(SigCmd::PushAssertRespond { resp }));
     }

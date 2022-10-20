@@ -79,7 +79,7 @@ pub enum StateEvt {
     Address(Tx4Url),
 
     /// Request to create a new webrtc peer connection.
-    NewConn(ConnStateSeed),
+    NewConn(serde_json::Value, ConnStateSeed),
 
     /// Incoming data received on a peer connection.
     RcvData(Tx4Url, Buf, Permit),
@@ -238,20 +238,23 @@ impl StateData {
         let sig = self.signal_map.get(&sig_url).unwrap().clone();
 
         let cli_url = sig_url.to_client(rem_id);
-        let (conn, conn_evt) = ConnState::new(
+        let conn = ConnState::new_and_publish(
             self.this.clone(),
             sig,
             cli_url,
             rem_id,
             self.recv_limit.clone(),
             r,
+            maybe_offer,
         );
-        self.conn_map.insert(rem_id, conn.weak());
+        self.conn_map.insert(rem_id, conn);
+        /*
         if let Some(offer) = maybe_offer {
             conn.in_offer(offer);
         }
         let seed = ConnStateSeed::new(conn, conn_evt);
         let _ = self.evt.publish(StateEvt::NewConn(seed));
+        */
 
         Ok(())
     }

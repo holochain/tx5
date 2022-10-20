@@ -430,6 +430,8 @@ enum ConnCmd {
 
 #[allow(clippy::too_many_arguments)]
 async fn conn_state_task(
+    strong: ConnState,
+    conn_rcv: ManyRcv<ConnStateEvt>,
     mut rcv: ManyRcv<ConnCmd>,
     this: ConnStateWeak,
     state: StateWeak,
@@ -454,7 +456,16 @@ async fn conn_state_task(
         sig_ready.await.map_err(|_| Error::id("SigClosed"))??;
 
         let sig = data.get_sig()?;
-        sig.register_conn(data.rem_id, data.this.clone())?;
+        let ice_servers =
+            sig.register_conn(data.rem_id, data.this.clone()).await?;
+
+        match data.state.upgrade() {
+            None => return Err(Error::id("Closed")),
+            Some(state) => {
+                let seed = ConnStateSeed::new(strong, conn_rcv);
+                state.publish(StateEvt::NewConn(ice_servers, seed));
+            }
+        }
 
         while let Some(cmd) = rcv.recv().await {
             data.exec(cmd?).await?;
@@ -588,19 +599,31 @@ impl ConnState {
 
     // -- //
 
-    pub(crate) fn new(
+    pub(crate) fn new_and_publish(
         state: StateWeak,
         sig_state: SigStateWeak,
         cli_url: Tx4Url,
         rem_id: Id,
         recv_limit: Arc<tokio::sync::Semaphore>,
         sig_ready: tokio::sync::oneshot::Receiver<Result<Tx4Url>>,
-    ) -> (Self, ManyRcv<ConnStateEvt>) {
+        maybe_offer: Option<Buf>,
+    ) -> ConnStateWeak {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
+
         let actor = {
             let recv_limit = recv_limit.clone();
             Actor::new(move |this, rcv| {
+                // woo, this is wonkey...
+                // we actually publish the "strong" version of this
+                // inside the task after waiting for the sig to be ready
+                // so upgrade here while the outer strong still exists,
+                // then the outer strong will be downgraded to return
+                // from new_and_publish...
+                let strong =
+                    ConnState(this.upgrade().unwrap(), recv_limit.clone());
                 conn_state_task(
+                    strong,
+                    ManyRcv(conn_rcv),
                     rcv,
                     ConnStateWeak(this, recv_limit),
                     state,
@@ -613,7 +636,13 @@ impl ConnState {
             })
         };
 
-        let weak = ConnStateWeak(actor.weak(), recv_limit.clone());
+        let actor = ConnState(actor, recv_limit);
+
+        if let Some(offer) = maybe_offer {
+            actor.in_offer(offer);
+        }
+
+        let weak = actor.weak();
         tokio::task::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             if let Some(actor) = weak.upgrade() {
@@ -621,7 +650,7 @@ impl ConnState {
             }
         });
 
-        let weak = ConnStateWeak(actor.weak(), recv_limit.clone());
+        let weak = actor.weak();
         tokio::task::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -636,7 +665,7 @@ impl ConnState {
             }
         });
 
-        (Self(actor, recv_limit), ManyRcv(conn_rcv))
+        actor.weak()
     }
 
     fn tick(&self) -> Result<()> {

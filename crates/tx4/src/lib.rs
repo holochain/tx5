@@ -42,7 +42,7 @@ pub mod deps {
     pub use tx4_signal::deps::*;
 }
 
-use deps::serde;
+use deps::{serde, serde_json};
 
 pub use tx4_core::{Error, ErrorExt, Result};
 pub use tx4_signal::{Cli, CliBuilder};
@@ -66,6 +66,7 @@ pub use config::*;
 mod endpoint;
 pub use endpoint::*;
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,3 +322,4 @@ mod tests {
         */
     }
 }
+*/

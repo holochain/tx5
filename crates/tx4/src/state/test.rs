@@ -51,12 +51,13 @@ impl Test {
         };
 
         let sig_seed = match state_evt.recv().await {
-            Some(Ok(StateEvt::NewSig(seed))) => seed,
+            Some(Ok(StateEvt::NewSig(_url, seed))) => seed,
             oth => panic!("unexpected: {:?}", oth),
         };
 
         let cli = if as_a { cli_a.clone() } else { cli_b.clone() };
-        let (sig_state, sig_evt) = sig_seed.result_ok(cli).unwrap();
+        let (sig_state, sig_evt) =
+            sig_seed.result_ok(cli, serde_json::json!([])).unwrap();
 
         task.await.unwrap();
 
@@ -129,7 +130,7 @@ async fn extended_outgoing() {
     // -- new peer connection -- //
 
     let conn_seed = match test.state_evt.recv().await {
-        Some(Ok(StateEvt::NewConn(seed))) => seed,
+        Some(Ok(StateEvt::NewConn(_ice_servers, seed))) => seed,
         oth => panic!("unexpected: {:?}", oth),
     };
 
@@ -258,7 +259,7 @@ async fn short_incoming() {
     // -- new peer connection -- //
 
     let conn_seed = match test.state_evt.recv().await {
-        Some(Ok(StateEvt::NewConn(seed))) => seed,
+        Some(Ok(StateEvt::NewConn(_ice_servers, seed))) => seed,
         oth => panic!("unexpected: {:?}", oth),
     };
 
@@ -328,7 +329,7 @@ async fn polite_in_offer() {
     };
 
     let conn_seed = match test.state_evt.recv().await {
-        Some(Ok(StateEvt::NewConn(seed))) => seed,
+        Some(Ok(StateEvt::NewConn(_ice_servers, seed))) => seed,
         oth => panic!("unexpected: {:?}", oth),
     };
 
@@ -383,7 +384,7 @@ async fn polite_in_offer() {
     }
 
     let conn_seed = match test.state_evt.recv().await {
-        Some(Ok(StateEvt::NewConn(seed))) => seed,
+        Some(Ok(StateEvt::NewConn(_ice_servers, seed))) => seed,
         oth => panic!("unexpected: {:?}", oth),
     };
 
@@ -470,7 +471,7 @@ async fn impolite_in_offer() {
     };
 
     let conn_seed = match test.state_evt.recv().await {
-        Some(Ok(StateEvt::NewConn(seed))) => seed,
+        Some(Ok(StateEvt::NewConn(_ice_servers, seed))) => seed,
         oth => panic!("unexpected: {:?}", oth),
     };
 

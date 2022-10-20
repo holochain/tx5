@@ -9,7 +9,17 @@ use tx4_core::Tx4Url;
 /// EpEvt
 pub enum EpEvt {
     /// Received data from a remote.
-    Data(Tx4Url, Buf, state::Permit),
+    Data {
+        /// The remote client url that sent this message.
+        rem_cli_url: Tx4Url,
+
+        /// The payload of the message.
+        data: Buf,
+
+        /// Drop this when you've accepted the data to allow additional
+        /// incoming messages.
+        permit: state::Permit,
+    },
 }
 
 /// Ep
@@ -19,8 +29,17 @@ pub struct Ep {
 
 impl Ep {
     /// Construct a new tx4 endpoint.
-    pub fn new<C: Config>(config: C) -> (Self, actor::ManyRcv<EpEvt>) {
-        let config = Arc::new(config);
+    pub async fn new() -> Result<(Self, actor::ManyRcv<EpEvt>)> {
+        Self::with_config(DefConfig::default()).await
+    }
+
+    /// Construct a new tx4 endpoint with configuration.
+    pub async fn with_config<C: Config, I: IntoConfig<Config = C>>(
+        into_config: I,
+    ) -> Result<(Self, actor::ManyRcv<EpEvt>)> {
+        let (ep_snd, ep_rcv) = tokio::sync::mpsc::unbounded_channel();
+
+        let config = Arc::new(into_config.into_config().await?);
         let (state, mut state_evt) = state::State::new();
         tokio::task::spawn(async move {
             while let Some(evt) = state_evt.recv().await {
@@ -29,16 +48,25 @@ impl Ep {
                         config.on_new_sig(sig_url, seed);
                     }
                     Ok(state::StateEvt::Address(_cli_url)) => {}
-                    Ok(state::StateEvt::NewConn(seed)) => {
-                        config.on_new_conn(seed);
+                    Ok(state::StateEvt::NewConn(ice_servers, seed)) => {
+                        config.on_new_conn(ice_servers, seed);
                     }
-                    Ok(state::StateEvt::RcvData(_url, _buf, _permit)) => {}
-                    Err(_) => break,
+                    Ok(state::StateEvt::RcvData(url, buf, permit)) => {
+                        let _ = ep_snd.send(Ok(EpEvt::Data {
+                            rem_cli_url: url,
+                            data: buf,
+                            permit,
+                        }));
+                    }
+                    Err(err) => {
+                        let _ = ep_snd.send(Err(err));
+                        break;
+                    }
                 }
             }
         });
-        let _out = Self { state };
-        todo!()
+        let ep = Self { state };
+        Ok((ep, actor::ManyRcv(ep_rcv)))
     }
 
     /// Establish a listening connection to a signal server,
@@ -55,10 +83,171 @@ impl Ep {
     /// Send data to a remote on this tx4 endpoint.
     pub fn send(
         &self,
-        cli_url: Tx4Url,
+        rem_cli_url: Tx4Url,
         data: Buf,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
-        self.state.snd_data(cli_url, data)
+        self.state.snd_data(rem_cli_url, data)
+    }
+}
+
+pub(crate) fn on_new_sig(
+    config: Arc<DefConfigBuilt>,
+    sig_url: Tx4Url,
+    seed: state::SigStateSeed,
+) {
+    tokio::task::spawn(new_sig_task(config, sig_url, seed));
+}
+
+async fn new_sig_task(
+    config: Arc<DefConfigBuilt>,
+    sig_url: Tx4Url,
+    seed: state::SigStateSeed,
+) {
+    let (sig_snd, mut sig_rcv) = tokio::sync::mpsc::unbounded_channel();
+
+    let (sig, cli_url) = match async {
+        let sig = tx4_signal::Cli::builder()
+            .with_lair_client(config.lair_client().clone())
+            .with_lair_tag(config.lair_tag().clone())
+            .with_url(sig_url.to_string().parse().unwrap())
+            .with_recv_cb(move |msg| {
+                let _ = sig_snd.send(msg);
+            })
+            .build()
+            .await?;
+
+        let cli_url = Tx4Url::new(sig.local_addr())?;
+
+        Result::Ok((sig, cli_url))
+    }
+    .await
+    {
+        Ok(r) => r,
+        Err(err) => {
+            seed.result_err(err);
+            return;
+        }
+    };
+
+    let sig = &sig;
+
+    let ice_servers = sig.ice_servers().clone();
+
+    let (sig_state, mut sig_evt) = match seed.result_ok(cli_url, ice_servers) {
+        Err(_) => return,
+        Ok(r) => r,
+    };
+
+    loop {
+        tokio::select! {
+            msg = sig_rcv.recv() => {
+                if let Err(err) = async {
+                    match msg {
+                        Some(tx4_signal::SignalMsg::Demo { .. }) => Ok(()),
+                        Some(tx4_signal::SignalMsg::Offer { rem_pub, offer }) => {
+                            let offer = Buf::from_json(offer)?;
+                            sig_state.offer(rem_pub, offer)
+                        }
+                        Some(tx4_signal::SignalMsg::Answer { rem_pub, answer }) => {
+                            let answer = Buf::from_json(answer)?;
+                            sig_state.answer(rem_pub, answer)
+                        }
+                        Some(tx4_signal::SignalMsg::Ice { rem_pub, ice }) => {
+                            let ice = Buf::from_json(ice)?;
+                            sig_state.ice(rem_pub, ice)
+                        }
+                        None => Err(Error::id("SigClosed")),
+                    }
+                }.await {
+                    sig_state.close(err);
+                    break;
+                }
+            }
+            msg = sig_evt.recv() => {
+                match msg {
+                    Some(Ok(state::SigStateEvt::SndOffer(
+                        rem_id,
+                        mut offer,
+                        mut resp,
+                    ))) => {
+                        resp.with(move || async move {
+                            sig.offer(rem_id, offer.to_json()?).await
+                        }).await;
+                    }
+                    Some(Ok(state::SigStateEvt::SndAnswer(
+                        rem_id,
+                        mut answer,
+                        mut resp,
+                    ))) => {
+                        resp.with(move || async move {
+                            sig.answer(rem_id, answer.to_json()?).await
+                        }).await;
+                    }
+                    Some(Ok(state::SigStateEvt::SndIce(
+                        rem_id,
+                        mut ice,
+                        mut resp,
+                    ))) => {
+                        resp.with(move || async move {
+                            sig.ice(rem_id, ice.to_json()?).await
+                        }).await;
+                    }
+                    Some(Err(_)) => break,
+                    None => break,
+                }
+            }
+        };
+    }
+}
+
+#[cfg(feature = "backend-go-pion")]
+pub(crate) fn on_new_conn(
+    _config: Arc<DefConfigBuilt>,
+    _ice_servers: serde_json::Value,
+    _seed: state::ConnStateSeed,
+) {
+    todo!()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn endpoint_sanity() {
+        let mut srv_config = tx4_signal_srv::Config::default();
+        srv_config.port = 0;
+        //srv_config.ice_servers = serde_json::json!([]);
+        srv_config.demo = true;
+
+        let (addr, srv_driver) =
+            tx4_signal_srv::exec_tx4_signal_srv(srv_config).unwrap();
+        tokio::task::spawn(srv_driver);
+
+        let sig_port = addr.port();
+
+        // TODO remove
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let sig_url =
+            Tx4Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+        println!("sig_url: {}", sig_url);
+
+        let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
+
+        let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
+
+        println!("cli_url1: {}", cli_url1);
+
+        let (ep2, _ep_rcv2) = Ep::new().await.unwrap();
+
+        let cli_url2 = ep2.listen(sig_url).await.unwrap();
+
+        println!("cli_url2: {}", cli_url2);
+
+        ep1.send(cli_url2, Buf::from_slice(b"hello").unwrap())
+            .await
+            .unwrap();
     }
 }
 

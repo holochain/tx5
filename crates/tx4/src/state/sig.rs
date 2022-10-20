@@ -23,10 +23,11 @@ impl SigStateSeed {
     pub fn result_ok(
         mut self,
         cli_url: Tx4Url,
+        ice_servers: serde_json::Value,
     ) -> Result<(SigState, ManyRcv<SigStateEvt>)> {
         self.done = true;
         let (sig, sig_evt) = self.output.take().unwrap();
-        sig.notify_connected(cli_url)?;
+        sig.notify_connected(cli_url, ice_servers)?;
         Ok((sig, sig_evt))
     }
 
@@ -125,6 +126,7 @@ struct SigStateData {
     sig_evt: SigStateEvtSnd,
     connected: bool,
     cli_url: Option<Tx4Url>,
+    ice_servers: Option<serde_json::Value>,
     pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<Tx4Url>>>,
     registered_conn_map: HashMap<Id, ConnStateWeak>,
 }
@@ -161,11 +163,12 @@ impl SigStateData {
             SigCmd::PushAssertRespond { resp } => {
                 self.push_assert_respond(resp).await
             }
-            SigCmd::NotifyConnected { cli_url } => {
-                self.notify_connected(cli_url).await
-            }
-            SigCmd::RegisterConn { rem_id, conn } => {
-                self.register_conn(rem_id, conn).await
+            SigCmd::NotifyConnected {
+                cli_url,
+                ice_servers,
+            } => self.notify_connected(cli_url, ice_servers).await,
+            SigCmd::RegisterConn { rem_id, conn, resp } => {
+                self.register_conn(rem_id, conn, resp).await
             }
             SigCmd::UnregisterConn { rem_id, conn } => {
                 self.unregister_conn(rem_id, conn).await
@@ -203,10 +206,16 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn notify_connected(&mut self, cli_url: Tx4Url) -> Result<()> {
+    async fn notify_connected(
+        &mut self,
+        cli_url: Tx4Url,
+        ice_servers: serde_json::Value,
+    ) -> Result<()> {
         self.connected = true;
+        self.cli_url = Some(cli_url.clone());
+        self.ice_servers = Some(ice_servers);
         for resp in self.pending_sig_resp.drain(..) {
-            let _ = resp.send(Ok(self.cli_url.clone().unwrap()));
+            let _ = resp.send(Ok(cli_url.clone()));
         }
         if let Some(state) = self.state.upgrade() {
             state.sig_connected(cli_url);
@@ -218,8 +227,14 @@ impl SigStateData {
         &mut self,
         rem_id: Id,
         conn: ConnStateWeak,
+        resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) -> Result<()> {
         self.registered_conn_map.insert(rem_id, conn);
+        let _ = resp.send(
+            self.ice_servers
+                .clone()
+                .ok_or_else(|| Error::id("NoIceServers")),
+        );
         Ok(())
     }
 
@@ -285,10 +300,12 @@ enum SigCmd {
     },
     NotifyConnected {
         cli_url: Tx4Url,
+        ice_servers: serde_json::Value,
     },
     RegisterConn {
         rem_id: Id,
         conn: ConnStateWeak,
+        resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     },
     UnregisterConn {
         rem_id: Id,
@@ -335,6 +352,7 @@ async fn sig_state_task(
         sig_evt,
         connected: false,
         cli_url: None,
+        ice_servers: None,
         pending_sig_resp,
         registered_conn_map: HashMap::new(),
     };
@@ -455,12 +473,18 @@ impl SigState {
         let _ = self.0.send(Ok(SigCmd::CheckConnectedTimeout));
     }
 
-    pub(crate) fn register_conn(
+    pub(crate) async fn register_conn(
         &self,
         rem_id: Id,
         conn: ConnStateWeak,
-    ) -> Result<()> {
-        self.0.send(Ok(SigCmd::RegisterConn { rem_id, conn }))
+    ) -> Result<serde_json::Value> {
+        let (s, r) = tokio::sync::oneshot::channel();
+        self.0.send(Ok(SigCmd::RegisterConn {
+            rem_id,
+            conn,
+            resp: s,
+        }))?;
+        r.await.map_err(|_| Error::id("Closed"))?
     }
 
     pub(crate) fn unregister_conn(&self, rem_id: Id, conn: ConnStateWeak) {
@@ -474,7 +498,14 @@ impl SigState {
         let _ = self.0.send(Ok(SigCmd::PushAssertRespond { resp }));
     }
 
-    fn notify_connected(&self, cli_url: Tx4Url) -> Result<()> {
-        self.0.send(Ok(SigCmd::NotifyConnected { cli_url }))
+    fn notify_connected(
+        &self,
+        cli_url: Tx4Url,
+        ice_servers: serde_json::Value,
+    ) -> Result<()> {
+        self.0.send(Ok(SigCmd::NotifyConnected {
+            cli_url,
+            ice_servers,
+        }))
     }
 }

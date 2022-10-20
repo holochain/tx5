@@ -40,3 +40,7 @@ pub mod ws {
     /// Max incoming and outgoing frame size.
     pub const MAX_FRAME_SIZE: usize = 2048;
 }
+
+/// Pinned, boxed, future type alias.
+pub type BoxFut<'lt, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'lt + Send>>;

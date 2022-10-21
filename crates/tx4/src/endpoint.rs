@@ -202,11 +202,117 @@ async fn new_sig_task(
 
 #[cfg(feature = "backend-go-pion")]
 pub(crate) fn on_new_conn(
-    _config: Arc<DefConfigBuilt>,
-    _ice_servers: serde_json::Value,
-    _seed: state::ConnStateSeed,
+    config: Arc<DefConfigBuilt>,
+    ice_servers: serde_json::Value,
+    seed: state::ConnStateSeed,
 ) {
-    todo!()
+    tokio::task::spawn(new_conn_task(config, ice_servers, seed));
+}
+
+#[cfg(feature = "backend-go-pion")]
+async fn new_conn_task(
+    _config: Arc<DefConfigBuilt>,
+    ice_servers: serde_json::Value,
+    seed: state::ConnStateSeed,
+) {
+    let (peer_snd, mut peer_rcv) = tokio::sync::mpsc::unbounded_channel();
+
+    let mut peer = match async {
+        let peer_config = Buf::from_json(serde_json::json!({
+            "iceServers": ice_servers,
+        }))?;
+
+        let peer =
+            tx4_go_pion::PeerConnection::new(peer_config.imp.buf, move |evt| {
+                let _ = peer_snd.send(evt);
+            })
+            .await?;
+
+        Result::Ok(peer)
+    }
+    .await
+    {
+        Ok(r) => r,
+        Err(err) => {
+            seed.result_err(err);
+            return;
+        }
+    };
+
+    let (conn_state, mut conn_evt) = match seed.result_ok() {
+        Err(_) => return,
+        Ok(r) => r,
+    };
+
+    loop {
+        tokio::select! {
+            msg = peer_rcv.recv() => {
+                match msg {
+                    Some(tx4_go_pion::PeerConnectionEvent::Error(err)) => {
+                        conn_state.close(err);
+                        break;
+                    }
+                    None => {
+                        conn_state.close(Error::id("PeerConClosed"));
+                        break;
+                    }
+                    Some(tx4_go_pion::PeerConnectionEvent::ICECandidate(buf)) => {
+                        let buf = Buf::from_raw(buf);
+                        if conn_state.ice(buf).is_err() {
+                            break;
+                        }
+                    }
+                    Some(tx4_go_pion::PeerConnectionEvent::DataChannel(_chan)) => {
+                        todo!()
+                    }
+                }
+            }
+            msg = conn_evt.recv() => {
+                match msg {
+                    Some(Ok(state::ConnStateEvt::CreateOffer(mut resp))) => {
+                        let peer = &mut peer;
+                        resp.with(move || async move {
+                            // TODO - should we also create a data chan here??
+
+                            let buf = peer.create_offer(tx4_go_pion::OfferConfig::default()).await?;
+                            Ok(Buf::from_raw(buf))
+                        }).await;
+                    }
+                    Some(Ok(state::ConnStateEvt::CreateAnswer(mut resp))) => {
+                        let peer = &mut peer;
+                        resp.with(move || async move {
+
+                            let buf = peer.create_answer(tx4_go_pion::AnswerConfig::default()).await?;
+                            Ok(Buf::from_raw(buf))
+                        }).await;
+                    }
+                    Some(Ok(state::ConnStateEvt::SetLoc(buf, mut resp))) => {
+                        let peer = &mut peer;
+                        resp.with(move || async move {
+                            peer.set_local_description(buf.imp.buf).await
+                        }).await;
+                    }
+                    Some(Ok(state::ConnStateEvt::SetRem(buf, mut resp))) => {
+                        let peer = &mut peer;
+                        resp.with(move || async move {
+                            peer.set_remote_description(buf.imp.buf).await
+                        }).await;
+                    }
+                    Some(Ok(state::ConnStateEvt::SetIce(buf, mut resp))) => {
+                        let peer = &mut peer;
+                        resp.with(move || async move {
+                            peer.add_ice_candidate(buf.imp.buf).await
+                        }).await;
+                    }
+                    Some(Ok(state::ConnStateEvt::SndData(_buf, _resp))) => {
+                        todo!()
+                    }
+                    Some(Err(_)) => break,
+                    None => break,
+                }
+            }
+        };
+    }
 }
 
 #[cfg(test)]

@@ -73,6 +73,13 @@ impl std::fmt::Debug for Buf {
 }
 
 impl Buf {
+    pub(crate) fn from_raw(buf: tx4_go_pion::GoBuf) -> Self {
+        Self {
+            imp: imp::Imp::from_raw(buf),
+            _not_sync: std::marker::PhantomData,
+        }
+    }
+
     /// Build a tx4 buffer from a slice.
     #[inline]
     pub fn from_slice<S: AsRef<[u8]>>(slice: S) -> Result<Self> {

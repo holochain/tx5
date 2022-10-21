@@ -60,6 +60,13 @@ impl std::fmt::Debug for Imp {
 }
 
 impl Imp {
+    pub(crate) fn from_raw(buf: tx4_go_pion::GoBuf) -> Self {
+        Self {
+            buf,
+            _not_sync: std::marker::PhantomData,
+        }
+    }
+
     #[inline]
     pub fn from_slice<S: AsRef<[u8]>>(slice: S) -> Result<Self> {
         Ok(Self {

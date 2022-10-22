@@ -93,6 +93,7 @@ impl Config for DefConfigBuilt {
 
 /// Builder type for constructing a DefConfig for a Tx4 endpoint.
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 pub struct DefConfig {
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,

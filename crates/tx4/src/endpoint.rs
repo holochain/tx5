@@ -1,12 +1,11 @@
 //! Tx4 endpoint.
 
-//use crate::deps::lair_keystore_api::prelude::*;
 use crate::*;
-//use std::collections::HashMap;
 use std::sync::Arc;
 use tx4_core::Tx4Url;
 
 /// EpEvt
+#[derive(Debug)]
 pub enum EpEvt {
     /// Received data from a remote.
     Data {
@@ -215,8 +214,17 @@ async fn new_conn_task(
     ice_servers: serde_json::Value,
     seed: state::ConnStateSeed,
 ) {
+    use tx4_go_pion::DataChannelEvent as DataEvt;
+    use tx4_go_pion::PeerConnectionEvent as PeerEvt;
+
+    enum MultiEvt {
+        Peer(PeerEvt),
+        Data(DataEvt),
+    }
+
     let (peer_snd, mut peer_rcv) = tokio::sync::mpsc::unbounded_channel();
 
+    let peer_snd2 = peer_snd.clone();
     let mut peer = match async {
         let peer_config = Buf::from_json(serde_json::json!({
             "iceServers": ice_servers,
@@ -224,7 +232,7 @@ async fn new_conn_task(
 
         let peer =
             tx4_go_pion::PeerConnection::new(peer_config.imp.buf, move |evt| {
-                let _ = peer_snd.send(evt);
+                let _ = peer_snd2.send(MultiEvt::Peer(evt));
             })
             .await?;
 
@@ -244,26 +252,45 @@ async fn new_conn_task(
         Ok(r) => r,
     };
 
+    let mut data_chan: Option<tx4_go_pion::DataChannel> = None;
+
     loop {
         tokio::select! {
             msg = peer_rcv.recv() => {
                 match msg {
-                    Some(tx4_go_pion::PeerConnectionEvent::Error(err)) => {
-                        conn_state.close(err);
-                        break;
-                    }
                     None => {
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
                     }
-                    Some(tx4_go_pion::PeerConnectionEvent::ICECandidate(buf)) => {
+                    Some(MultiEvt::Peer(PeerEvt::Error(err))) => {
+                        conn_state.close(err);
+                        break;
+                    }
+                    Some(MultiEvt::Peer(PeerEvt::ICECandidate(buf))) => {
                         let buf = Buf::from_raw(buf);
                         if conn_state.ice(buf).is_err() {
                             break;
                         }
                     }
-                    Some(tx4_go_pion::PeerConnectionEvent::DataChannel(_chan)) => {
-                        todo!()
+                    Some(MultiEvt::Peer(PeerEvt::DataChannel(chan))) => {
+                        let peer_snd = peer_snd.clone();
+                        data_chan = Some(chan.handle(move |evt| {
+                            let _ = peer_snd.send(MultiEvt::Data(evt));
+                        }));
+                    }
+                    Some(MultiEvt::Data(DataEvt::Open)) => {
+                        if conn_state.ready().is_err() {
+                            break;
+                        }
+                    }
+                    Some(MultiEvt::Data(DataEvt::Close)) => {
+                        conn_state.close(Error::id("DataChanClosed"));
+                        break;
+                    }
+                    Some(MultiEvt::Data(DataEvt::Message(buf))) => {
+                        if conn_state.rcv_data(Buf::from_raw(buf)).is_err() {
+                            break;
+                        }
                     }
                 }
             }
@@ -271,10 +298,30 @@ async fn new_conn_task(
                 match msg {
                     Some(Ok(state::ConnStateEvt::CreateOffer(mut resp))) => {
                         let peer = &mut peer;
+                        let data_chan = &mut data_chan;
+                        let peer_snd = peer_snd.clone();
                         resp.with(move || async move {
-                            // TODO - should we also create a data chan here??
+                            let chan = peer.create_data_channel(
+                                tx4_go_pion::DataChannelConfig {
+                                    label: Some("data".into()),
+                                }
+                            ).await?;
 
-                            let buf = peer.create_offer(tx4_go_pion::OfferConfig::default()).await?;
+                            *data_chan = Some(chan.handle(move |evt| {
+                                let _ = peer_snd.send(MultiEvt::Data(evt));
+                            }));
+
+                            let mut buf = peer.create_offer(
+                                tx4_go_pion::OfferConfig::default(),
+                            ).await?;
+
+                            if let Ok(bytes) = buf.to_vec() {
+                                tracing::debug!(
+                                    offer=%String::from_utf8_lossy(&bytes),
+                                    "create_offer",
+                                );
+                            }
+
                             Ok(Buf::from_raw(buf))
                         }).await;
                     }
@@ -282,7 +329,15 @@ async fn new_conn_task(
                         let peer = &mut peer;
                         resp.with(move || async move {
 
-                            let buf = peer.create_answer(tx4_go_pion::AnswerConfig::default()).await?;
+                            let mut buf = peer.create_answer(
+                                tx4_go_pion::AnswerConfig::default(),
+                            ).await?;
+                            if let Ok(bytes) = buf.to_vec() {
+                                tracing::debug!(
+                                    offer=%String::from_utf8_lossy(&bytes),
+                                    "create_answer",
+                                );
+                            }
                             Ok(Buf::from_raw(buf))
                         }).await;
                     }
@@ -304,8 +359,18 @@ async fn new_conn_task(
                             peer.add_ice_candidate(buf.imp.buf).await
                         }).await;
                     }
-                    Some(Ok(state::ConnStateEvt::SndData(_buf, _resp))) => {
-                        todo!()
+                    Some(Ok(state::ConnStateEvt::SndData(buf, mut resp))) => {
+                        let data_chan = &mut data_chan;
+                        resp.with(move || async move {
+                            match data_chan {
+                                None => Err(Error::id("NoDataChannel")),
+                                Some(chan) => {
+                                    chan.send(buf.imp.buf).await?;
+                                    // TODO - actually report this
+                                    Ok(state::BufState::Low)
+                                }
+                            }
+                        }).await;
                     }
                     Some(Err(_)) => break,
                     None => break,
@@ -319,8 +384,21 @@ async fn new_conn_task(
 mod test {
     use super::*;
 
+    fn init_tracing() {
+        let subscriber = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(
+                tracing_subscriber::filter::EnvFilter::from_default_env(),
+            )
+            .with_file(true)
+            .with_line_number(true)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn endpoint_sanity() {
+        init_tracing();
+
         let mut srv_config = tx4_signal_srv::Config::default();
         srv_config.port = 0;
         //srv_config.ice_servers = serde_json::json!([]);
@@ -345,7 +423,7 @@ mod test {
 
         println!("cli_url1: {}", cli_url1);
 
-        let (ep2, _ep_rcv2) = Ep::new().await.unwrap();
+        let (ep2, mut ep_rcv2) = Ep::new().await.unwrap();
 
         let cli_url2 = ep2.listen(sig_url).await.unwrap();
 
@@ -354,191 +432,19 @@ mod test {
         ep1.send(cli_url2, Buf::from_slice(b"hello").unwrap())
             .await
             .unwrap();
-    }
-}
 
-/*
-/// Tx4 Endpoint Event.
-#[derive(Debug)]
-pub enum EndpointEvent {
-    /// An endpoint "listening" connection has been established.
-    ListenerConnected(url::Url),
-}
+        let recv = ep_rcv2.recv().await;
 
-type EndpointEventCb = Arc<dyn Fn(EndpointEvent) + 'static + Send + Sync>;
-
-/// Tx4 Endpoint.
-pub struct Endpoint {
-    cmd_send: tokio::sync::mpsc::UnboundedSender<Cmd>,
-    lair_client: LairClient,
-    lair_tag: Arc<str>,
-}
-
-impl Drop for Endpoint {
-    fn drop(&mut self) {
-        self.close();
-    }
-}
-
-impl Endpoint {
-    /// Construct a new endpoint instance suitable for listening for
-    /// incoming connections through a signal server or establishing
-    /// outgoing connections through a signal server.
-    pub fn new<Cb>(
-        lair_client: LairClient,
-        lair_tag: Arc<str>,
-        cb: Cb,
-    ) -> Result<Self>
-    where
-        Cb: Fn(EndpointEvent) + 'static + Send + Sync,
-    {
-        let cb: EndpointEventCb = Arc::new(cb);
-        let (cmd_send, cmd_recv) = tokio::sync::mpsc::unbounded_channel();
-        tokio::task::spawn(endpoint_task(cmd_recv, cb));
-        Ok(Self {
-            cmd_send,
-            lair_client,
-            lair_tag,
-        })
-    }
-
-    /// Shutdown this endpoint.
-    pub fn close(&self) {
-        let _ = self.cmd_send.send(Cmd::Shutdown);
-    }
-
-    /// List the urls this endpoint can be reached at through
-    /// signal server listener connections.
-    pub async fn url_list(&self) -> Result<Vec<url::Url>> {
-        let (s, r) = tokio::sync::oneshot::channel();
-        let _ = self.cmd_send.send(Cmd::UrlList(s));
-        r.await.map_err(|_| Error::id("Shutdown"))
-    }
-
-    /// Connect as an endpoint intending to receive
-    /// incoming connection through a tx4 signal server.
-    pub async fn listen(&self, signal_url: url::Url) -> Result<()> {
-        let mut bld = tx4_signal::CliBuilder::default();
-        bld.set_lair_client(self.lair_client.clone());
-        bld.set_lair_tag(self.lair_tag.clone());
-        bld.set_url(signal_url.clone());
-
-        {
-            let signal_url = signal_url.clone();
-            let cmd_send = self.cmd_send.clone();
-            bld.set_recv_cb(move |evt| {
-                let _ = cmd_send.send(Cmd::SigEvt(signal_url.clone(), evt));
-            });
-        }
-
-        let cli = bld.build().await?;
-
-        let (s, r) = tokio::sync::oneshot::channel();
-        let _ = self.cmd_send.send(Cmd::NewSig(signal_url, cli, s));
-        r.await.map_err(|_| Error::id("Shutdown"))
-    }
-
-    /// If we don't already have a connection, attempt to establish one.
-    pub async fn connect(&self, peer_url: url::Url) -> Result<()> {
-        let (s, r) = tokio::sync::oneshot::channel();
-        let _ = self.cmd_send.send(Cmd::Connect(peer_url, s));
-        r.await.map_err(|_| Error::id("Shutdown"))?
-    }
-}
-
-enum Cmd {
-    Shutdown,
-    SigEvt(url::Url, tx4_signal::SignalMsg),
-    NewSig(url::Url, tx4_signal::Cli, tokio::sync::oneshot::Sender<()>),
-    UrlList(tokio::sync::oneshot::Sender<Vec<url::Url>>),
-    Connect(url::Url, tokio::sync::oneshot::Sender<Result<()>>),
-}
-
-async fn endpoint_task(
-    cmd_recv: tokio::sync::mpsc::UnboundedReceiver<Cmd>,
-    cb: EndpointEventCb,
-) {
-    if let Err(err) = endpoint_task_inner(cmd_recv, cb).await {
-        tracing::error!(?err);
-    }
-}
-
-enum PeerState {
-    Connecting,
-}
-
-async fn endpoint_task_inner(
-    mut cmd_recv: tokio::sync::mpsc::UnboundedReceiver<Cmd>,
-    cb: EndpointEventCb,
-) -> Result<()> {
-    let mut signals = HashMap::new();
-    let mut peers = HashMap::new();
-
-    while let Some(cmd) = cmd_recv.recv().await {
-        match cmd {
-            Cmd::Shutdown => break,
-            #[allow(clippy::match_single_binding)] // obvs this is temp
-            Cmd::SigEvt(_url, evt) => match evt {
-                _ => todo!(),
-            },
-            Cmd::NewSig(url, cli, resp) => {
-                let addr = cli.local_addr().clone();
-                signals.insert(url, Arc::new(cli));
-                cb(EndpointEvent::ListenerConnected(addr));
-                let _ = resp.send(());
+        match recv {
+            Some(Ok(EpEvt::Data {
+                rem_cli_url,
+                mut data,
+                ..
+            })) => {
+                assert_eq!(cli_url1, rem_cli_url);
+                assert_eq!(b"hello", data.to_vec().unwrap().as_slice());
             }
-            Cmd::UrlList(resp) => {
-                let mut out = Vec::new();
-                for (_, cli) in signals.iter() {
-                    out.push(cli.local_addr().clone());
-                }
-                let _ = resp.send(out);
-            }
-            Cmd::Connect(url, resp) => {
-                let front = match url::Url::parse(&format!(
-                    "{}://{}:{}",
-                    url.scheme(),
-                    url.host_str().unwrap_or("localhost"),
-                    url.port().unwrap_or(5000),
-                )) {
-                    Err(err) => {
-                        let _ = resp.send(Err(Error::err(err)));
-                        continue;
-                    }
-                    Ok(front) => front,
-                };
-
-                if !signals.contains_key(&front) {
-                    let _ =
-                        resp.send(Err(Error::id("UnimplementedAutoSignal")));
-                    continue;
-                }
-
-                // TODO - fixme unwraps
-                let mut path = url.path_segments().unwrap();
-                path.next().unwrap();
-                let id =
-                    tx4_signal::Id::from_b64(path.next().unwrap()).unwrap();
-
-                if peers.contains_key(&id) {
-                    let _ = resp.send(Ok(()));
-                    continue;
-                }
-
-                peers.insert(id, PeerState::Connecting);
-
-                // unwrap ok, checked above
-                let _cli = signals.get(&front).unwrap().clone();
-
-                let _ = resp.send(Err(Error::id("todo")));
-            }
+            oth => panic!("unexpected {:?}", oth),
         }
     }
-
-    Ok(())
 }
-
-//async fn connect_task(
-//    id: tx4_signal::Id,
-//    cli: Arc<tx4_signal::Cli>,
-*/

@@ -108,6 +108,7 @@ pub(crate) struct SendData {
 struct StateData {
     this_id: Option<Id>,
     this: StateWeak,
+    metrics: prometheus::Registry,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx4Url, SigStateWeak>,
     conn_map: HashMap<Id, ConnStateWeak>,
@@ -239,6 +240,7 @@ impl StateData {
 
         let cli_url = sig_url.to_client(rem_id);
         let conn = ConnState::new_and_publish(
+            self.metrics.clone(),
             self.this.clone(),
             sig,
             cli_url,
@@ -468,12 +470,14 @@ enum StateCmd {
 async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
     this: StateWeak,
+    metrics: prometheus::Registry,
     evt: StateEvtSnd,
     recv_limit: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
     let mut data = StateData {
         this_id: None,
         this,
+        metrics,
         evt,
         signal_map: HashMap::new(),
         conn_map: HashMap::new(),
@@ -512,7 +516,23 @@ pub struct State(Actor<StateCmd>, Arc<tokio::sync::Semaphore>);
 
 impl State {
     /// Construct a new state instance.
-    pub fn new() -> (Self, ManyRcv<StateEvt>) {
+    pub fn new(metrics: prometheus::Registry) -> (Self, ManyRcv<StateEvt>) {
+        /*
+        let reg = prometheus::Registry::new_custom(
+            Some("con_1".to_string()),
+            None,
+        ).unwrap();
+        let bytes_xfer = prometheus::IntCounter::new("bytes_xfer", "bytes transferred in and out of this connection").unwrap();
+        reg.register(Box::new(bytes_xfer.clone())).unwrap();
+        bytes_xfer.inc_by(1024);
+        let data = reg.gather();
+        let enc = prometheus::TextEncoder::new();
+        let mut buf = Vec::new();
+        use prometheus::Encoder;
+        enc.encode(&data, &mut buf).unwrap();
+        println!("{}", String::from_utf8_lossy(&buf));
+        */
+
         let send_limit =
             Arc::new(tokio::sync::Semaphore::new(SEND_LIMIT as usize));
         let recv_limit =
@@ -525,6 +545,7 @@ impl State {
                 state_task(
                     rcv,
                     StateWeak(this, send_limit),
+                    metrics,
                     StateEvtSnd(state_snd),
                     recv_limit,
                 )

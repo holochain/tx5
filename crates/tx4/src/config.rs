@@ -7,6 +7,9 @@ use tx4_core::{BoxFut, Tx4Url};
 
 /// Tx4 config trait.
 pub trait Config: 'static + Send + Sync {
+    /// Request the prometheus registry used by this config.
+    fn metrics(&self) -> &prometheus::Registry;
+
     /// Request the lair client associated with this config.
     fn lair_client(&self) -> &LairClient;
 
@@ -36,6 +39,7 @@ pub trait IntoConfig: 'static + Send + Sync {
 /// The default config type.
 pub struct DefConfigBuilt {
     this: Weak<Self>,
+    metrics: prometheus::Registry,
     _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     lair_tag: Arc<str>,
@@ -66,6 +70,10 @@ impl IntoConfig for DefConfigBuilt {
 }
 
 impl Config for DefConfigBuilt {
+    fn metrics(&self) -> &prometheus::Registry {
+        &self.metrics
+    }
+
     fn lair_client(&self) -> &LairClient {
         &self.lair_client
     }
@@ -95,6 +103,7 @@ impl Config for DefConfigBuilt {
 #[derive(Default)]
 #[allow(clippy::type_complexity)]
 pub struct DefConfig {
+    metrics: Option<prometheus::Registry>,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
     on_new_sig_cb: Option<
@@ -120,6 +129,9 @@ impl IntoConfig for DefConfig {
 
     fn into_config(self) -> BoxFut<'static, Result<Arc<Self::Config>>> {
         Box::pin(async move {
+            let metrics = self
+                .metrics
+                .unwrap_or_else(|| prometheus::default_registry().clone());
             let mut lair_keystore = None;
 
             let lair_tag = self.lair_tag.unwrap_or_else(|| {
@@ -180,6 +192,7 @@ impl IntoConfig for DefConfig {
 
             Ok(Arc::new_cyclic(|this| DefConfigBuilt {
                 this: this.clone(),
+                metrics,
                 _lair_keystore: lair_keystore,
                 lair_client,
                 lair_tag,
@@ -191,6 +204,17 @@ impl IntoConfig for DefConfig {
 }
 
 impl DefConfig {
+    /// Set the prometheus metrics registry to use.
+    pub fn set_metrics(&mut self, metrics: prometheus::Registry) {
+        self.metrics = Some(metrics);
+    }
+
+    /// See `set_metrics()`, this is the builder version.
+    pub fn with_metrics(mut self, metrics: prometheus::Registry) -> Self {
+        self.set_metrics(metrics);
+        self
+    }
+
     /// Set the lair client.
     pub fn set_lair_client(&mut self, lair_client: LairClient) {
         self.lair_client = Some(lair_client);

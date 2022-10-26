@@ -39,7 +39,8 @@ impl Ep {
         let (ep_snd, ep_rcv) = tokio::sync::mpsc::unbounded_channel();
 
         let config = Arc::new(into_config.into_config().await?);
-        let (state, mut state_evt) = state::State::new();
+        let (state, mut state_evt) =
+            state::State::new(config.metrics().clone());
         tokio::task::spawn(async move {
             while let Some(evt) = state_evt.recv().await {
                 match evt {

@@ -23,6 +23,7 @@ backend-webrtc-rs = [ "webrtc" ]
 futures = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
+prometheus = { workspace = true }
 rand = { workspace = true }
 rand-utf8 = { workspace = true }
 tokio = { workspace = true, features = [ "rt", "sync" ] }

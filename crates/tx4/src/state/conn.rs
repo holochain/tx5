@@ -207,6 +207,8 @@ impl ConnStateEvtSnd {
 
 struct ConnStateData {
     this: ConnStateWeak,
+    metrics: prometheus::Registry,
+    metric_bytes_xfer: prometheus::IntCounter,
     state: StateWeak,
     cli_url: Tx4Url,
     rem_id: Id,
@@ -225,6 +227,9 @@ impl Drop for ConnStateData {
 
 impl ConnStateData {
     fn shutdown(&mut self, err: std::io::Error) {
+        let _ = self
+            .metrics
+            .unregister(Box::new(self.metric_bytes_xfer.clone()));
         if let Some(state) = self.state.upgrade() {
             state.close_conn(self.rem_id, self.this.clone(), err.err_clone());
         }
@@ -430,6 +435,7 @@ enum ConnCmd {
 
 #[allow(clippy::too_many_arguments)]
 async fn conn_state_task(
+    metrics: prometheus::Registry,
     strong: ConnState,
     conn_rcv: ManyRcv<ConnStateEvt>,
     mut rcv: ManyRcv<ConnCmd>,
@@ -441,8 +447,23 @@ async fn conn_state_task(
     sig_state: SigStateWeak,
     sig_ready: tokio::sync::oneshot::Receiver<Result<Tx4Url>>,
 ) -> Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static UNIQ: AtomicU64 = AtomicU64::new(1);
+    let uniq = UNIQ.fetch_add(1, Ordering::Relaxed);
+
+    let metric_bytes_xfer = prometheus::IntCounter::new(
+        format!("con_{}_bytes_xfer", uniq),
+        "bytes transferred in and out of this connection",
+    )
+    .map_err(Error::err)?;
+    metrics
+        .register(Box::new(metric_bytes_xfer.clone()))
+        .map_err(Error::err)?;
+
     let mut data = ConnStateData {
         this,
+        metrics,
+        metric_bytes_xfer,
         state,
         cli_url,
         rem_id,
@@ -600,6 +621,7 @@ impl ConnState {
     // -- //
 
     pub(crate) fn new_and_publish(
+        metrics: prometheus::Registry,
         state: StateWeak,
         sig_state: SigStateWeak,
         cli_url: Tx4Url,
@@ -622,6 +644,7 @@ impl ConnState {
                 let strong =
                     ConnState(this.upgrade().unwrap(), recv_limit.clone());
                 conn_state_task(
+                    metrics,
                     strong,
                     ManyRcv(conn_rcv),
                     rcv,

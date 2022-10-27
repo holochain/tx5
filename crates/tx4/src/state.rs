@@ -16,11 +16,70 @@ pub use sig::*;
 mod conn;
 pub use conn::*;
 
+mod drop_consider;
+
 #[cfg(test)]
 mod test;
 
 const SEND_LIMIT: u32 = 16 * 1024 * 1024;
 const RECV_LIMIT: u32 = 16 * 1024 * 1024;
+
+pub(crate) fn uniq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static UNIQ: AtomicU64 = AtomicU64::new(1);
+    UNIQ.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MetricTimestamp(
+    Arc<parking_lot::Mutex<std::time::Instant>>,
+    prometheus::IntGauge,
+);
+
+impl MetricTimestamp {
+    pub fn new<S1: Into<String>, S2: Into<String>>(
+        name: S1,
+        help: S2,
+    ) -> Result<Self> {
+        let now = Arc::new(parking_lot::Mutex::new(std::time::Instant::now()));
+        let metric =
+            prometheus::IntGauge::new(name, help).map_err(Error::err)?;
+        Ok(Self(now, metric))
+    }
+
+    pub fn reset(&self) {
+        let now = std::time::Instant::now();
+        *self.0.lock() = now;
+        self.1.set(0);
+    }
+
+    pub fn elapsed(&self) -> std::time::Duration {
+        self.0.lock().elapsed()
+    }
+
+    fn priv_update(&self) {
+        let elapsed = self.elapsed().as_micros();
+        self.1.set(elapsed as i64);
+    }
+}
+
+impl prometheus::core::Collector for MetricTimestamp {
+    fn desc(&self) -> Vec<&prometheus::core::Desc> {
+        self.1.desc()
+    }
+
+    fn collect(&self) -> Vec<prometheus::proto::MetricFamily> {
+        self.priv_update();
+        self.1.collect()
+    }
+}
+
+impl prometheus::core::Metric for MetricTimestamp {
+    fn metric(&self) -> prometheus::proto::Metric {
+        self.priv_update();
+        self.1.metric()
+    }
+}
 
 /// Respond type.
 #[must_use]
@@ -35,7 +94,6 @@ impl<T: 'static + Send> Drop for OneSnd<T> {
 }
 
 impl<T: 'static + Send> OneSnd<T> {
-    #[allow(dead_code)]
     pub(crate) fn new<Cb>(cb: Cb) -> Self
     where
         Cb: FnOnce(Result<T>) + 'static + Send,
@@ -108,7 +166,9 @@ pub(crate) struct SendData {
 struct StateData {
     this_id: Option<Id>,
     this: StateWeak,
+    state_prefix: Arc<str>,
     metrics: prometheus::Registry,
+    metric_conn_count: prometheus::IntGauge,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx4Url, SigStateWeak>,
     conn_map: HashMap<Id, ConnStateWeak>,
@@ -124,6 +184,9 @@ impl Drop for StateData {
 
 impl StateData {
     fn shutdown(&mut self, err: std::io::Error) {
+        let _ = self
+            .metrics
+            .unregister(Box::new(self.metric_conn_count.clone()));
         for (_, sig) in self.signal_map.drain() {
             if let Some(sig) = sig.upgrade() {
                 sig.close(err.err_clone());
@@ -139,7 +202,7 @@ impl StateData {
 
     async fn exec(&mut self, cmd: StateCmd) -> Result<()> {
         match cmd {
-            StateCmd::Tick => self.tick().await,
+            StateCmd::Tick1s => self.tick_1s().await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
                 self.assert_listener_sig(sig_url, resp).await
             }
@@ -174,7 +237,7 @@ impl StateData {
         }
     }
 
-    async fn tick(&mut self) -> Result<()> {
+    async fn tick_1s(&mut self) -> Result<()> {
         self.send_map.retain(|_, list| {
             list.retain_mut(|info| {
                 if info.timestamp.elapsed() < std::time::Duration::from_secs(20)
@@ -189,13 +252,60 @@ impl StateData {
             });
             !list.is_empty()
         });
-        if self.conn_map.len() > 20 {
-            for (_, conn) in self.conn_map.iter() {
-                if let Some(conn) = conn.upgrade() {
-                    conn.check_short_inactive();
-                }
-            }
+
+        let tot_conn_cnt = self.metric_conn_count.get();
+
+        let mut tot_snd_bytes = 0;
+        let mut tot_rcv_bytes = 0;
+        let mut tot_age = 0.0;
+        let mut age_cnt = 0.0;
+
+        for (_, conn) in self.conn_map.iter() {
+            let meta = conn.meta();
+            tot_snd_bytes += meta.metric_bytes_snd.get();
+            tot_rcv_bytes += meta.metric_bytes_rcv.get();
+            tot_age += meta.metric_age.elapsed().as_secs_f64();
+            age_cnt += 1.0;
         }
+
+        let tot_avg_age_s = if age_cnt > 0.0 {
+            tot_age / age_cnt
+        } else {
+            0.0
+        };
+
+        self.conn_map.retain(|_, conn| {
+            let meta = conn.meta();
+
+            let args = drop_consider::DropConsiderArgs {
+                tot_conn_cnt,
+                tot_snd_bytes,
+                tot_rcv_bytes,
+                tot_avg_age_s,
+                this_connected: meta
+                    .connected
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                this_snd_bytes: meta.metric_bytes_snd.get(),
+                this_rcv_bytes: meta.metric_bytes_rcv.get(),
+                this_age_s: meta.metric_age.elapsed().as_secs_f64(),
+                this_last_active_s: meta
+                    .metric_last_active
+                    .elapsed()
+                    .as_secs_f64(),
+            };
+
+            if let drop_consider::DropConsiderResult::MustDrop =
+                drop_consider::drop_consider(&args)
+            {
+                if let Some(conn) = conn.upgrade() {
+                    conn.close(Error::id("DropContention"));
+                }
+                return false;
+            }
+
+            true
+        });
+
         Ok(())
     }
 
@@ -240,7 +350,9 @@ impl StateData {
 
         let cli_url = sig_url.to_client(rem_id);
         let conn = ConnState::new_and_publish(
+            self.state_prefix.clone(),
             self.metrics.clone(),
+            self.metric_conn_count.clone(),
             self.this.clone(),
             sig,
             cli_url,
@@ -248,15 +360,8 @@ impl StateData {
             self.recv_limit.clone(),
             r,
             maybe_offer,
-        );
+        )?;
         self.conn_map.insert(rem_id, conn);
-        /*
-        if let Some(offer) = maybe_offer {
-            conn.in_offer(offer);
-        }
-        let seed = ConnStateSeed::new(conn, conn_evt);
-        let _ = self.evt.publish(StateEvt::NewConn(seed));
-        */
 
         Ok(())
     }
@@ -428,7 +533,7 @@ impl StateData {
 }
 
 enum StateCmd {
-    Tick,
+    Tick1s,
     AssertListenerSig {
         sig_url: Tx4Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
@@ -474,10 +579,24 @@ async fn state_task(
     evt: StateEvtSnd,
     recv_limit: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
+    let uniq = uniq();
+    let state_prefix = format!("tx4_ep_{}", uniq).into_boxed_str().into();
+
+    let metric_conn_count = prometheus::IntGauge::new(
+        format!("{}_conn_count", state_prefix),
+        "active connection count",
+    )
+    .map_err(Error::err)?;
+    metrics
+        .register(Box::new(metric_conn_count.clone()))
+        .map_err(Error::err)?;
+
     let mut data = StateData {
         this_id: None,
         this,
+        state_prefix,
         metrics,
+        metric_conn_count,
         evt,
         signal_map: HashMap::new(),
         conn_map: HashMap::new(),
@@ -517,22 +636,6 @@ pub struct State(Actor<StateCmd>, Arc<tokio::sync::Semaphore>);
 impl State {
     /// Construct a new state instance.
     pub fn new(metrics: prometheus::Registry) -> (Self, ManyRcv<StateEvt>) {
-        /*
-        let reg = prometheus::Registry::new_custom(
-            Some("con_1".to_string()),
-            None,
-        ).unwrap();
-        let bytes_xfer = prometheus::IntCounter::new("bytes_xfer", "bytes transferred in and out of this connection").unwrap();
-        reg.register(Box::new(bytes_xfer.clone())).unwrap();
-        bytes_xfer.inc_by(1024);
-        let data = reg.gather();
-        let enc = prometheus::TextEncoder::new();
-        let mut buf = Vec::new();
-        use prometheus::Encoder;
-        enc.encode(&data, &mut buf).unwrap();
-        println!("{}", String::from_utf8_lossy(&buf));
-        */
-
         let send_limit =
             Arc::new(tokio::sync::Semaphore::new(SEND_LIMIT as usize));
         let recv_limit =
@@ -559,7 +662,7 @@ impl State {
                 match weak.upgrade() {
                     None => break,
                     Some(actor) => {
-                        if actor.tick().is_err() {
+                        if actor.tick_1s().is_err() {
                             break;
                         }
                     }
@@ -648,8 +751,8 @@ impl State {
 
     // -- //
 
-    fn tick(&self) -> Result<()> {
-        self.0.send(Ok(StateCmd::Tick))
+    fn tick_1s(&self) -> Result<()> {
+        self.0.send(Ok(StateCmd::Tick1s))
     }
 
     pub(crate) fn publish(&self, evt: StateEvt) {

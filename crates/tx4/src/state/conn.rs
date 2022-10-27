@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic;
 
 /// Temporary indicating we want a new conn instance.
 pub struct ConnStateSeed {
@@ -208,15 +209,14 @@ impl ConnStateEvtSnd {
 struct ConnStateData {
     this: ConnStateWeak,
     metrics: prometheus::Registry,
-    metric_bytes_xfer: prometheus::IntCounter,
+    metric_conn_count: prometheus::IntGauge,
+    meta: ConnStateMeta,
     state: StateWeak,
     cli_url: Tx4Url,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
     rcv_offer: bool,
-    connected: bool,
-    last_active: std::time::Instant,
 }
 
 impl Drop for ConnStateData {
@@ -226,10 +226,24 @@ impl Drop for ConnStateData {
 }
 
 impl ConnStateData {
+    fn connected(&self) -> bool {
+        self.meta.connected.load(atomic::Ordering::SeqCst)
+    }
+
     fn shutdown(&mut self, err: std::io::Error) {
+        self.metric_conn_count.dec();
         let _ = self
             .metrics
-            .unregister(Box::new(self.metric_bytes_xfer.clone()));
+            .unregister(Box::new(self.meta.metric_bytes_snd.clone()));
+        let _ = self
+            .metrics
+            .unregister(Box::new(self.meta.metric_bytes_rcv.clone()));
+        let _ = self
+            .metrics
+            .unregister(Box::new(self.meta.metric_age.clone()));
+        let _ = self
+            .metrics
+            .unregister(Box::new(self.meta.metric_last_active.clone()));
         if let Some(state) = self.state.upgrade() {
             state.close_conn(self.rem_id, self.this.clone(), err.err_clone());
         }
@@ -248,12 +262,11 @@ impl ConnStateData {
 
     async fn exec(&mut self, cmd: ConnCmd) -> Result<()> {
         match cmd {
-            ConnCmd::Tick => self.tick().await,
+            ConnCmd::Tick1s => self.tick_1s().await,
             ConnCmd::NotifyConstructed => self.notify_constructed().await,
             ConnCmd::CheckConnectedTimeout => {
                 self.check_connected_timeout().await
             }
-            ConnCmd::CheckShortInactive => self.check_short_inactive().await,
             ConnCmd::Ice { data } => self.ice(data).await,
             ConnCmd::SelfOffer { offer } => self.self_offer(offer).await,
             ConnCmd::ReqSelfAnswer => self.req_self_answer().await,
@@ -268,8 +281,11 @@ impl ConnStateData {
         }
     }
 
-    async fn tick(&mut self) -> Result<()> {
-        if self.last_active.elapsed() > std::time::Duration::from_secs(20) {
+    async fn tick_1s(&mut self) -> Result<()> {
+        if self.meta.metric_last_active.elapsed()
+            > std::time::Duration::from_secs(20)
+            && !self.connected()
+        {
             self.shutdown(Error::id("InactivityTimeout"));
         }
 
@@ -287,19 +303,11 @@ impl ConnStateData {
     }
 
     async fn check_connected_timeout(&mut self) -> Result<()> {
-        if !self.connected {
+        if !self.connected() {
             Err(Error::id("Timeout"))
         } else {
             Ok(())
         }
-    }
-
-    async fn check_short_inactive(&mut self) -> Result<()> {
-        if self.last_active.elapsed() > std::time::Duration::from_secs(5) {
-            self.shutdown(Error::id("InactivityTimeout"));
-        }
-
-        Ok(())
     }
 
     async fn ice(&mut self, data: Buf) -> Result<()> {
@@ -344,12 +352,12 @@ impl ConnStateData {
     }
 
     async fn ready(&mut self) -> Result<()> {
-        self.connected = true;
+        self.meta.connected.store(true, atomic::Ordering::SeqCst);
         self.maybe_fetch_for_send().await
     }
 
     async fn maybe_fetch_for_send(&mut self) -> Result<()> {
-        if !self.connected {
+        if !self.connected() {
             return Ok(());
         }
 
@@ -364,14 +372,16 @@ impl ConnStateData {
     }
 
     async fn send(&mut self, to_send: SendData) -> Result<()> {
-        self.last_active = std::time::Instant::now();
+        self.meta.metric_last_active.reset();
 
         let SendData {
-            data,
+            mut data,
             resp,
             send_permit,
             ..
         } = to_send;
+
+        self.meta.metric_bytes_snd.inc_by(data.len()? as u64);
 
         self.conn_evt
             .snd_data(self.this.clone(), data, resp, send_permit);
@@ -381,10 +391,12 @@ impl ConnStateData {
 
     async fn recv(
         &mut self,
-        data: Buf,
+        mut data: Buf,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<()> {
-        self.last_active = std::time::Instant::now();
+        self.meta.metric_last_active.reset();
+
+        self.meta.metric_bytes_rcv.inc_by(data.len()? as u64);
 
         if let Some(state) = self.state.upgrade() {
             state.publish(StateEvt::RcvData(
@@ -399,10 +411,9 @@ impl ConnStateData {
 }
 
 enum ConnCmd {
-    Tick,
+    Tick1s,
     NotifyConstructed,
     CheckConnectedTimeout,
-    CheckShortInactive,
     Ice {
         data: Buf,
     },
@@ -436,6 +447,8 @@ enum ConnCmd {
 #[allow(clippy::too_many_arguments)]
 async fn conn_state_task(
     metrics: prometheus::Registry,
+    metric_conn_count: prometheus::IntGauge,
+    meta: ConnStateMeta,
     strong: ConnState,
     conn_rcv: ManyRcv<ConnStateEvt>,
     mut rcv: ManyRcv<ConnCmd>,
@@ -447,32 +460,21 @@ async fn conn_state_task(
     sig_state: SigStateWeak,
     sig_ready: tokio::sync::oneshot::Receiver<Result<Tx4Url>>,
 ) -> Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static UNIQ: AtomicU64 = AtomicU64::new(1);
-    let uniq = UNIQ.fetch_add(1, Ordering::Relaxed);
-
-    let metric_bytes_xfer = prometheus::IntCounter::new(
-        format!("con_{}_bytes_xfer", uniq),
-        "bytes transferred in and out of this connection",
-    )
-    .map_err(Error::err)?;
-    metrics
-        .register(Box::new(metric_bytes_xfer.clone()))
-        .map_err(Error::err)?;
+    metric_conn_count.inc();
 
     let mut data = ConnStateData {
         this,
         metrics,
-        metric_bytes_xfer,
+        metric_conn_count,
+        meta,
         state,
         cli_url,
         rem_id,
         conn_evt,
         sig_state,
         rcv_offer: false,
-        connected: false,
-        last_active: std::time::Instant::now(),
     };
+
     let err = match async {
         sig_ready.await.map_err(|_| Error::id("SigClosed"))??;
 
@@ -498,13 +500,25 @@ async fn conn_state_task(
         Err(err) => err,
         Ok(_) => Error::id("Dropped"),
     };
+
     data.shutdown(err.err_clone());
+
     Err(err)
+}
+
+#[derive(Clone)]
+pub(crate) struct ConnStateMeta {
+    pub(crate) connected: Arc<atomic::AtomicBool>,
+    pub(crate) rcv_limit: Arc<tokio::sync::Semaphore>,
+    pub(crate) metric_bytes_snd: prometheus::IntCounter,
+    pub(crate) metric_bytes_rcv: prometheus::IntCounter,
+    pub(crate) metric_age: MetricTimestamp,
+    pub(crate) metric_last_active: MetricTimestamp,
 }
 
 /// Weak version on ConnState.
 #[derive(Clone)]
-pub struct ConnStateWeak(ActorWeak<ConnCmd>, Arc<tokio::sync::Semaphore>);
+pub struct ConnStateWeak(ActorWeak<ConnCmd>, ConnStateMeta);
 
 impl PartialEq for ConnStateWeak {
     fn eq(&self, rhs: &ConnStateWeak) -> bool {
@@ -521,6 +535,11 @@ impl PartialEq<ConnState> for ConnStateWeak {
 impl Eq for ConnStateWeak {}
 
 impl ConnStateWeak {
+    /// Access the meta struct
+    pub(crate) fn meta(&self) -> &ConnStateMeta {
+        &self.1
+    }
+
     /// Upgrade to a full ConnState instance.
     pub fn upgrade(&self) -> Option<ConnState> {
         self.0.upgrade().map(|i| ConnState(i, self.1.clone()))
@@ -529,7 +548,7 @@ impl ConnStateWeak {
 
 /// A handle for notifying the state system of connection events.
 #[derive(Clone)]
-pub struct ConnState(Actor<ConnCmd>, Arc<tokio::sync::Semaphore>);
+pub struct ConnState(Actor<ConnCmd>, ConnStateMeta);
 
 impl PartialEq for ConnState {
     fn eq(&self, rhs: &ConnState) -> bool {
@@ -546,6 +565,13 @@ impl PartialEq<ConnStateWeak> for ConnState {
 impl Eq for ConnState {}
 
 impl ConnState {
+    /*
+    /// Access the meta struct
+    pub(crate) fn meta(&self) -> &ConnStateMeta {
+        &self.1
+    }
+    */
+
     /// Get a weak version of this ConnState instance.
     pub fn weak(&self) -> ConnStateWeak {
         ConnStateWeak(self.0.weak(), self.1.clone())
@@ -587,7 +613,9 @@ impl ConnState {
         let mut data = data;
         let len = data.len()?;
         if len > RECV_LIMIT as usize {
-            return Err(Error::id("DataTooLarge"));
+            let err = Error::id("DataTooLarge");
+            self.close(err.err_clone());
+            return Err(err);
         }
 
         // polling try_acquire doesn't fairly reserve a place in line,
@@ -598,6 +626,7 @@ impl ConnState {
             async move {
                 let permit = self
                     .1
+                    .rcv_limit
                     .clone()
                     .acquire_many_owned(len as u32)
                     .await
@@ -620,20 +649,70 @@ impl ConnState {
 
     // -- //
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_and_publish(
+        state_prefix: Arc<str>,
         metrics: prometheus::Registry,
+        metric_conn_count: prometheus::IntGauge,
         state: StateWeak,
         sig_state: SigStateWeak,
         cli_url: Tx4Url,
         rem_id: Id,
-        recv_limit: Arc<tokio::sync::Semaphore>,
+        rcv_limit: Arc<tokio::sync::Semaphore>,
         sig_ready: tokio::sync::oneshot::Receiver<Result<Tx4Url>>,
         maybe_offer: Option<Buf>,
-    ) -> ConnStateWeak {
+    ) -> Result<ConnStateWeak> {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
 
+        let uniq = uniq();
+
+        let metric_bytes_snd = prometheus::IntCounter::new(
+            format!("{}_conn_{}_bytes_snd", state_prefix, uniq),
+            "bytes sent out of this connection",
+        )
+        .map_err(Error::err)?;
+        metrics
+            .register(Box::new(metric_bytes_snd.clone()))
+            .map_err(Error::err)?;
+
+        let metric_bytes_rcv = prometheus::IntCounter::new(
+            format!("{}_conn_{}_bytes_rcv", state_prefix, uniq),
+            "incoming bytes received by this connection",
+        )
+        .map_err(Error::err)?;
+        metrics
+            .register(Box::new(metric_bytes_rcv.clone()))
+            .map_err(Error::err)?;
+
+        let metric_age = MetricTimestamp::new(
+            format!("{}_conn_{}_age", state_prefix, uniq),
+            "microseconds since this connection was created",
+        )
+        .map_err(Error::err)?;
+        metrics
+            .register(Box::new(metric_age.clone()))
+            .map_err(Error::err)?;
+
+        let metric_last_active = MetricTimestamp::new(
+            format!("{}_conn_{}_last_active", state_prefix, uniq),
+            "microseconds since we last sent or received data on this connection",
+        )
+        .map_err(Error::err)?;
+        metrics
+            .register(Box::new(metric_last_active.clone()))
+            .map_err(Error::err)?;
+
+        let meta = ConnStateMeta {
+            connected: Arc::new(atomic::AtomicBool::new(false)),
+            rcv_limit,
+            metric_bytes_snd,
+            metric_bytes_rcv,
+            metric_age,
+            metric_last_active,
+        };
+
         let actor = {
-            let recv_limit = recv_limit.clone();
+            let meta = meta.clone();
             Actor::new(move |this, rcv| {
                 // woo, this is wonkey...
                 // we actually publish the "strong" version of this
@@ -641,14 +720,15 @@ impl ConnState {
                 // so upgrade here while the outer strong still exists,
                 // then the outer strong will be downgraded to return
                 // from new_and_publish...
-                let strong =
-                    ConnState(this.upgrade().unwrap(), recv_limit.clone());
+                let strong = ConnState(this.upgrade().unwrap(), meta.clone());
                 conn_state_task(
                     metrics,
+                    metric_conn_count,
+                    meta.clone(),
                     strong,
                     ManyRcv(conn_rcv),
                     rcv,
-                    ConnStateWeak(this, recv_limit),
+                    ConnStateWeak(this, meta),
                     state,
                     cli_url,
                     rem_id,
@@ -659,7 +739,7 @@ impl ConnState {
             })
         };
 
-        let actor = ConnState(actor, recv_limit);
+        let actor = ConnState(actor, meta);
 
         if let Some(offer) = maybe_offer {
             actor.in_offer(offer);
@@ -680,7 +760,7 @@ impl ConnState {
                 match weak.upgrade() {
                     None => break,
                     Some(actor) => {
-                        if actor.tick().is_err() {
+                        if actor.tick_1s().is_err() {
                             break;
                         }
                     }
@@ -688,19 +768,15 @@ impl ConnState {
             }
         });
 
-        actor.weak()
+        Ok(actor.weak())
     }
 
-    fn tick(&self) -> Result<()> {
-        self.0.send(Ok(ConnCmd::Tick))
+    fn tick_1s(&self) -> Result<()> {
+        self.0.send(Ok(ConnCmd::Tick1s))
     }
 
     async fn check_connected_timeout(&self) {
         let _ = self.0.send(Ok(ConnCmd::CheckConnectedTimeout));
-    }
-
-    pub(crate) fn check_short_inactive(&self) {
-        let _ = self.0.send(Ok(ConnCmd::CheckShortInactive));
     }
 
     fn notify_constructed(&self) -> Result<()> {

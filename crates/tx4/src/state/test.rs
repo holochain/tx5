@@ -1,9 +1,7 @@
 use super::*;
 
-#[allow(dead_code)]
 struct Test {
     shutdown: bool,
-    sig: Tx4Url,
     cli_a: Tx4Url,
     id_a: Id,
     cli_b: Tx4Url,
@@ -78,7 +76,6 @@ impl Test {
 
         Self {
             shutdown: false,
-            sig,
             cli_a,
             id_a,
             cli_b,
@@ -91,6 +88,13 @@ impl Test {
     }
 
     pub async fn shutdown(mut self) {
+        let enc = prometheus::TextEncoder::new();
+        let mut buf = Vec::new();
+        use prometheus::Encoder;
+        enc.encode(&prometheus::default_registry().gather(), &mut buf)
+            .unwrap();
+        println!("{}", String::from_utf8_lossy(&buf));
+
         self.state.close(Error::id("TestShutdown"));
 
         assert!(matches!(

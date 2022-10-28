@@ -9,6 +9,8 @@ pub(crate) enum DropConsiderResult {
 
 #[derive(Debug)]
 pub(crate) struct DropConsiderArgs {
+    pub(crate) cfg_conn_max_cnt: i64,
+    pub(crate) cfg_conn_max_init: f64,
     pub(crate) tot_conn_cnt: i64,
     pub(crate) tot_snd_bytes: u64,
     pub(crate) tot_rcv_bytes: u64,
@@ -24,7 +26,7 @@ pub(crate) struct DropConsiderArgs {
 pub(crate) fn drop_consider(args: &DropConsiderArgs) -> DropConsiderResult {
     // sneak in a force keep new connections open long enough
     // to try to connect.
-    if args.this_age_s < 20.0 {
+    if args.this_age_s < args.cfg_conn_max_init {
         return DropConsiderResult::ShouldKeep;
     }
 
@@ -52,14 +54,14 @@ fn consider_max(args: &DropConsiderArgs) -> DropConsiderResult {
 }
 
 fn consider_long_inactive(args: &DropConsiderArgs) -> DropConsiderResult {
-    if args.this_last_active_s >= 20.0 {
+    if args.this_last_active_s >= args.cfg_conn_max_init {
         return DropConsiderResult::MustDrop;
     }
     DropConsiderResult::ShouldKeep
 }
 
 fn consider_long_unconnected(args: &DropConsiderArgs) -> DropConsiderResult {
-    if !args.this_connected && args.this_age_s >= 20.0 {
+    if !args.this_connected && args.this_age_s >= args.cfg_conn_max_init {
         return DropConsiderResult::MustDrop;
     }
     DropConsiderResult::ShouldKeep
@@ -69,8 +71,8 @@ fn consider_connected_contention(
     args: &DropConsiderArgs,
 ) -> DropConsiderResult {
     if args.this_connected
-        && args.tot_conn_cnt >= 20
-        && args.this_last_active_s >= 8.0
+        && args.tot_conn_cnt >= args.cfg_conn_max_cnt
+        && args.this_last_active_s >= args.cfg_conn_max_init / 2.0
     {
         return DropConsiderResult::MustDrop;
     }
@@ -79,7 +81,7 @@ fn consider_connected_contention(
 
 fn consider_low_throughput(args: &DropConsiderArgs) -> DropConsiderResult {
     // if there is no contention, keep
-    if args.tot_conn_cnt < 20 {
+    if args.tot_conn_cnt < args.cfg_conn_max_cnt {
         return DropConsiderResult::ShouldKeep;
     }
 
@@ -90,12 +92,12 @@ fn consider_low_throughput(args: &DropConsiderArgs) -> DropConsiderResult {
     }
 
     // if the con hasn't existed for at least double the connect time, keep
-    if args.this_age_s < 40.0 {
+    if args.this_age_s < args.cfg_conn_max_init * 2.0 {
         return DropConsiderResult::ShouldKeep;
     }
 
     // if we have received/sent data recently, keep
-    if args.this_last_active_s < 5.0 {
+    if args.this_last_active_s < args.cfg_conn_max_init / 4.0 {
         return DropConsiderResult::ShouldKeep;
     }
 
@@ -117,6 +119,8 @@ fn consider_low_throughput(args: &DropConsiderArgs) -> DropConsiderResult {
 impl Default for DropConsiderArgs {
     fn default() -> Self {
         Self {
+            cfg_conn_max_cnt: 20,
+            cfg_conn_max_init: 20.0,
             tot_conn_cnt: 30,
             tot_snd_bytes: 30720,
             tot_rcv_bytes: 30720,

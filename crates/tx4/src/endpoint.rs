@@ -3,7 +3,7 @@
 use crate::*;
 use tx4_core::Tx4Url;
 
-/// EpEvt
+/// Event type emitted by a tx4 endpoint.
 #[derive(Debug)]
 pub enum EpEvt {
     /// Received data from a remote.
@@ -20,7 +20,7 @@ pub enum EpEvt {
     },
 }
 
-/// Ep
+/// A tx4 endpoint representing an instance that can send and receive.
 pub struct Ep {
     state: state::State,
 }

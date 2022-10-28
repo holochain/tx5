@@ -16,6 +16,9 @@ pub trait Config: 'static + Send + Sync {
     /// Get the max concurrent connection limit.
     fn max_conn_count(&self) -> u32;
 
+    /// Get the max init (connect) time for a connection.
+    fn max_conn_init(&self) -> std::time::Duration;
+
     /// Request the prometheus registry used by this config.
     fn metrics(&self) -> &prometheus::Registry;
 
@@ -60,6 +63,7 @@ struct DefConfigBuilt {
     max_send_bytes: u32,
     max_recv_bytes: u32,
     max_conn_count: u32,
+    max_conn_init: std::time::Duration,
     metrics: prometheus::Registry,
     _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
@@ -86,6 +90,10 @@ impl Config for DefConfigBuilt {
 
     fn max_conn_count(&self) -> u32 {
         self.max_conn_count
+    }
+
+    fn max_conn_init(&self) -> std::time::Duration {
+        self.max_conn_init
     }
 
     fn metrics(&self) -> &prometheus::Registry {
@@ -124,6 +132,7 @@ pub struct DefConfig {
     max_send_bytes: Option<u32>,
     max_recv_bytes: Option<u32>,
     max_conn_count: Option<u32>,
+    max_conn_init: Option<std::time::Duration>,
     metrics: Option<prometheus::Registry>,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
@@ -153,6 +162,9 @@ impl IntoConfig for DefConfig {
             let max_recv_bytes =
                 self.max_recv_bytes.unwrap_or(16 * 1024 * 1024);
             let max_conn_count = self.max_conn_count.unwrap_or(40);
+            let max_conn_init = self
+                .max_conn_init
+                .unwrap_or(std::time::Duration::from_secs(20));
             let metrics = self
                 .metrics
                 .unwrap_or_else(|| prometheus::default_registry().clone());
@@ -219,6 +231,7 @@ impl IntoConfig for DefConfig {
                 max_send_bytes,
                 max_recv_bytes,
                 max_conn_count,
+                max_conn_init,
                 metrics,
                 _lair_keystore: lair_keystore,
                 lair_client,
@@ -266,6 +279,21 @@ impl DefConfig {
     /// See `set_max_conn_count()`, this is the builder version.
     pub fn with_max_conn_count(mut self, max_conn_count: u32) -> Self {
         self.set_max_conn_count(max_conn_count);
+        self
+    }
+
+    /// Set the max connection init (connect) time.
+    /// The default is `20` seconds.
+    pub fn set_max_conn_init(&mut self, max_conn_init: std::time::Duration) {
+        self.max_conn_init = Some(max_conn_init);
+    }
+
+    /// See `set_max_conn_init()`, this is the builder version.
+    pub fn with_max_conn_init(
+        mut self,
+        max_conn_init: std::time::Duration,
+    ) -> Self {
+        self.set_max_conn_init(max_conn_init);
         self
     }
 

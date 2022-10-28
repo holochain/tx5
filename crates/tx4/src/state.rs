@@ -286,6 +286,8 @@ impl StateData {
             let meta = conn.meta();
 
             let args = drop_consider::DropConsiderArgs {
+                cfg_conn_max_cnt: meta.config.max_conn_count() as i64,
+                cfg_conn_max_init: meta.config.max_conn_init().as_secs_f64(),
                 tot_conn_cnt,
                 tot_snd_bytes,
                 tot_rcv_bytes,

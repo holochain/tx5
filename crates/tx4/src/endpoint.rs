@@ -1,7 +1,6 @@
 //! Tx4 endpoint.
 
 use crate::*;
-use std::sync::Arc;
 use tx4_core::Tx4Url;
 
 /// EpEvt
@@ -33,14 +32,13 @@ impl Ep {
     }
 
     /// Construct a new tx4 endpoint with configuration.
-    pub async fn with_config<C: Config, I: IntoConfig<Config = C>>(
+    pub async fn with_config<I: IntoConfig>(
         into_config: I,
     ) -> Result<(Self, actor::ManyRcv<EpEvt>)> {
         let (ep_snd, ep_rcv) = tokio::sync::mpsc::unbounded_channel();
 
-        let config = Arc::new(into_config.into_config().await?);
-        let (state, mut state_evt) =
-            state::State::new(config.metrics().clone());
+        let config = into_config.into_config().await?;
+        let (state, mut state_evt) = state::State::new(config.clone())?;
         tokio::task::spawn(async move {
             while let Some(evt) = state_evt.recv().await {
                 match evt {
@@ -91,7 +89,7 @@ impl Ep {
 }
 
 pub(crate) fn on_new_sig(
-    config: Arc<DefConfigBuilt>,
+    config: DynConfig,
     sig_url: Tx4Url,
     seed: state::SigStateSeed,
 ) {
@@ -99,7 +97,7 @@ pub(crate) fn on_new_sig(
 }
 
 async fn new_sig_task(
-    config: Arc<DefConfigBuilt>,
+    config: DynConfig,
     sig_url: Tx4Url,
     seed: state::SigStateSeed,
 ) {
@@ -202,7 +200,7 @@ async fn new_sig_task(
 
 #[cfg(feature = "backend-go-pion")]
 pub(crate) fn on_new_conn(
-    config: Arc<DefConfigBuilt>,
+    config: DynConfig,
     ice_servers: serde_json::Value,
     seed: state::ConnStateSeed,
 ) {
@@ -211,7 +209,7 @@ pub(crate) fn on_new_conn(
 
 #[cfg(feature = "backend-go-pion")]
 async fn new_conn_task(
-    _config: Arc<DefConfigBuilt>,
+    _config: DynConfig,
     ice_servers: serde_json::Value,
     seed: state::ConnStateSeed,
 ) {

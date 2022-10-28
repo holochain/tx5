@@ -21,8 +21,16 @@ mod drop_consider;
 #[cfg(test)]
 mod test;
 
-const SEND_LIMIT: u32 = 16 * 1024 * 1024;
-const RECV_LIMIT: u32 = 16 * 1024 * 1024;
+/// The max connection open time. Would be nice for this to be a negotiation,
+/// so that it could be configured... but right now we just need both sides
+/// to agree, so it is hard-coded.
+const MAX_CON_TIME: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The connection send grace period. Connections will not send new messages
+/// when within this duration from the MAX_CON_TIME close.
+/// Similar to MAX_CON_TIME, this has to be hard-coded for now.
+const CON_CLOSE_SEND_GRACE: std::time::Duration =
+    std::time::Duration::from_secs(5);
 
 pub(crate) fn uniq() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -168,7 +176,7 @@ struct StateData {
     this: StateWeak,
     state_prefix: Arc<str>,
     metrics: prometheus::Registry,
-    metric_conn_count: prometheus::IntGauge,
+    meta: StateMeta,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx4Url, SigStateWeak>,
     conn_map: HashMap<Id, ConnStateWeak>,
@@ -186,7 +194,7 @@ impl StateData {
     fn shutdown(&mut self, err: std::io::Error) {
         let _ = self
             .metrics
-            .unregister(Box::new(self.metric_conn_count.clone()));
+            .unregister(Box::new(self.meta.metric_conn_count.clone()));
         for (_, sig) in self.signal_map.drain() {
             if let Some(sig) = sig.upgrade() {
                 sig.close(err.err_clone());
@@ -253,7 +261,7 @@ impl StateData {
             !list.is_empty()
         });
 
-        let tot_conn_cnt = self.metric_conn_count.get();
+        let tot_conn_cnt = self.meta.metric_conn_count.get();
 
         let mut tot_snd_bytes = 0;
         let mut tot_rcv_bytes = 0;
@@ -350,9 +358,11 @@ impl StateData {
 
         let cli_url = sig_url.to_client(rem_id);
         let conn = ConnState::new_and_publish(
+            self.meta.config.clone(),
+            self.meta.conn_limit.clone(),
             self.state_prefix.clone(),
             self.metrics.clone(),
-            self.metric_conn_count.clone(),
+            self.meta.metric_conn_count.clone(),
             self.this.clone(),
             sig,
             cli_url,
@@ -575,28 +585,18 @@ enum StateCmd {
 async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
     this: StateWeak,
+    state_prefix: Arc<str>,
     metrics: prometheus::Registry,
+    meta: StateMeta,
     evt: StateEvtSnd,
     recv_limit: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
-    let uniq = uniq();
-    let state_prefix = format!("tx4_ep_{}", uniq).into_boxed_str().into();
-
-    let metric_conn_count = prometheus::IntGauge::new(
-        format!("{}_conn_count", state_prefix),
-        "active connection count",
-    )
-    .map_err(Error::err)?;
-    metrics
-        .register(Box::new(metric_conn_count.clone()))
-        .map_err(Error::err)?;
-
     let mut data = StateData {
         this_id: None,
         this,
         state_prefix,
         metrics,
-        metric_conn_count,
+        meta,
         evt,
         signal_map: HashMap::new(),
         conn_map: HashMap::new(),
@@ -618,9 +618,17 @@ async fn state_task(
     Err(err)
 }
 
+#[derive(Clone)]
+pub(crate) struct StateMeta {
+    pub(crate) config: DynConfig,
+    pub(crate) conn_limit: Arc<tokio::sync::Semaphore>,
+    pub(crate) snd_limit: Arc<tokio::sync::Semaphore>,
+    pub(crate) metric_conn_count: prometheus::IntGauge,
+}
+
 /// Weak version of State.
 #[derive(Clone)]
-pub struct StateWeak(ActorWeak<StateCmd>, Arc<tokio::sync::Semaphore>);
+pub struct StateWeak(ActorWeak<StateCmd>, StateMeta);
 
 impl StateWeak {
     /// Upgrade to a full State instance.
@@ -631,31 +639,60 @@ impl StateWeak {
 
 /// Handle to a state tracking instance.
 #[derive(Clone)]
-pub struct State(Actor<StateCmd>, Arc<tokio::sync::Semaphore>);
+pub struct State(Actor<StateCmd>, StateMeta);
 
 impl State {
     /// Construct a new state instance.
-    pub fn new(metrics: prometheus::Registry) -> (Self, ManyRcv<StateEvt>) {
-        let send_limit =
-            Arc::new(tokio::sync::Semaphore::new(SEND_LIMIT as usize));
-        let recv_limit =
-            Arc::new(tokio::sync::Semaphore::new(RECV_LIMIT as usize));
+    pub fn new(config: DynConfig) -> Result<(Self, ManyRcv<StateEvt>)> {
+        let metrics = config.metrics().clone();
+
+        let conn_limit = Arc::new(tokio::sync::Semaphore::new(
+            config.max_conn_count() as usize,
+        ));
+
+        let snd_limit = Arc::new(tokio::sync::Semaphore::new(
+            config.max_send_bytes() as usize,
+        ));
+        let rcv_limit = Arc::new(tokio::sync::Semaphore::new(
+            config.max_recv_bytes() as usize,
+        ));
+
+        let uniq = uniq();
+        let state_prefix = format!("tx4_ep_{}", uniq).into_boxed_str().into();
+
+        let metric_conn_count = prometheus::IntGauge::new(
+            format!("{}_conn_count", state_prefix),
+            "active connection count",
+        )
+        .map_err(Error::err)?;
+        metrics
+            .register(Box::new(metric_conn_count.clone()))
+            .map_err(Error::err)?;
+
+        let meta = StateMeta {
+            config,
+            conn_limit,
+            snd_limit,
+            metric_conn_count,
+        };
 
         let (state_snd, state_rcv) = tokio::sync::mpsc::unbounded_channel();
         let actor = {
-            let send_limit = send_limit.clone();
+            let meta = meta.clone();
             Actor::new(move |this, rcv| {
                 state_task(
                     rcv,
-                    StateWeak(this, send_limit),
+                    StateWeak(this, meta.clone()),
+                    state_prefix,
                     metrics,
+                    meta,
                     StateEvtSnd(state_snd),
-                    recv_limit,
+                    rcv_limit,
                 )
             })
         };
 
-        let weak = StateWeak(actor.weak(), send_limit.clone());
+        let weak = StateWeak(actor.weak(), meta.clone());
         tokio::task::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -670,7 +707,7 @@ impl State {
             }
         });
 
-        (Self(actor, send_limit), ManyRcv(state_rcv))
+        Ok((Self(actor, meta), ManyRcv(state_rcv)))
     }
 
     /// Get a weak version of this State instance.
@@ -715,9 +752,10 @@ impl State {
         cli_url: Tx4Url,
         data: Buf,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
+        let max_send_bytes = self.1.config.max_send_bytes();
         let this = self.clone();
         let mut data = data;
-        let send_limit = self.1.clone();
+        let meta = self.1.clone();
         async move {
             if !cli_url.is_client() {
                 return Err(Error::err(
@@ -726,10 +764,11 @@ impl State {
             }
 
             let len = data.len()?;
-            if len > SEND_LIMIT as usize {
+            if len > max_send_bytes as usize {
                 return Err(Error::id("DataTooLarge"));
             }
-            let send_permit = send_limit
+            let send_permit = meta
+                .snd_limit
                 .acquire_many_owned(len as u32)
                 .await
                 .map_err(Error::err)?;

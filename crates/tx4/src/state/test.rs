@@ -33,8 +33,9 @@ impl Test {
         )
         .unwrap();
         let id_b = cli_b.id().unwrap();
-        let (state, mut state_evt) =
-            State::new(prometheus::default_registry().clone());
+
+        let config = DefConfig::default().into_config().await.unwrap();
+        let (state, mut state_evt) = State::new(config).unwrap();
 
         // -- register with a signal server -- //
 

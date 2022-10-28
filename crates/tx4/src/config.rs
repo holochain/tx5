@@ -7,6 +7,15 @@ use tx4_core::{BoxFut, Tx4Url};
 
 /// Tx4 config trait.
 pub trait Config: 'static + Send + Sync {
+    /// Get the max pending send byte count limit.
+    fn max_send_bytes(&self) -> u32;
+
+    /// Get the max queued recv byte count limit.
+    fn max_recv_bytes(&self) -> u32;
+
+    /// Get the max concurrent connection limit.
+    fn max_conn_count(&self) -> u32;
+
     /// Request the prometheus registry used by this config.
     fn metrics(&self) -> &prometheus::Registry;
 
@@ -27,49 +36,58 @@ pub trait Config: 'static + Send + Sync {
     );
 }
 
-/// Indicates a type is capable of being converted into a Config type.
-pub trait IntoConfig: 'static + Send + Sync {
-    /// The concrete config type this type can be converted into.
-    type Config: Config;
+/// Dynamic config type alias.
+pub type DynConfig = Arc<dyn Config + 'static + Send + Sync>;
 
-    /// Convert this type into a concrete config type.
-    fn into_config(self) -> BoxFut<'static, Result<Arc<Self::Config>>>;
+impl std::fmt::Debug for dyn Config + 'static + Send + Sync {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("max_send_bytes", &self.max_send_bytes())
+            .field("max_recv_bytes", &self.max_recv_bytes())
+            .field("max_conn_count", &self.max_conn_count())
+            .finish()
+    }
 }
 
-/// The default config type.
-pub struct DefConfigBuilt {
+/// Indicates a type is capable of being converted into a Config type.
+pub trait IntoConfig: 'static + Send + Sync {
+    /// Convert this type into a concrete config type.
+    fn into_config(self) -> BoxFut<'static, Result<DynConfig>>;
+}
+
+struct DefConfigBuilt {
     this: Weak<Self>,
+    max_send_bytes: u32,
+    max_recv_bytes: u32,
+    max_conn_count: u32,
     metrics: prometheus::Registry,
     _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     lair_tag: Arc<str>,
     on_new_sig_cb: Arc<
-        dyn Fn(Arc<Self>, Tx4Url, state::SigStateSeed) + 'static + Send + Sync,
+        dyn Fn(DynConfig, Tx4Url, state::SigStateSeed) + 'static + Send + Sync,
     >,
     on_new_conn_cb: Arc<
-        dyn Fn(Arc<Self>, serde_json::Value, state::ConnStateSeed)
+        dyn Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,
     >,
 }
 
-impl IntoConfig for DefConfigBuilt {
-    type Config = DefConfigBuilt;
-
-    fn into_config(mut self) -> BoxFut<'static, Result<Arc<Self::Config>>> {
-        Box::pin(async move {
-            Ok(Arc::new_cyclic(|this| {
-                // we were unwrapped... so this "this" is no longer valid
-                // we need to use the newly created one.
-                self.this = this.clone();
-                self
-            }))
-        })
-    }
-}
-
 impl Config for DefConfigBuilt {
+    fn max_send_bytes(&self) -> u32 {
+        self.max_send_bytes
+    }
+
+    fn max_recv_bytes(&self) -> u32 {
+        self.max_recv_bytes
+    }
+
+    fn max_conn_count(&self) -> u32 {
+        self.max_conn_count
+    }
+
     fn metrics(&self) -> &prometheus::Registry {
         &self.metrics
     }
@@ -103,12 +121,15 @@ impl Config for DefConfigBuilt {
 #[derive(Default)]
 #[allow(clippy::type_complexity)]
 pub struct DefConfig {
+    max_send_bytes: Option<u32>,
+    max_recv_bytes: Option<u32>,
+    max_conn_count: Option<u32>,
     metrics: Option<prometheus::Registry>,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
     on_new_sig_cb: Option<
         Arc<
-            dyn Fn(Arc<DefConfigBuilt>, Tx4Url, state::SigStateSeed)
+            dyn Fn(DynConfig, Tx4Url, state::SigStateSeed)
                 + 'static
                 + Send
                 + Sync,
@@ -116,7 +137,7 @@ pub struct DefConfig {
     >,
     on_new_conn_cb: Option<
         Arc<
-            dyn Fn(Arc<DefConfigBuilt>, serde_json::Value, state::ConnStateSeed)
+            dyn Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
                 + 'static
                 + Send
                 + Sync,
@@ -125,10 +146,13 @@ pub struct DefConfig {
 }
 
 impl IntoConfig for DefConfig {
-    type Config = DefConfigBuilt;
-
-    fn into_config(self) -> BoxFut<'static, Result<Arc<Self::Config>>> {
+    fn into_config(self) -> BoxFut<'static, Result<DynConfig>> {
         Box::pin(async move {
+            let max_send_bytes =
+                self.max_send_bytes.unwrap_or(16 * 1024 * 1024);
+            let max_recv_bytes =
+                self.max_recv_bytes.unwrap_or(16 * 1024 * 1024);
+            let max_conn_count = self.max_conn_count.unwrap_or(40);
             let metrics = self
                 .metrics
                 .unwrap_or_else(|| prometheus::default_registry().clone());
@@ -190,21 +214,63 @@ impl IntoConfig for DefConfig {
                 .on_new_conn_cb
                 .unwrap_or_else(|| Arc::new(endpoint::on_new_conn));
 
-            Ok(Arc::new_cyclic(|this| DefConfigBuilt {
+            let out: DynConfig = Arc::new_cyclic(|this| DefConfigBuilt {
                 this: this.clone(),
+                max_send_bytes,
+                max_recv_bytes,
+                max_conn_count,
                 metrics,
                 _lair_keystore: lair_keystore,
                 lair_client,
                 lair_tag,
                 on_new_sig_cb,
                 on_new_conn_cb,
-            }))
+            });
+
+            Ok(out)
         })
     }
 }
 
 impl DefConfig {
+    /// Set the max queued send bytes to hold before applying backpressure.
+    /// The default is `16 * 1024 * 1024`.
+    pub fn set_max_send_bytes(&mut self, max_send_bytes: u32) {
+        self.max_send_bytes = Some(max_send_bytes);
+    }
+
+    /// See `set_max_send_bytes()`, this is the builder version.
+    pub fn with_max_send_bytes(mut self, max_send_bytes: u32) -> Self {
+        self.set_max_send_bytes(max_send_bytes);
+        self
+    }
+
+    /// Set the max queued recv bytes to hold before dropping connection.
+    /// The default is `16 * 1024 * 1024`.
+    pub fn set_max_recv_bytes(&mut self, max_recv_bytes: u32) {
+        self.max_recv_bytes = Some(max_recv_bytes);
+    }
+
+    /// See `set_max_recv_bytes()`, this is the builder version.
+    pub fn with_max_recv_bytes(mut self, max_recv_bytes: u32) -> Self {
+        self.set_max_recv_bytes(max_recv_bytes);
+        self
+    }
+
+    /// Set the max concurrent connection count.
+    /// The default is `40`.
+    pub fn set_max_conn_count(&mut self, max_conn_count: u32) {
+        self.max_conn_count = Some(max_conn_count);
+    }
+
+    /// See `set_max_conn_count()`, this is the builder version.
+    pub fn with_max_conn_count(mut self, max_conn_count: u32) -> Self {
+        self.set_max_conn_count(max_conn_count);
+        self
+    }
+
     /// Set the prometheus metrics registry to use.
+    /// The default is the global static default registry.
     pub fn set_metrics(&mut self, metrics: prometheus::Registry) {
         self.metrics = Some(metrics);
     }
@@ -216,6 +282,7 @@ impl DefConfig {
     }
 
     /// Set the lair client.
+    /// The default is a generated in-process, in-memory only keystore.
     pub fn set_lair_client(&mut self, lair_client: LairClient) {
         self.lair_client = Some(lair_client);
     }
@@ -227,6 +294,7 @@ impl DefConfig {
     }
 
     /// Set the lair tag used to identify the signing identity keypair.
+    /// The default is a random 32 byte utf8 string.
     pub fn set_lair_tag(&mut self, lair_tag: Arc<str>) {
         self.lair_tag = Some(lair_tag);
     }
@@ -238,12 +306,10 @@ impl DefConfig {
     }
 
     /// Override the default new signal connection request handler.
+    /// The default uses the default tx4-signal dependency.
     pub fn set_new_sig_cb<Cb>(&mut self, cb: Cb)
     where
-        Cb: Fn(Arc<DefConfigBuilt>, Tx4Url, state::SigStateSeed)
-            + 'static
-            + Send
-            + Sync,
+        Cb: Fn(DynConfig, Tx4Url, state::SigStateSeed) + 'static + Send + Sync,
     {
         self.on_new_sig_cb = Some(Arc::new(cb));
     }
@@ -251,19 +317,18 @@ impl DefConfig {
     /// See `set_new_sig_cb()`, this is the builder version.
     pub fn with_new_sig_cb<Cb>(mut self, cb: Cb) -> Self
     where
-        Cb: Fn(Arc<DefConfigBuilt>, Tx4Url, state::SigStateSeed)
-            + 'static
-            + Send
-            + Sync,
+        Cb: Fn(DynConfig, Tx4Url, state::SigStateSeed) + 'static + Send + Sync,
     {
         self.set_new_sig_cb(cb);
         self
     }
 
     /// Override the default new peer connection request handler.
+    /// The default uses either tx4-go-pion, or rust-webrtc depending
+    /// on the feature flipper chosen at compile time.
     pub fn set_new_conn_cb<Cb>(&mut self, cb: Cb)
     where
-        Cb: Fn(Arc<DefConfigBuilt>, serde_json::Value, state::ConnStateSeed)
+        Cb: Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,
@@ -274,7 +339,7 @@ impl DefConfig {
     /// See `set_new_conn_cb()`, this is the builder version.
     pub fn with_new_conn_cb<Cb>(mut self, cb: Cb) -> Self
     where
-        Cb: Fn(Arc<DefConfigBuilt>, serde_json::Value, state::ConnStateSeed)
+        Cb: Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,

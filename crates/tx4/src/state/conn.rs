@@ -361,6 +361,15 @@ impl ConnStateData {
             return Ok(());
         }
 
+        // if we are within the close time send grace period
+        // do not send any new messages so we can try to shut
+        // down gracefully
+        if self.meta.metric_age.elapsed()
+            > (MAX_CON_TIME - CON_CLOSE_SEND_GRACE)
+        {
+            return Ok(());
+        }
+
         // TODO - also check our buffer amt low status
 
         if let Some(state) = self.state.upgrade() {
@@ -446,6 +455,7 @@ enum ConnCmd {
 
 #[allow(clippy::too_many_arguments)]
 async fn conn_state_task(
+    conn_limit: Arc<tokio::sync::Semaphore>,
     metrics: prometheus::Registry,
     metric_conn_count: prometheus::IntGauge,
     meta: ConnStateMeta,
@@ -475,7 +485,16 @@ async fn conn_state_task(
         rcv_offer: false,
     };
 
+    let mut permit = None;
+
     let err = match async {
+        permit = Some(
+            conn_limit
+                .acquire_owned()
+                .await
+                .map_err(|_| Error::id("Closed"))?,
+        );
+
         sig_ready.await.map_err(|_| Error::id("SigClosed"))??;
 
         let sig = data.get_sig()?;
@@ -503,11 +522,14 @@ async fn conn_state_task(
 
     data.shutdown(err.err_clone());
 
+    drop(permit);
+
     Err(err)
 }
 
 #[derive(Clone)]
 pub(crate) struct ConnStateMeta {
+    pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
     pub(crate) rcv_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) metric_bytes_snd: prometheus::IntCounter,
@@ -612,7 +634,7 @@ impl ConnState {
 
         let mut data = data;
         let len = data.len()?;
-        if len > RECV_LIMIT as usize {
+        if len > self.1.config.max_recv_bytes() as usize {
             let err = Error::id("DataTooLarge");
             self.close(err.err_clone());
             return Err(err);
@@ -651,6 +673,8 @@ impl ConnState {
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_and_publish(
+        config: DynConfig,
+        conn_limit: Arc<tokio::sync::Semaphore>,
         state_prefix: Arc<str>,
         metrics: prometheus::Registry,
         metric_conn_count: prometheus::IntGauge,
@@ -703,6 +727,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let meta = ConnStateMeta {
+            config,
             connected: Arc::new(atomic::AtomicBool::new(false)),
             rcv_limit,
             metric_bytes_snd,
@@ -722,6 +747,7 @@ impl ConnState {
                 // from new_and_publish...
                 let strong = ConnState(this.upgrade().unwrap(), meta.clone());
                 conn_state_task(
+                    conn_limit,
                     metrics,
                     metric_conn_count,
                     meta.clone(),

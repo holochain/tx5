@@ -29,6 +29,7 @@ pub(crate) fn drop_consider(args: &DropConsiderArgs) -> DropConsiderResult {
     }
 
     for consider in [
+        consider_max,
         consider_long_inactive,
         consider_long_unconnected,
         consider_connected_contention,
@@ -39,6 +40,14 @@ pub(crate) fn drop_consider(args: &DropConsiderArgs) -> DropConsiderResult {
         }
     }
 
+    DropConsiderResult::ShouldKeep
+}
+
+fn consider_max(args: &DropConsiderArgs) -> DropConsiderResult {
+    if std::time::Duration::from_secs_f64(args.this_age_s) > super::MAX_CON_TIME
+    {
+        return DropConsiderResult::MustDrop;
+    }
     DropConsiderResult::ShouldKeep
 }
 

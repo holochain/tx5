@@ -59,6 +59,7 @@ impl<R: AsRef<[u8]>> From<R> for GoBufRef<'static> {
 /// A bytes.Buffer managed in go memory.
 /// Rust can only access go memory safely during a callback.
 #[derive(Debug)]
+#[allow(clippy::len_without_is_empty)]
 pub struct GoBuf(pub(crate) usize);
 
 impl std::convert::TryFrom<&[u8]> for GoBuf {
@@ -148,6 +149,13 @@ impl GoBuf {
         unsafe { Ok(Self(API.buffer_alloc()?)) }
     }
 
+    /// Attempt to clone this buffer.
+    pub fn try_clone(&mut self) -> Result<Self> {
+        let mut out = GoBuf::new()?;
+        self.access(|bytes| out.extend(bytes?))?;
+        Ok(out)
+    }
+
     /// Construct a new bytes.Buffer in go memory,
     /// copying in the provided slice.
     #[inline]
@@ -155,6 +163,12 @@ impl GoBuf {
         let mut b = GoBuf::new()?;
         b.extend(r.as_ref())?;
         Ok(b)
+    }
+
+    /// Get the length of this buffer.
+    #[inline]
+    pub fn len(&mut self) -> Result<usize> {
+        self.access(|bytes| Ok(bytes?.len()))
     }
 
     /// Deserialize this go buffer as json bytes

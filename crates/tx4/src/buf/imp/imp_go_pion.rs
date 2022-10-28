@@ -60,6 +60,13 @@ impl std::fmt::Debug for Imp {
 }
 
 impl Imp {
+    pub(crate) fn from_raw(buf: tx4_go_pion::GoBuf) -> Self {
+        Self {
+            buf,
+            _not_sync: std::marker::PhantomData,
+        }
+    }
+
     #[inline]
     pub fn from_slice<S: AsRef<[u8]>>(slice: S) -> Result<Self> {
         Ok(Self {
@@ -76,6 +83,20 @@ impl Imp {
             buf,
             _not_sync: std::marker::PhantomData,
         })
+    }
+
+    #[inline]
+    pub fn try_clone(&mut self) -> Result<Self> {
+        Ok(Self {
+            buf: self.buf.try_clone()?,
+            _not_sync: std::marker::PhantomData,
+        })
+    }
+
+    #[inline]
+    #[allow(clippy::wrong_self_convention)] // ya, well, we need it mut
+    pub fn len(&mut self) -> Result<usize> {
+        self.buf.len()
     }
 
     #[inline]

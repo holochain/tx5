@@ -20,12 +20,23 @@ backend-go-pion = [ "tx4-go-pion" ]
 backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
-tokio = { version = "1.19.2", features = [ "rt" ] }
-tracing = "0.1.36"
+futures = { workspace = true }
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+prometheus = { workspace = true }
+rand = { workspace = true }
+rand-utf8 = { workspace = true }
+tokio = { workspace = true, features = [ "rt", "sync" ] }
+tracing = { workspace = true }
 tx4-core = { version = "0.0.1", path = "../tx4-core" }
 tx4-go-pion = { version = "0.0.1", path = "../tx4-go-pion", optional = true }
-webrtc = { version = "0.5.0", optional = true }
+tx4-signal = { version = "0.0.1", path = "../tx4-signal" }
+url = { workspace = true }
+webrtc = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.19.2", features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
-tracing-subscriber = { version = "0.3.11", features = [ "env-filter" ] }
+tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
+tracing-subscriber = { workspace = true }
+tx4-signal-srv = { version = "0.0.1", path = "../tx4-signal-srv" }
+rand = { workspace = true }
+rand-utf8 = { workspace = true }

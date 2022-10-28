@@ -87,6 +87,7 @@ async fn sanity() {
     tokio::select! {
         _ = srv_driver => (),
         _ = async move {
+            // TODO remove
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
             sanity_inner(srv_port).await;

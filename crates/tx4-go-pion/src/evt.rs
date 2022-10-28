@@ -10,7 +10,7 @@ use tx4_go_pion_sys::API;
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
     /// PeerConnection Error.
-    Error(Error),
+    Error(std::io::Error),
 
     /// Received a trickle ICE candidate.
     ICECandidate(GoBuf),

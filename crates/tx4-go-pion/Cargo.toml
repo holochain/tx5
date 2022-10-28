@@ -12,11 +12,11 @@ categories = ["network-programming"]
 
 [dependencies]
 tx4-go-pion-sys = { version = "0.0.1", path = "../tx4-go-pion-sys" }
-parking_lot = "0.12.1"
-url = { version = "2.2.2", features = [ "serde" ] }
-tokio = { version = "1.19.2", features = [ "rt" ] }
-tracing = "0.1.36"
+parking_lot = { workspace = true }
+tokio = { workspace = true, features = [ "rt" ] }
+tracing = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.19.2", features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
-tracing-subscriber = { version = "0.3.11", features = [ "env-filter" ] }
+tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
+tracing-subscriber = { workspace = true }

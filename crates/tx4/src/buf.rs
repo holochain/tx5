@@ -60,6 +60,7 @@ impl std::io::Write for BufWriter {
 }
 
 /// Tx4 buffer type for sending and receiving data.
+#[allow(clippy::len_without_is_empty)]
 pub struct Buf {
     pub(crate) imp: imp::Imp,
     pub(crate) _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
@@ -72,6 +73,13 @@ impl std::fmt::Debug for Buf {
 }
 
 impl Buf {
+    pub(crate) fn from_raw(buf: tx4_go_pion::GoBuf) -> Self {
+        Self {
+            imp: imp::Imp::from_raw(buf),
+            _not_sync: std::marker::PhantomData,
+        }
+    }
+
     /// Build a tx4 buffer from a slice.
     #[inline]
     pub fn from_slice<S: AsRef<[u8]>>(slice: S) -> Result<Self> {
@@ -92,6 +100,21 @@ impl Buf {
     pub fn from_json<S: serde::Serialize>(s: S) -> Result<Self> {
         Ok(Self {
             imp: imp::Imp::from_json(s)?,
+            _not_sync: std::marker::PhantomData,
+        })
+    }
+
+    /// Get the length of this buffer.
+    #[inline]
+    pub fn len(&mut self) -> Result<usize> {
+        self.imp.len()
+    }
+
+    /// Attempt to clone this buffer.
+    #[inline]
+    pub fn try_clone(&mut self) -> Result<Self> {
+        Ok(Self {
+            imp: self.imp.try_clone()?,
             _not_sync: std::marker::PhantomData,
         })
     }

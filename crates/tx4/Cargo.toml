@@ -28,15 +28,15 @@ rand = { workspace = true }
 rand-utf8 = { workspace = true }
 tokio = { workspace = true, features = [ "rt", "sync" ] }
 tracing = { workspace = true }
-tx4-core = { version = "0.0.1", path = "../tx4-core" }
-tx4-go-pion = { version = "0.0.1", path = "../tx4-go-pion", optional = true }
-tx4-signal = { version = "0.0.1", path = "../tx4-signal" }
+tx4-core = { workspace = true }
+tx4-go-pion = { workspace = true, optional = true }
+tx4-signal = { workspace = true }
 url = { workspace = true }
 webrtc = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
 tracing-subscriber = { workspace = true }
-tx4-signal-srv = { version = "0.0.1", path = "../tx4-signal-srv" }
+tx4-signal-srv = { workspace = true }
 rand = { workspace = true }
 rand-utf8 = { workspace = true }

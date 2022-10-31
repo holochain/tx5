@@ -22,7 +22,7 @@ once_cell = { workspace = true }
 ouroboros = { workspace = true }
 tempfile = { workspace = true }
 tracing = { workspace = true }
-tx4-core = { version = "0.0.1", path = "../tx4-core" }
+tx4-core = { workspace = true }
 
 [dev-dependencies]
 parking_lot = { workspace = true }

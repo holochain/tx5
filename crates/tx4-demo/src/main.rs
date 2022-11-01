@@ -11,11 +11,11 @@ use tx4::{Error, Id, Result, Tx4Url};
 #[derive(Debug, Parser)]
 #[clap(name = "tx4-demo", version, about = "Holochain Tx4 WebRTC Demo Cli")]
 pub struct Opt {
-    /// Use a custom username. Must be < 128 utf8 bytes.
+    /// Use a custom username. Must be <= 16 utf8 bytes.
     #[clap(short, long, default_value = "Holochain<3")]
     pub name: String,
 
-    /// Use a custom shoutout. Must be < 128 utf8 bytes.
+    /// Use a custom shoutout. Must be <= 16 utf8 bytes.
     #[clap(short, long, default_value = "Holochain rocks!")]
     pub shoutout: String,
 
@@ -25,6 +25,7 @@ pub struct Opt {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+    /*
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(
             tracing_subscriber::filter::EnvFilter::builder()
@@ -38,6 +39,7 @@ async fn main() {
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
+    */
 
     if let Err(err) = main_err().await {
         eprintln!("{}", err);
@@ -45,24 +47,36 @@ async fn main() {
     }
 }
 
+enum TermEvt {
+    Resize { x: u16, y: u16 },
+    Backspace,
+    Enter,
+    Input(char),
+    Output(String),
+}
+
 async fn main_err() -> Result<()> {
+    let (t_send, mut t_recv) = tokio::sync::mpsc::unbounded_channel();
+    let _ = t_send.send(TermEvt::Backspace);
+
     let Opt {
         name,
         shoutout,
         sig_url,
     } = Opt::parse();
 
-    if name.as_bytes().len() > 128 {
+    if name.as_bytes().len() > 16 {
         return Err(Error::id("NameTooLong"));
     }
 
-    if shoutout.as_bytes().len() > 128 {
+    if shoutout.as_bytes().len() > 16 {
         return Err(Error::id("ShoutoutTooLong"));
     }
-
     let sig_url = Tx4Url::new(sig_url)?;
 
     tracing::info!(%name, %shoutout, %sig_url);
+
+    let shoutout = Arc::new(parking_lot::Mutex::new(shoutout));
 
     let (ep, mut evt) = tx4::Ep::new().await?;
 
@@ -71,6 +85,7 @@ async fn main_err() -> Result<()> {
 
     tracing::info!(%addr);
 
+    /*
     let mut one_msg = Vec::with_capacity(
         name.as_bytes().len() + shoutout.as_bytes().len() + 3,
     );
@@ -85,8 +100,9 @@ async fn main_err() -> Result<()> {
 
     let mut one_msg = tx4::Buf::from_slice(&one_msg)?;
     let mut two_msg = tx4::Buf::from_slice(&two_msg)?;
+    */
 
-    let state = State::new(this_id);
+    let state = State::new(this_id, t_send.clone());
 
     // print summary every 15 secs
     {
@@ -159,9 +175,10 @@ async fn main_err() -> Result<()> {
 
                             state.handle(rem_cli_url.clone(), name, shoutout);
 
-                            if let Err(err) = ep
-                                .send(rem_cli_url, two_msg.try_clone().unwrap())
-                                .await
+                            let two_msg = tx4::Buf::from_slice([2, 0]).unwrap();
+
+                            if let Err(err) =
+                                ep.send(rem_cli_url, two_msg).await
                             {
                                 tracing::error!(?err);
                             }
@@ -175,31 +192,201 @@ async fn main_err() -> Result<()> {
         });
     }
 
-    loop {
-        match state.get_next_send() {
-            None => {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-            Some(url) => {
-                if let Err(err) =
-                    ep.send(url.clone(), one_msg.try_clone().unwrap()).await
-                {
-                    tracing::warn!(%url, ?err, "Send Error");
+    // outgoing connections
+    {
+        let name = name.clone();
+        let shoutout = shoutout.clone();
+        tokio::task::spawn(async move {
+            loop {
+                match state.get_next_send() {
+                    None => {
+                        tokio::time::sleep(std::time::Duration::from_secs(1))
+                            .await;
+                    }
+                    Some(url) => {
+                        let so = shoutout.lock().clone();
+                        let mut one_msg = Vec::with_capacity(
+                            name.as_bytes().len() + so.as_bytes().len() + 3,
+                        );
+                        one_msg.push(1);
+                        one_msg.push(0);
+                        one_msg.extend_from_slice(name.as_bytes());
+                        one_msg.push(0);
+                        one_msg.extend_from_slice(so.as_bytes());
+                        let one_msg = tx4::Buf::from_slice(&one_msg).unwrap();
+                        if let Err(err) = ep.send(url.clone(), one_msg).await {
+                            tracing::warn!(%url, ?err, "Send Error");
+                        }
+                    }
                 }
             }
-        }
+        });
     }
+
+    use std::io::Write;
+    let mut stdout = std::io::stdout();
+
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen,)?;
+    crossterm::execute!(
+        stdout,
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+    )?;
+
+    let (mut term_x, mut term_y) = crossterm::terminal::size()?;
+
+    let res = tokio::select! {
+        r = async move {
+            tokio::task::spawn_blocking(move || {
+                loop {
+                    let evt = crossterm::event::read()?;
+                    match evt {
+                        crossterm::event::Event::Resize(x, y) => {
+                            if t_send.send(TermEvt::Resize { x, y }).is_err() {
+                                break;
+                            }
+                        }
+                        crossterm::event::Event::Key(crossterm::event::KeyEvent {
+                            code,
+                            modifiers,
+                            ..
+                        }) => {
+                            match code {
+                                crossterm::event::KeyCode::Esc => {
+                                    break;
+                                }
+                                crossterm::event::KeyCode::Enter => {
+                                    if t_send.send(TermEvt::Enter).is_err() {
+                                        break;
+                                    }
+                                }
+                                crossterm::event::KeyCode::Backspace => {
+                                    if t_send.send(TermEvt::Backspace).is_err() {
+                                        break;
+                                    }
+                                }
+                                crossterm::event::KeyCode::Char(c) => {
+                                    use crossterm::event::KeyModifiers;
+
+                                    if c == 'c' && modifiers.contains(KeyModifiers::CONTROL) {
+                                        break;
+                                    }
+
+                                    if c == 'd' && modifiers.contains(KeyModifiers::CONTROL) {
+                                        break;
+                                    }
+
+                                    if t_send.send(TermEvt::Input(c)).is_err() {
+                                        break;
+                                    }
+                                }
+                                _ => (),
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                Ok(())
+            }).await?
+        } => r,
+        r = async move {
+            let mut input = String::with_capacity(16);
+
+            while let Some(evt) = t_recv.recv().await {
+                match evt {
+                    TermEvt::Resize { x, y } => {
+                        term_x = x;
+                        term_y = y;
+                    }
+                    TermEvt::Backspace => {
+                        input.pop();
+                    }
+                    TermEvt::Enter => {
+                        *shoutout.lock() = std::mem::take(&mut input);
+                    }
+                    TermEvt::Input(c) => {
+                        input.push(c);
+                        if input.as_bytes().len() > 16 {
+                            input.pop();
+                        }
+                    }
+                    TermEvt::Output(o) => {
+                        crossterm::queue!(
+                            stdout,
+                            crossterm::cursor::MoveTo(0, term_y - 3),
+                        )?;
+                        crossterm::queue!(
+                            stdout,
+                            crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+                        )?;
+                        write!(stdout, "{}", o)?;
+                        crossterm::queue!(
+                            stdout,
+                            crossterm::terminal::ScrollUp(1),
+                        )?;
+                    }
+                }
+
+                crossterm::queue!(
+                    stdout,
+                    crossterm::cursor::MoveTo(0, term_y - 3),
+                )?;
+                for _ in 0..term_x {
+                    write!(stdout, "-")?;
+                }
+                crossterm::queue!(
+                    stdout,
+                    crossterm::cursor::MoveTo(0, term_y - 2),
+                )?;
+                crossterm::queue!(
+                    stdout,
+                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+                )?;
+                write!(
+                    stdout,
+                    "this: {} ({:?}): {}",
+                    name,
+                    this_id,
+                    shoutout.lock(),
+                )?;
+                crossterm::queue!(
+                    stdout,
+                    crossterm::cursor::MoveTo(0, term_y - 1),
+                )?;
+                crossterm::queue!(
+                    stdout,
+                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+                )?;
+                write!(stdout, "new shoutout> {}", input)?;
+
+                stdout.flush()?;
+            }
+            Ok(())
+        } => r,
+    };
+
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::LeaveAlternateScreen,
+    )?;
+    crossterm::terminal::disable_raw_mode()?;
+
+    res
 }
 
 #[derive(Clone)]
 struct State(Arc<parking_lot::Mutex<StateInner>>);
 
 impl State {
-    pub fn new(this_id: Id) -> Self {
+    pub fn new(
+        this_id: Id,
+        t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
+    ) -> Self {
         Self(Arc::new(parking_lot::Mutex::new(StateInner {
             this_id,
             map: HashMap::new(),
             queue: VecDeque::new(),
+            t_send,
         })))
     }
 
@@ -244,7 +431,9 @@ impl State {
             return;
         }
 
-        let StateInner { map, queue, .. } = &mut *inner;
+        let StateInner {
+            map, queue, t_send, ..
+        } = &mut *inner;
 
         match map.entry(url.clone()) {
             Occupied(mut e) => {
@@ -253,12 +442,20 @@ impl State {
                     || item.shoutout != Some(shoutout.clone())
                 {
                     tracing::info!(%name, %shoutout, "Updated Info");
+                    let _ = t_send.send(TermEvt::Output(format!(
+                        "{} ({:?}): {}",
+                        name, id, shoutout,
+                    )));
                     item.name = Some(name);
                     item.shoutout = Some(shoutout);
                 }
             }
             Vacant(e) => {
                 tracing::info!(%name, %shoutout, "New Peer");
+                let _ = t_send.send(TermEvt::Output(format!(
+                    "{} ({:?}): {}",
+                    name, id, shoutout,
+                )));
                 let mut item = Item::new(url.clone());
                 item.name = Some(name);
                 item.shoutout = Some(shoutout);
@@ -351,4 +548,5 @@ struct StateInner {
     this_id: Id,
     map: HashMap<Tx4Url, Item>,
     queue: VecDeque<Tx4Url>,
+    t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
 }

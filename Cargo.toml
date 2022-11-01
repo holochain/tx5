@@ -11,7 +11,7 @@ members = [
 
 [workspace.dependencies]
 base64 = "0.13.0"
-clap = { version = "3.2.11", features = [ "derive", "wrap_help" ] }
+clap = { version = "4.0.18", features = [ "derive", "wrap_help" ] }
 dirs = "4.0.0"
 futures = "0.3.24"
 get_if_addrs = "0.5.3"
@@ -46,6 +46,7 @@ tx4-go-pion-sys = { version = "0.0.1", path = "crates/tx4-go-pion-sys" }
 tx4-go-pion = { version = "0.0.1", path = "crates/tx4-go-pion" }
 tx4-signal-srv = { version = "0.0.1", path = "crates/tx4-signal-srv" }
 tx4-signal = { version = "0.0.1", path = "crates/tx4-signal" }
+tx4 = { version = "0.0.1", path = "crates/tx4" }
 url = { version = "2.3.1", features = [ "serde" ] }
 warp = { version = "0.3.2", features = [ "websocket" ] }
 webrtc = { version = "0.5.0" }

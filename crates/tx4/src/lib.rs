@@ -44,7 +44,7 @@ pub mod deps {
 
 use deps::{serde, serde_json};
 
-pub use tx4_core::{Error, ErrorExt, Result};
+pub use tx4_core::{Error, ErrorExt, Id, Result, Tx4Url};
 
 pub mod actor;
 

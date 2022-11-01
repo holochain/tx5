@@ -149,6 +149,9 @@ pub enum StateEvt {
 
     /// Incoming data received on a peer connection.
     RcvData(Tx4Url, Buf, Permit),
+
+    /// Received a demo broadcast.
+    Demo(Tx4Url),
 }
 
 #[derive(Clone)]
@@ -171,6 +174,11 @@ pub(crate) struct SendData {
     send_permit: tokio::sync::OwnedSemaphorePermit,
 }
 
+struct IceData {
+    timestamp: std::time::Instant,
+    ice: Buf,
+}
+
 struct StateData {
     this_id: Option<Id>,
     this: StateWeak,
@@ -181,6 +189,7 @@ struct StateData {
     signal_map: HashMap<Tx4Url, SigStateWeak>,
     conn_map: HashMap<Id, ConnStateWeak>,
     send_map: HashMap<Id, VecDeque<SendData>>,
+    ice_cache: HashMap<Id, VecDeque<IceData>>,
     recv_limit: Arc<tokio::sync::Semaphore>,
 }
 
@@ -192,6 +201,7 @@ impl Drop for StateData {
 
 impl StateData {
     fn shutdown(&mut self, err: std::io::Error) {
+        tracing::trace!(this_id = ?self.this_id, "StateShutdown");
         let _ = self
             .metrics
             .unregister(Box::new(self.meta.metric_conn_count.clone()));
@@ -211,6 +221,7 @@ impl StateData {
     async fn exec(&mut self, cmd: StateCmd) -> Result<()> {
         match cmd {
             StateCmd::Tick1s => self.tick_1s().await,
+            StateCmd::SndDemo => self.snd_demo().await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
                 self.assert_listener_sig(sig_url, resp).await
             }
@@ -236,6 +247,15 @@ impl StateData {
                 rem_id,
                 data,
             } => self.in_offer(sig_url, rem_id, data).await,
+            StateCmd::InDemo { sig_url, rem_id } => {
+                self.in_demo(sig_url, rem_id).await
+            }
+            StateCmd::CacheIce { rem_id, ice } => {
+                self.cache_ice(rem_id, ice).await
+            }
+            StateCmd::GetCachedIce { rem_id } => {
+                self.get_cached_ice(rem_id).await
+            }
             StateCmd::CloseSig { sig_url, sig, err } => {
                 self.close_sig(sig_url, sig, err).await
             }
@@ -246,6 +266,13 @@ impl StateData {
     }
 
     async fn tick_1s(&mut self) -> Result<()> {
+        self.ice_cache.retain(|_, list| {
+            list.retain_mut(|data| {
+                data.timestamp.elapsed() < std::time::Duration::from_secs(20)
+            });
+            !list.is_empty()
+        });
+
         self.send_map.retain(|_, list| {
             list.retain_mut(|info| {
                 if info.timestamp.elapsed() < std::time::Duration::from_secs(20)
@@ -319,6 +346,16 @@ impl StateData {
         Ok(())
     }
 
+    async fn snd_demo(&mut self) -> Result<()> {
+        for (_, sig) in self.signal_map.iter() {
+            if let Some(sig) = sig.upgrade() {
+                sig.snd_demo();
+            }
+        }
+
+        Ok(())
+    }
+
     async fn assert_listener_sig(
         &mut self,
         sig_url: Tx4Url,
@@ -367,6 +404,7 @@ impl StateData {
             self.meta.metric_conn_count.clone(),
             self.this.clone(),
             sig,
+            self.this_id.unwrap(),
             cli_url,
             rem_id,
             self.recv_limit.clone(),
@@ -505,6 +543,38 @@ impl StateData {
         self.create_new_conn(sig_url, rem_id, Some(offer)).await
     }
 
+    async fn in_demo(&mut self, sig_url: Tx4Url, rem_id: Id) -> Result<()> {
+        let cli_url = sig_url.to_client(rem_id);
+        self.evt.publish(StateEvt::Demo(cli_url))
+    }
+
+    async fn cache_ice(&mut self, rem_id: Id, ice: Buf) -> Result<()> {
+        let list = self.ice_cache.entry(rem_id).or_default();
+        list.push_back(IceData {
+            timestamp: std::time::Instant::now(),
+            ice,
+        });
+        Ok(())
+    }
+
+    async fn get_cached_ice(&mut self, rem_id: Id) -> Result<()> {
+        let StateData {
+            conn_map,
+            ice_cache,
+            ..
+        } = self;
+        if let Some(conn) = conn_map.get(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                if let Some(list) = ice_cache.get_mut(&rem_id) {
+                    for ice_data in list.iter_mut() {
+                        conn.in_ice(ice_data.ice.try_clone()?, false);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn close_sig(
         &mut self,
         sig_url: Tx4Url,
@@ -546,6 +616,7 @@ impl StateData {
 
 enum StateCmd {
     Tick1s,
+    SndDemo,
     AssertListenerSig {
         sig_url: Tx4Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx4Url>>,
@@ -571,6 +642,17 @@ enum StateCmd {
         sig_url: Tx4Url,
         rem_id: Id,
         data: Buf,
+    },
+    InDemo {
+        sig_url: Tx4Url,
+        rem_id: Id,
+    },
+    CacheIce {
+        rem_id: Id,
+        ice: Buf,
+    },
+    GetCachedIce {
+        rem_id: Id,
     },
     CloseSig {
         sig_url: Tx4Url,
@@ -603,6 +685,7 @@ async fn state_task(
         signal_map: HashMap::new(),
         conn_map: HashMap::new(),
         send_map: HashMap::new(),
+        ice_cache: HashMap::new(),
         recv_limit,
     };
     let err = match async {
@@ -790,6 +873,13 @@ impl State {
         }
     }
 
+    /// Send a demo broadcast to every connected signal server.
+    /// Warning, if demo mode is not enabled on these servers, this
+    /// could result in a ban.
+    pub fn snd_demo(&self) -> Result<()> {
+        self.0.send(Ok(StateCmd::SndDemo))
+    }
+
     // -- //
 
     fn tick_1s(&self) -> Result<()> {
@@ -823,6 +913,18 @@ impl State {
             rem_id,
             data,
         }))
+    }
+
+    pub(crate) fn in_demo(&self, sig_url: Tx4Url, rem_id: Id) -> Result<()> {
+        self.0.send(Ok(StateCmd::InDemo { sig_url, rem_id }))
+    }
+
+    pub(crate) fn cache_ice(&self, rem_id: Id, ice: Buf) -> Result<()> {
+        self.0.send(Ok(StateCmd::CacheIce { rem_id, ice }))
+    }
+
+    pub(crate) fn get_cached_ice(&self, rem_id: Id) -> Result<()> {
+        self.0.send(Ok(StateCmd::GetCachedIce { rem_id }))
     }
 
     pub(crate) fn close_sig(

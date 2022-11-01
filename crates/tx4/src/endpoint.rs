@@ -18,9 +18,16 @@ pub enum EpEvt {
         /// incoming messages.
         permit: state::Permit,
     },
+
+    /// Received a demo broadcast.
+    Demo {
+        /// The remote client url that is available for communication.
+        rem_cli_url: Tx4Url,
+    },
 }
 
 /// A tx4 endpoint representing an instance that can send and receive.
+#[derive(Clone)]
 pub struct Ep {
     state: state::State,
 }
@@ -56,6 +63,11 @@ impl Ep {
                             permit,
                         }));
                     }
+                    Ok(state::StateEvt::Demo(cli_url)) => {
+                        let _ = ep_snd.send(Ok(EpEvt::Demo {
+                            rem_cli_url: cli_url,
+                        }));
+                    }
                     Err(err) => {
                         let _ = ep_snd.send(Err(err));
                         break;
@@ -85,6 +97,13 @@ impl Ep {
         data: Buf,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
         self.state.snd_data(rem_cli_url, data)
+    }
+
+    /// Send a demo broadcast to every connected signal server.
+    /// Warning, if demo mode is not enabled on these servers, this
+    /// could result in a ban.
+    pub fn demo(&self) -> Result<()> {
+        self.state.snd_demo()
     }
 }
 
@@ -141,7 +160,9 @@ async fn new_sig_task(
             msg = sig_rcv.recv() => {
                 if let Err(err) = async {
                     match msg {
-                        Some(tx4_signal::SignalMsg::Demo { .. }) => Ok(()),
+                        Some(tx4_signal::SignalMsg::Demo { rem_pub }) => {
+                            sig_state.demo(rem_pub)
+                        }
                         Some(tx4_signal::SignalMsg::Offer { rem_pub, offer }) => {
                             let offer = Buf::from_json(offer)?;
                             sig_state.offer(rem_pub, offer)
@@ -189,6 +210,9 @@ async fn new_sig_task(
                         resp.with(move || async move {
                             sig.ice(rem_id, ice.to_json()?).await
                         }).await;
+                    }
+                    Some(Ok(state::SigStateEvt::SndDemo)) => {
+                        sig.demo()
                     }
                     Some(Err(_)) => break,
                     None => break,

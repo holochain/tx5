@@ -8,6 +8,7 @@ clap = { workspace = true }
 crossterm = { version = "0.25.0" }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
+tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
 tx4 = { workspace = true }

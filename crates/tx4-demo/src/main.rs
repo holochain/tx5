@@ -11,13 +11,18 @@ use tx4::{Error, Id, Result, Tx4Url};
 #[derive(Debug, Parser)]
 #[clap(name = "tx4-demo", version, about = "Holochain Tx4 WebRTC Demo Cli")]
 pub struct Opt {
-    /// Use a custom username. Must be <= 16 utf8 bytes.
-    #[clap(short, long, default_value = "Holochain<3")]
-    pub name: String,
-
     /// Use a custom shoutout. Must be <= 16 utf8 bytes.
     #[clap(short, long, default_value = "Holochain rocks!")]
     pub shoutout: String,
+
+    /// If specified, tracing logs will be written to the given file.
+    /// You can use the environment variable `RUST_LOG` to control
+    /// and filter the output. Defaults to INFO level.
+    #[clap(short, long)]
+    pub trace_file: Option<String>,
+
+    /// Specify a display name. Must be <= 16 utf8 bytes.
+    pub name: String,
 
     /// Signal server URL.
     pub sig_url: String,
@@ -25,22 +30,6 @@ pub struct Opt {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    /*
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(
-            tracing_subscriber::filter::EnvFilter::builder()
-                .with_default_directive(
-                    tracing_subscriber::filter::LevelFilter::INFO.into(),
-                )
-                .from_env_lossy(),
-        )
-        .with_file(true)
-        .with_line_number(true)
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber).unwrap();
-    */
-
     if let Err(err) = main_err().await {
         eprintln!("{}", err);
         std::process::exit(1);
@@ -60,10 +49,44 @@ async fn main_err() -> Result<()> {
     let _ = t_send.send(TermEvt::Backspace);
 
     let Opt {
-        name,
         shoutout,
+        trace_file,
+        name,
         sig_url,
     } = Opt::parse();
+
+    let mut _app_guard = None;
+
+    if let Some(trace_file) = trace_file {
+        let trace_file = std::path::Path::new(&trace_file);
+        let app = tracing_appender::rolling::never(
+            trace_file
+                .parent()
+                .expect("failed to get dir from trace_file"),
+            trace_file
+                .file_name()
+                .expect("failed to get filename from trace_file"),
+        );
+        let (app, g) =
+            tracing_appender::non_blocking::NonBlockingBuilder::default()
+                .lossy(false)
+                .finish(app);
+
+        _app_guard = Some(g);
+
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(
+                tracing_subscriber::filter::EnvFilter::builder()
+                    .with_default_directive(
+                        tracing_subscriber::filter::LevelFilter::INFO.into(),
+                    )
+                    .from_env_lossy(),
+            )
+            .with_file(true)
+            .with_line_number(true)
+            .with_writer(app)
+            .init();
+    }
 
     if name.as_bytes().len() > 16 {
         return Err(Error::id("NameTooLong"));
@@ -85,35 +108,7 @@ async fn main_err() -> Result<()> {
 
     tracing::info!(%addr);
 
-    /*
-    let mut one_msg = Vec::with_capacity(
-        name.as_bytes().len() + shoutout.as_bytes().len() + 3,
-    );
-    one_msg.push(1);
-    one_msg.push(0);
-    one_msg.extend_from_slice(name.as_bytes());
-    one_msg.push(0);
-    one_msg.extend_from_slice(shoutout.as_bytes());
-
-    let mut two_msg = one_msg.clone();
-    two_msg[0] = 2;
-
-    let mut one_msg = tx4::Buf::from_slice(&one_msg)?;
-    let mut two_msg = tx4::Buf::from_slice(&two_msg)?;
-    */
-
     let state = State::new(this_id, t_send.clone());
-
-    // print summary every 15 secs
-    {
-        let state = state.clone();
-        tokio::task::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-                tracing::info!("{}", state.summary());
-            }
-        });
-    }
 
     // demo broadcast every 5 secs
     {
@@ -196,6 +191,7 @@ async fn main_err() -> Result<()> {
     {
         let name = name.clone();
         let shoutout = shoutout.clone();
+        let state = state.clone();
         tokio::task::spawn(async move {
             loop {
                 match state.get_next_send() {
@@ -313,7 +309,7 @@ async fn main_err() -> Result<()> {
                     TermEvt::Output(o) => {
                         crossterm::queue!(
                             stdout,
-                            crossterm::cursor::MoveTo(0, term_y - 3),
+                            crossterm::cursor::MoveTo(0, term_y - 5),
                         )?;
                         crossterm::queue!(
                             stdout,
@@ -329,14 +325,23 @@ async fn main_err() -> Result<()> {
 
                 crossterm::queue!(
                     stdout,
-                    crossterm::cursor::MoveTo(0, term_y - 3),
+                    crossterm::cursor::MoveTo(0, term_y - 5),
                 )?;
-                for _ in 0..term_x {
+                for _ in 0..(term_x) {
                     write!(stdout, "-")?;
                 }
                 crossterm::queue!(
                     stdout,
-                    crossterm::cursor::MoveTo(0, term_y - 2),
+                    crossterm::cursor::MoveTo(0, term_y - 4),
+                )?;
+                crossterm::queue!(
+                    stdout,
+                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+                )?;
+                write!(stdout, "## Holochain Tx4 WebRTC Demo Cli ##")?;
+                crossterm::queue!(
+                    stdout,
+                    crossterm::cursor::MoveTo(0, term_y - 3),
                 )?;
                 crossterm::queue!(
                     stdout,
@@ -348,6 +353,19 @@ async fn main_err() -> Result<()> {
                     name,
                     this_id,
                     shoutout.lock(),
+                )?;
+                crossterm::queue!(
+                    stdout,
+                    crossterm::cursor::MoveTo(0, term_y - 2),
+                )?;
+                crossterm::queue!(
+                    stdout,
+                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+                )?;
+                write!(
+                    stdout,
+                    "Active Connection Count: {}",
+                    state.count(),
                 )?;
                 crossterm::queue!(
                     stdout,
@@ -388,6 +406,10 @@ impl State {
             queue: VecDeque::new(),
             t_send,
         })))
+    }
+
+    pub fn count(&self) -> usize {
+        self.0.lock().map.len()
     }
 
     pub fn get_next_send(&self) -> Option<Tx4Url> {
@@ -443,7 +465,7 @@ impl State {
                 {
                     tracing::info!(%name, %shoutout, "Updated Info");
                     let _ = t_send.send(TermEvt::Output(format!(
-                        "{} ({:?}): {}",
+                        "[UPD] {} ({:?}): {}",
                         name, id, shoutout,
                     )));
                     item.name = Some(name);
@@ -453,10 +475,10 @@ impl State {
             Vacant(e) => {
                 tracing::info!(%name, %shoutout, "New Peer");
                 let _ = t_send.send(TermEvt::Output(format!(
-                    "{} ({:?}): {}",
+                    "[NEW] {} ({:?}): {}",
                     name, id, shoutout,
                 )));
-                let mut item = Item::new(url.clone());
+                let mut item = Item::new(url.clone(), t_send.clone());
                 item.name = Some(name);
                 item.shoutout = Some(shoutout);
                 e.insert(item);
@@ -498,23 +520,15 @@ impl State {
             return;
         }
 
-        tracing::info!(%url, "demo");
-        inner.map.insert(url.clone(), Item::new(url.clone()));
-        inner.queue.push_back(url);
-    }
+        let t_send = inner.t_send.clone();
 
-    pub fn summary(&self) -> String {
-        let inner = self.0.lock();
-        let mut out = format!("{} Active Peers:\n", inner.map.len());
-        for (_, item) in inner.map.iter() {
-            let name = item.name.as_deref().unwrap_or("");
-            let shoutout = item.shoutout.as_deref().unwrap_or("");
-            out.push_str(&format!(
-                " - {}({:?}) {}\n",
-                name, shoutout, item.url,
-            ));
-        }
-        out
+        let _ = t_send.send(TermEvt::Output(format!("[NEW] ({:?})", id)));
+
+        tracing::info!(%url, "demo");
+        inner
+            .map
+            .insert(url.clone(), Item::new(url.clone(), t_send));
+        inner.queue.push_back(url);
     }
 }
 
@@ -524,22 +538,35 @@ struct Item {
     last_recv: std::time::Instant,
     name: Option<String>,
     shoutout: Option<String>,
+    t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
 }
 
 impl Drop for Item {
     fn drop(&mut self) {
         tracing::info!(url = %self.url, name = ?self.name, shoutout = ?self.shoutout, "Dropping Peer");
+        let name = self.name.as_deref().unwrap_or("");
+        let shoutout = self.shoutout.as_deref().unwrap_or("");
+        let _ = self.t_send.send(TermEvt::Output(format!(
+            "[DRP] {} ({:?}): {}",
+            name,
+            self.url.id().unwrap(),
+            shoutout,
+        )));
     }
 }
 
 impl Item {
-    pub fn new(url: Tx4Url) -> Self {
+    pub fn new(
+        url: Tx4Url,
+        t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
+    ) -> Self {
         Self {
             url,
             last_send: std::time::Instant::now(),
             last_recv: std::time::Instant::now(),
             name: None,
             shoutout: None,
+            t_send,
         }
     }
 }

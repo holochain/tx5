@@ -33,7 +33,7 @@ rustls-pemfile = "1.0.0"
 serde = { version = "1.0.145", features = [ "derive", "rc" ] }
 serde_json = { version = "1.0.85", features = [ "preserve_order" ] }
 sha2 = "0.10.2"
-socket2 = "0.4.4"
+socket2 = { version = "0.4.4", features = [ "all" ] }
 sodoken = "0.0.6"
 tempfile = "3.3.0"
 tokio = { version = "1.21.2" }

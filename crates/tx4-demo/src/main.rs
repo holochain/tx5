@@ -170,13 +170,17 @@ async fn main_err() -> Result<()> {
 
                             state.handle(rem_cli_url.clone(), name, shoutout);
 
-                            let two_msg = tx4::Buf::from_slice([2, 0]).unwrap();
-
-                            if let Err(err) =
-                                ep.send(rem_cli_url, two_msg).await
-                            {
-                                tracing::error!(?err);
-                            }
+                            // task this out so we don't backlog responses
+                            let ep = ep.clone();
+                            tokio::task::spawn(async move {
+                                let two_msg =
+                                    tx4::Buf::from_slice([2, 0]).unwrap();
+                                if let Err(err) =
+                                    ep.send(rem_cli_url, two_msg).await
+                                {
+                                    tracing::error!(?err);
+                                }
+                            });
                         }
                         tx4::EpEvt::Demo { rem_cli_url } => {
                             state.demo(rem_cli_url);
@@ -192,6 +196,7 @@ async fn main_err() -> Result<()> {
         let name = name.clone();
         let shoutout = shoutout.clone();
         let state = state.clone();
+        let t_send = t_send.clone();
         tokio::task::spawn(async move {
             loop {
                 match state.get_next_send() {
@@ -211,6 +216,11 @@ async fn main_err() -> Result<()> {
                         one_msg.extend_from_slice(so.as_bytes());
                         let one_msg = tx4::Buf::from_slice(&one_msg).unwrap();
                         if let Err(err) = ep.send(url.clone(), one_msg).await {
+                            let _ = t_send.send(TermEvt::Output(format!(
+                                "[ERR] ({:?}): {}",
+                                url.id().unwrap(),
+                                err,
+                            )));
                             tracing::warn!(%url, ?err, "Send Error");
                         }
                     }
@@ -223,7 +233,7 @@ async fn main_err() -> Result<()> {
     let mut stdout = std::io::stdout();
 
     crossterm::terminal::enable_raw_mode()?;
-    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen,)?;
+    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
     crossterm::execute!(
         stdout,
         crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
@@ -327,7 +337,7 @@ async fn main_err() -> Result<()> {
                     stdout,
                     crossterm::cursor::MoveTo(0, term_y - 5),
                 )?;
-                for _ in 0..(term_x) {
+                for _ in 0..term_x {
                     write!(stdout, "-")?;
                 }
                 crossterm::queue!(

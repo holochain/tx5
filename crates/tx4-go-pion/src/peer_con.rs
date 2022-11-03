@@ -34,7 +34,7 @@ impl From<PeerConnectionConfig> for GoBufRef<'static> {
 
 impl From<&PeerConnectionConfig> for GoBufRef<'static> {
     fn from(p: &PeerConnectionConfig) -> Self {
-        GoBufRef::json(&p)
+        GoBufRef::json(p)
     }
 }
 
@@ -55,7 +55,7 @@ impl From<DataChannelConfig> for GoBufRef<'static> {
 
 impl From<&DataChannelConfig> for GoBufRef<'static> {
     fn from(p: &DataChannelConfig) -> Self {
-        GoBufRef::json(&p)
+        GoBufRef::json(p)
     }
 }
 
@@ -72,7 +72,7 @@ impl From<OfferConfig> for GoBufRef<'static> {
 
 impl From<&OfferConfig> for GoBufRef<'static> {
     fn from(p: &OfferConfig) -> Self {
-        GoBufRef::json(&p)
+        GoBufRef::json(p)
     }
 }
 
@@ -89,7 +89,7 @@ impl From<AnswerConfig> for GoBufRef<'static> {
 
 impl From<&AnswerConfig> for GoBufRef<'static> {
     fn from(p: &AnswerConfig) -> Self {
-        GoBufRef::json(&p)
+        GoBufRef::json(p)
     }
 }
 

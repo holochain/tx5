@@ -222,7 +222,6 @@ async fn client_task(
 
     tracing::debug!("ConShutdown");
     srv_hnd.unregister(client_id).await?;
-    srv_hnd.shutdown();
 
     Ok(())
 }

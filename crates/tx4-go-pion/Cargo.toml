@@ -11,7 +11,7 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
-tx4-go-pion-sys = { version = "0.0.1", path = "../tx4-go-pion-sys" }
+tx4-go-pion-sys = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = [ "rt" ] }
 tracing = { workspace = true }

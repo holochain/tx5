@@ -63,8 +63,11 @@ pub enum SigStateEvt {
     /// Forward an answer to a remote.
     SndAnswer(Id, Buf, OneSnd<()>),
 
-    /// Forward an ICE candidate to a remote
+    /// Forward an ICE candidate to a remote.
     SndIce(Id, Buf, OneSnd<()>),
+
+    /// Trigger a demo broadcast.
+    SndDemo,
 }
 
 impl std::fmt::Debug for SigStateEvt {
@@ -73,6 +76,7 @@ impl std::fmt::Debug for SigStateEvt {
             SigStateEvt::SndOffer(_, _, _) => f.write_str("SndOffer"),
             SigStateEvt::SndAnswer(_, _, _) => f.write_str("SndAnswer"),
             SigStateEvt::SndIce(_, _, _) => f.write_str("SndIce"),
+            SigStateEvt::SndDemo => f.write_str("SndDemo"),
         }
     }
 }
@@ -116,6 +120,10 @@ impl SigStateEvtSnd {
             }
         });
         let _ = self.0.send(Ok(SigStateEvt::SndIce(rem_id, ice, s)));
+    }
+
+    pub fn snd_demo(&self) {
+        let _ = self.0.send(Ok(SigStateEvt::SndDemo));
     }
 }
 
@@ -176,6 +184,7 @@ impl SigStateData {
             SigCmd::Offer { rem_id, data } => self.offer(rem_id, data).await,
             SigCmd::Answer { rem_id, data } => self.answer(rem_id, data).await,
             SigCmd::Ice { rem_id, data } => self.ice(rem_id, data).await,
+            SigCmd::Demo { rem_id } => self.demo(rem_id).await,
             SigCmd::SndOffer { rem_id, data } => {
                 self.snd_offer(rem_id, data).await
             }
@@ -183,6 +192,7 @@ impl SigStateData {
                 self.snd_answer(rem_id, data).await
             }
             SigCmd::SndIce { rem_id, data } => self.snd_ice(rem_id, data).await,
+            SigCmd::SndDemo => self.snd_demo().await,
         }
     }
 
@@ -271,8 +281,15 @@ impl SigStateData {
     async fn ice(&mut self, rem_id: Id, data: Buf) -> Result<()> {
         if let Some(conn) = self.registered_conn_map.get(&rem_id) {
             if let Some(conn) = conn.upgrade() {
-                conn.in_ice(data);
+                conn.in_ice(data, true);
             }
+        }
+        Ok(())
+    }
+
+    async fn demo(&mut self, rem_id: Id) -> Result<()> {
+        if let Some(state) = self.state.upgrade() {
+            state.in_demo(self.sig_url.clone(), rem_id)?;
         }
         Ok(())
     }
@@ -289,6 +306,11 @@ impl SigStateData {
 
     async fn snd_ice(&mut self, rem_id: Id, data: Buf) -> Result<()> {
         self.sig_evt.snd_ice(self.this.clone(), rem_id, data);
+        Ok(())
+    }
+
+    async fn snd_demo(&mut self) -> Result<()> {
+        self.sig_evt.snd_demo();
         Ok(())
     }
 }
@@ -323,6 +345,9 @@ enum SigCmd {
         rem_id: Id,
         data: Buf,
     },
+    Demo {
+        rem_id: Id,
+    },
     SndOffer {
         rem_id: Id,
         data: Buf,
@@ -335,6 +360,7 @@ enum SigCmd {
         rem_id: Id,
         data: Buf,
     },
+    SndDemo,
 }
 
 async fn sig_state_task(
@@ -429,6 +455,11 @@ impl SigState {
         self.0.send(Ok(SigCmd::Ice { rem_id, data }))
     }
 
+    /// Receive a demo broadcast from a remote.
+    pub fn demo(&self, rem_id: Id) -> Result<()> {
+        self.0.send(Ok(SigCmd::Demo { rem_id }))
+    }
+
     // -- //
 
     pub(crate) fn new(
@@ -467,6 +498,10 @@ impl SigState {
 
     pub(crate) fn snd_ice(&self, rem_id: Id, data: Buf) -> Result<()> {
         self.0.send(Ok(SigCmd::SndIce { rem_id, data }))
+    }
+
+    pub(crate) fn snd_demo(&self) {
+        let _ = self.0.send(Ok(SigCmd::SndDemo));
     }
 
     async fn check_connected_timeout(&self) {

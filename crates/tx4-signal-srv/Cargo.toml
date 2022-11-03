@@ -22,5 +22,5 @@ sodoken = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tx4-core = { version = "0.0.1", path = "../tx4-core" }
+tx4-core = { workspace = true }
 warp = { workspace = true }

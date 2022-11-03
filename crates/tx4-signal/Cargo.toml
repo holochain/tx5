@@ -25,7 +25,7 @@ tokio = { workspace = true, features = [ "full" ] }
 tokio-rustls = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
-tx4-core = { version = "0.0.1", path = "../tx4-core" }
+tx4-core = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
@@ -33,4 +33,4 @@ rand = { workspace = true }
 rand-utf8 = { workspace = true }
 sodoken = { workspace = true }
 tracing-subscriber = { workspace = true }
-tx4-signal-srv = { version = "0.0.1", path = "../tx4-signal-srv" }
+tx4-signal-srv = { workspace = true }

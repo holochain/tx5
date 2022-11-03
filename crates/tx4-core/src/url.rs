@@ -35,7 +35,7 @@ impl AsRef<Arc<Url>> for Tx4Url {
 
 impl AsRef<Url> for Tx4Url {
     fn as_ref(&self) -> &Url {
-        &*self.0
+        &self.0
     }
 }
 

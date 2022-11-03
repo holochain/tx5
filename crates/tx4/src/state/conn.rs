@@ -163,12 +163,17 @@ impl ConnStateEvtSnd {
         let _ = self.0.send(Ok(ConnStateEvt::SetRem(data, s)));
     }
 
-    pub fn set_ice(&self, conn: ConnStateWeak, data: Buf) {
+    pub fn set_ice(&self, _conn: ConnStateWeak, data: Buf) {
         let s = OneSnd::new(move |result| {
             if let Err(err) = result {
+                tracing::debug!(?err, "ICEError");
+                // treat ice errors loosely... sometimes things
+                // get out of order... especially with perfect negotiation
+                /*
                 if let Some(conn) = conn.upgrade() {
                     conn.close(err);
                 }
+                */
             }
         });
         let _ = self.0.send(Ok(ConnStateEvt::SetIce(data, s)));
@@ -212,6 +217,7 @@ struct ConnStateData {
     metric_conn_count: prometheus::IntGauge,
     meta: ConnStateMeta,
     state: StateWeak,
+    this_id: Id,
     cli_url: Tx4Url,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
@@ -231,6 +237,12 @@ impl ConnStateData {
     }
 
     fn shutdown(&mut self, err: std::io::Error) {
+        tracing::debug!(
+            ?err,
+            this_id = ?self.this_id,
+            rem_id = ?self.rem_id,
+            "ConnShutdown",
+        );
         self.metric_conn_count.dec();
         let _ = self
             .metrics
@@ -273,7 +285,7 @@ impl ConnStateData {
             ConnCmd::SelfAnswer { answer } => self.self_answer(answer).await,
             ConnCmd::InOffer { offer } => self.in_offer(offer).await,
             ConnCmd::InAnswer { answer } => self.in_answer(answer).await,
-            ConnCmd::InIce { ice } => self.in_ice(ice).await,
+            ConnCmd::InIce { ice, cache } => self.in_ice(ice, cache).await,
             ConnCmd::Ready => self.ready().await,
             ConnCmd::MaybeFetchForSend => self.maybe_fetch_for_send().await,
             ConnCmd::Send { to_send } => self.send(to_send).await,
@@ -335,18 +347,51 @@ impl ConnStateData {
         sig.snd_answer(self.rem_id, answer)
     }
 
-    async fn in_offer(&mut self, offer: Buf) -> Result<()> {
+    async fn in_offer(&mut self, mut offer: Buf) -> Result<()> {
+        tracing::trace!(
+            this_id = ?self.this_id,
+            rem_id = ?self.rem_id,
+            offer = %String::from_utf8_lossy(&offer.to_vec()?),
+            "OfferRecv",
+        );
         self.rcv_offer = true;
         self.conn_evt.set_rem(self.this.clone(), offer, true);
+        self.state
+            .upgrade()
+            .ok_or_else(|| Error::id("Closed"))?
+            .get_cached_ice(self.rem_id)?;
         Ok(())
     }
 
-    async fn in_answer(&mut self, answer: Buf) -> Result<()> {
+    async fn in_answer(&mut self, mut answer: Buf) -> Result<()> {
+        tracing::trace!(
+            this_id = ?self.this_id,
+            rem_id = ?self.rem_id,
+            answer = %String::from_utf8_lossy(&answer.to_vec()?),
+            "AnswerRecv",
+        );
         self.conn_evt.set_rem(self.this.clone(), answer, false);
+        self.state
+            .upgrade()
+            .ok_or_else(|| Error::id("Closed"))?
+            .get_cached_ice(self.rem_id)?;
         Ok(())
     }
 
-    async fn in_ice(&mut self, ice: Buf) -> Result<()> {
+    async fn in_ice(&mut self, mut ice: Buf, cache: bool) -> Result<()> {
+        tracing::trace!(
+            this_id = ?self.this_id,
+
+            rem_id = ?self.rem_id,
+            ice = %String::from_utf8_lossy(&ice.to_vec()?),
+            "ICERecv",
+        );
+        if cache {
+            self.state
+                .upgrade()
+                .ok_or_else(|| Error::id("Closed"))?
+                .cache_ice(self.rem_id, ice.try_clone()?)?;
+        }
         self.conn_evt.set_ice(self.this.clone(), ice);
         Ok(())
     }
@@ -441,6 +486,7 @@ enum ConnCmd {
     },
     InIce {
         ice: Buf,
+        cache: bool,
     },
     Ready,
     MaybeFetchForSend,
@@ -464,6 +510,7 @@ async fn conn_state_task(
     mut rcv: ManyRcv<ConnCmd>,
     this: ConnStateWeak,
     state: StateWeak,
+    this_id: Id,
     cli_url: Tx4Url,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
@@ -478,6 +525,7 @@ async fn conn_state_task(
         metric_conn_count,
         meta,
         state,
+        this_id,
         cli_url,
         rem_id,
         conn_evt,
@@ -504,6 +552,7 @@ async fn conn_state_task(
         match data.state.upgrade() {
             None => return Err(Error::id("Closed")),
             Some(state) => {
+                tracing::debug!(id = ?data.rem_id, "NewConn");
                 let seed = ConnStateSeed::new(strong, conn_rcv);
                 state.publish(StateEvt::NewConn(ice_servers, seed));
             }
@@ -680,6 +729,7 @@ impl ConnState {
         metric_conn_count: prometheus::IntGauge,
         state: StateWeak,
         sig_state: SigStateWeak,
+        this_id: Id,
         cli_url: Tx4Url,
         rem_id: Id,
         rcv_limit: Arc<tokio::sync::Semaphore>,
@@ -756,6 +806,7 @@ impl ConnState {
                     rcv,
                     ConnStateWeak(this, meta),
                     state,
+                    this_id,
                     cli_url,
                     rem_id,
                     ConnStateEvtSnd(conn_snd),
@@ -829,8 +880,8 @@ impl ConnState {
         let _ = self.0.send(Ok(ConnCmd::InAnswer { answer }));
     }
 
-    pub(crate) fn in_ice(&self, ice: Buf) {
-        let _ = self.0.send(Ok(ConnCmd::InIce { ice }));
+    pub(crate) fn in_ice(&self, ice: Buf, cache: bool) {
+        let _ = self.0.send(Ok(ConnCmd::InIce { ice, cache }));
     }
 
     pub(crate) async fn notify_send_waiting(&self) {

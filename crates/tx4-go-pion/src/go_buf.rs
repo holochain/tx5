@@ -191,7 +191,7 @@ impl GoBuf {
         self.access(|bytes| GoBuf::from_slice(bytes?))
     }
 
-    /// Read the data out of Go memory into a rust Vec<u8>.
+    /// Read the data out of Go memory into a rust `Vec<u8>`.
     #[inline]
     pub fn to_vec(&mut self) -> Result<Vec<u8>> {
         self.access(|bytes| bytes.map(|bytes| bytes.to_vec()))

@@ -119,7 +119,7 @@ impl Buf {
         })
     }
 
-    /// Copy the buffer out into a rust Vec<u8>.
+    /// Copy the buffer out into a rust `Vec<u8>`.
     #[inline]
     pub fn to_vec(&mut self) -> Result<Vec<u8>> {
         self.imp.to_vec()

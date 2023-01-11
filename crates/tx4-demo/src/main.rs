@@ -133,6 +133,8 @@ async fn main_err() -> Result<()> {
                 match evt {
                     Err(err) => tracing::error!(?err),
                     Ok(evt) => match evt {
+                        tx4::EpEvt::Connected { rem_cli_url: _ }
+                        | tx4::EpEvt::Disconnected { rem_cli_url: _ } => (),
                         tx4::EpEvt::Data {
                             rem_cli_url,
                             mut data,

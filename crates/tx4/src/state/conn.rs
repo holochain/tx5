@@ -397,6 +397,9 @@ impl ConnStateData {
     }
 
     async fn ready(&mut self) -> Result<()> {
+        if let Some(state) = self.state.upgrade() {
+            state.conn_ready(self.cli_url.clone());
+        }
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
         self.maybe_fetch_for_send().await
     }

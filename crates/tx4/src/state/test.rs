@@ -15,7 +15,9 @@ struct Test {
 impl Drop for Test {
     fn drop(&mut self) {
         if !self.shutdown {
-            panic!("Please call Test::shutdown()");
+            // print and abort, since panic within drop breaks things
+            eprintln!("Expected Test::shutdown() to be called, aborting. Backtrace: {:#?}", std::backtrace::Backtrace::capture());
+            std::process::abort();
         }
     }
 }
@@ -89,6 +91,8 @@ impl Test {
     }
 
     pub async fn shutdown(mut self) {
+        self.shutdown = true;
+
         let enc = prometheus::TextEncoder::new();
         let mut buf = Vec::new();
         use prometheus::Encoder;
@@ -98,10 +102,22 @@ impl Test {
 
         self.state.close(Error::id("TestShutdown"));
 
-        assert!(matches!(
-            self.state_evt.recv().await,
-            Some(Err(err)) if &err.to_string() == "TestShutdown",
-        ));
+        let res = self.state_evt.recv().await;
+        assert!(
+            matches!(res, Some(Ok(StateEvt::Disconnected { .. })),),
+            "expected Disconnected, got: {:?}",
+            res
+        );
+
+        let res = self.state_evt.recv().await;
+        assert!(
+            matches!(
+                res,
+                Some(Err(ref err)) if &err.to_string() == "TestShutdown",
+            ),
+            "expected Err(\"TestShutdown\"), got: {:?}",
+            res
+        );
 
         // erm... is this what we want??
         assert!(matches!(
@@ -110,8 +126,6 @@ impl Test {
         ));
 
         assert!(matches!(self.state_evt.recv().await, None));
-
-        self.shutdown = true;
     }
 }
 
@@ -220,6 +234,11 @@ async fn extended_outgoing() {
     conn_state.ready().unwrap();
 
     println!("ready");
+
+    match test.state_evt.recv().await {
+        Some(Ok(StateEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
 
     match conn_evt.recv().await {
         Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
@@ -389,6 +408,11 @@ async fn polite_in_offer() {
         oth => panic!("unexpected: {:?}", oth),
     }
 
+    match test.state_evt.recv().await {
+        Some(Ok(StateEvt::Disconnected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
     let conn_seed = match test.state_evt.recv().await {
         Some(Ok(StateEvt::NewConn(_ice_servers, seed))) => seed,
         oth => panic!("unexpected: {:?}", oth),
@@ -441,6 +465,11 @@ async fn polite_in_offer() {
     conn_state.ready().unwrap();
 
     println!("ready");
+
+    match test.state_evt.recv().await {
+        Some(Ok(StateEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
 
     match conn_evt.recv().await {
         Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
@@ -544,6 +573,11 @@ async fn impolite_in_offer() {
     conn_state.ready().unwrap();
 
     println!("ready");
+
+    match test.state_evt.recv().await {
+        Some(Ok(StateEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
 
     match conn_evt.recv().await {
         Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {

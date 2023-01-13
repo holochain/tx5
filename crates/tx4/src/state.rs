@@ -754,6 +754,14 @@ impl StateWeak {
 #[derive(Clone)]
 pub struct State(Actor<StateCmd>, StateMeta);
 
+impl PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for State {}
+
 impl State {
     /// Construct a new state instance.
     pub fn new(config: DynConfig) -> Result<(Self, ManyRcv<StateEvt>)> {

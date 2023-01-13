@@ -39,9 +39,15 @@ pub enum EpEvt {
 }
 
 /// A tx4 endpoint representing an instance that can send and receive.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Ep {
     state: state::State,
+}
+
+impl std::fmt::Debug for Ep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ep").finish()
+    }
 }
 
 impl Ep {

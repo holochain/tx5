@@ -1,6 +1,6 @@
 [package]
 name = "tx4"
-version = "0.0.1"
+version = "0.0.1-alpha.1"
 edition = "2021"
 description = "The main holochain tx4 webrtc networking crate"
 license = "MIT OR Apache-2.0"

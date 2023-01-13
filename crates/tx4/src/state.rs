@@ -152,6 +152,17 @@ pub enum StateEvt {
 
     /// Received a demo broadcast.
     Demo(Tx4Url),
+
+    /// This is an informational notification indicating a connection
+    /// has been successfully established. Unlike 'NewConn' above,
+    /// no action is required, other than to let your users know.
+    Connected(Tx4Url),
+
+    /// This is an informational notification indicating a connection has
+    /// been dropped. No action is required, other than to let your users know.
+    /// Note, you may get disconnected events for connections that were never
+    /// successfully established.
+    Disconnected(Tx4Url),
 }
 
 #[derive(Clone)]
@@ -179,6 +190,14 @@ struct IceData {
     ice: Buf,
 }
 
+struct RmConn(StateEvtSnd, Tx4Url);
+
+impl Drop for RmConn {
+    fn drop(&mut self) {
+        let _ = self.0.publish(StateEvt::Disconnected(self.1.clone()));
+    }
+}
+
 struct StateData {
     this_id: Option<Id>,
     this: StateWeak,
@@ -187,7 +206,7 @@ struct StateData {
     meta: StateMeta,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx4Url, SigStateWeak>,
-    conn_map: HashMap<Id, ConnStateWeak>,
+    conn_map: HashMap<Id, (ConnStateWeak, RmConn)>,
     send_map: HashMap<Id, VecDeque<SendData>>,
     ice_cache: HashMap<Id, VecDeque<IceData>>,
     recv_limit: Arc<tokio::sync::Semaphore>,
@@ -210,7 +229,7 @@ impl StateData {
                 sig.close(err.err_clone());
             }
         }
-        for (_, conn) in self.conn_map.drain() {
+        for (_, (conn, _)) in self.conn_map.drain() {
             if let Some(conn) = conn.upgrade() {
                 conn.close(err.err_clone());
             }
@@ -259,6 +278,7 @@ impl StateData {
             StateCmd::CloseSig { sig_url, sig, err } => {
                 self.close_sig(sig_url, sig, err).await
             }
+            StateCmd::ConnReady { cli_url } => self.conn_ready(cli_url).await,
             StateCmd::CloseConn { rem_id, conn, err } => {
                 self.close_conn(rem_id, conn, err).await
             }
@@ -295,7 +315,7 @@ impl StateData {
         let mut tot_age = 0.0;
         let mut age_cnt = 0.0;
 
-        for (_, conn) in self.conn_map.iter() {
+        for (_, (conn, _)) in self.conn_map.iter() {
             let meta = conn.meta();
             tot_snd_bytes += meta.metric_bytes_snd.get();
             tot_rcv_bytes += meta.metric_bytes_rcv.get();
@@ -309,7 +329,7 @@ impl StateData {
             0.0
         };
 
-        self.conn_map.retain(|_, conn| {
+        self.conn_map.retain(|_, (conn, _)| {
             let meta = conn.meta();
 
             let args = drop_consider::DropConsiderArgs {
@@ -405,13 +425,14 @@ impl StateData {
             self.this.clone(),
             sig,
             self.this_id.unwrap(),
-            cli_url,
+            cli_url.clone(),
             rem_id,
             self.recv_limit.clone(),
             r,
             maybe_offer,
         )?;
-        self.conn_map.insert(rem_id, conn);
+        self.conn_map
+            .insert(rem_id, (conn, RmConn(self.evt.clone(), cli_url)));
 
         Ok(())
     }
@@ -436,7 +457,7 @@ impl StateData {
 
         let rem_id = cli_url.id().unwrap();
 
-        if let Some(e) = self.conn_map.get(&rem_id) {
+        if let Some((e, _)) = self.conn_map.get(&rem_id) {
             if let Some(conn) = e.upgrade() {
                 conn.notify_send_waiting().await;
                 return Ok(());
@@ -474,7 +495,7 @@ impl StateData {
     ) -> Result<()> {
         let conn = match self.conn_map.get(&rem_id) {
             None => return Ok(()),
-            Some(cur_conn) => {
+            Some((cur_conn, _)) => {
                 if cur_conn != &want_conn {
                     return Ok(());
                 }
@@ -501,7 +522,7 @@ impl StateData {
         rem_id: Id,
         offer: Buf,
     ) -> Result<()> {
-        if let Some(e) = self.conn_map.get(&rem_id) {
+        if let Some((e, _)) = self.conn_map.get(&rem_id) {
             if let Some(conn) = e.upgrade() {
                 // we seem to have a valid conn here... but
                 // we're receiving an incoming offer:
@@ -563,7 +584,7 @@ impl StateData {
             ice_cache,
             ..
         } = self;
-        if let Some(conn) = conn_map.get(&rem_id) {
+        if let Some((conn, _)) = conn_map.get(&rem_id) {
             if let Some(conn) = conn.upgrade() {
                 if let Some(list) = ice_cache.get_mut(&rem_id) {
                     for ice_data in list.iter_mut() {
@@ -594,20 +615,24 @@ impl StateData {
         Ok(())
     }
 
+    async fn conn_ready(&mut self, cli_url: Tx4Url) -> Result<()> {
+        self.evt.publish(StateEvt::Connected(cli_url))
+    }
+
     async fn close_conn(
         &mut self,
         rem_id: Id,
         conn: ConnStateWeak,
         err: std::io::Error,
     ) -> Result<()> {
-        if let Some(cur_conn) = self.conn_map.remove(&rem_id) {
+        if let Some((cur_conn, rm)) = self.conn_map.remove(&rem_id) {
             if cur_conn == conn {
                 if let Some(conn) = conn.upgrade() {
                     conn.close(err);
                 }
             } else {
                 // Whoops!
-                self.conn_map.insert(rem_id, cur_conn);
+                self.conn_map.insert(rem_id, (cur_conn, rm));
             }
         }
         Ok(())
@@ -658,6 +683,9 @@ enum StateCmd {
         sig_url: Tx4Url,
         sig: SigStateWeak,
         err: std::io::Error,
+    },
+    ConnReady {
+        cli_url: Tx4Url,
     },
     CloseConn {
         rem_id: Id,
@@ -725,6 +753,14 @@ impl StateWeak {
 /// Handle to a state tracking instance.
 #[derive(Clone)]
 pub struct State(Actor<StateCmd>, StateMeta);
+
+impl PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for State {}
 
 impl State {
     /// Construct a new state instance.
@@ -934,6 +970,10 @@ impl State {
         err: std::io::Error,
     ) {
         let _ = self.0.send(Ok(StateCmd::CloseSig { sig_url, sig, err }));
+    }
+
+    pub(crate) fn conn_ready(&self, cli_url: Tx4Url) {
+        let _ = self.0.send(Ok(StateCmd::ConnReady { cli_url }));
     }
 
     pub(crate) fn close_conn(

@@ -6,6 +6,18 @@ use tx4_core::Tx4Url;
 /// Event type emitted by a tx4 endpoint.
 #[derive(Debug)]
 pub enum EpEvt {
+    /// Connection established.
+    Connected {
+        /// The remote client url connected.
+        rem_cli_url: Tx4Url,
+    },
+
+    /// Connection closed.
+    Disconnected {
+        /// The remote client url disconnected.
+        rem_cli_url: Tx4Url,
+    },
+
     /// Received data from a remote.
     Data {
         /// The remote client url that sent this message.
@@ -27,9 +39,15 @@ pub enum EpEvt {
 }
 
 /// A tx4 endpoint representing an instance that can send and receive.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Ep {
     state: state::State,
+}
+
+impl std::fmt::Debug for Ep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ep").finish()
+    }
 }
 
 impl Ep {
@@ -65,6 +83,16 @@ impl Ep {
                     }
                     Ok(state::StateEvt::Demo(cli_url)) => {
                         let _ = ep_snd.send(Ok(EpEvt::Demo {
+                            rem_cli_url: cli_url,
+                        }));
+                    }
+                    Ok(state::StateEvt::Connected(cli_url)) => {
+                        let _ = ep_snd.send(Ok(EpEvt::Connected {
+                            rem_cli_url: cli_url,
+                        }));
+                    }
+                    Ok(state::StateEvt::Disconnected(cli_url)) => {
+                        let _ = ep_snd.send(Ok(EpEvt::Disconnected {
                             rem_cli_url: cli_url,
                         }));
                     }
@@ -455,6 +483,11 @@ mod test {
         ep1.send(cli_url2, Buf::from_slice(b"hello").unwrap())
             .await
             .unwrap();
+
+        match ep_rcv2.recv().await {
+            Some(Ok(EpEvt::Connected { .. })) => (),
+            oth => panic!("unexpected: {:?}", oth),
+        }
 
         let recv = ep_rcv2.recv().await;
 

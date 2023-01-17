@@ -1,0 +1,26 @@
+[package]
+name = "tx5-signal-srv"
+version = "0.0.1-alpha.1"
+description = "holochain webrtc signal server"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/holochain/tx5"
+documentation = "https://docs.rs/tx5-signal-core"
+authors = ["Holochain Core Dev Team <devcore@holochain.org>"]
+keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
+categories = ["network-programming"]
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+dirs = { workspace = true }
+futures = { workspace = true }
+get_if_addrs = { workspace = true }
+once_cell = { workspace = true }
+prometheus = { workspace = true }
+rand = { workspace = true }
+sodoken = { workspace = true }
+tokio = { workspace = true, features = [ "full" ] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tx5-core = { workspace = true }
+warp = { workspace = true }

@@ -1,9 +1,9 @@
-# tx4
+# tx5
 
-Tx4 Holochain WebRTC P2P Communication Ecosystem
+Tx5 Holochain WebRTC P2P Communication Ecosystem
 
 - :warning: This code is new and should not yet be considered secure for production use!
-- :warning: This PROOF OF CONCEPT code is currently using the open TURN relay server generously provided by [https://www.metered.ca/tools/openrelay/](https://www.metered.ca/tools/openrelay/). PLEASE DO NOT use this for production purposes. Holochain will be introducing automation for running STUN/TURN along side our tx4-signal-srv code.
+- :warning: This PROOF OF CONCEPT code is currently using the open TURN relay server generously provided by [https://www.metered.ca/tools/openrelay/](https://www.metered.ca/tools/openrelay/). PLEASE DO NOT use this for production purposes. Holochain will be introducing automation for running STUN/TURN along side our tx5-signal-srv code.
 
 [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
 [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)
@@ -14,15 +14,15 @@ Tx4 Holochain WebRTC P2P Communication Ecosystem
 
 ## Crates Managed Within This Monorepo
 
-### Tx4
+### Tx5
 
-- [tx4](crates/tx4) - The main holochain tx4 webrtc networking crate integrating the other code in this monorepo.
+- [tx5](crates/tx5) - The main holochain tx5 webrtc networking crate integrating the other code in this monorepo.
 
-### Tx4 Support Crates
+### Tx5 Support Crates
 
-- [tx4-core](crates/tx4-core) - Core types used in other tx4 crates.
-- [tx4-go-pion-sys](crates/tx4-go-pion-sys) - Low level rust bindings to the go pion webrtc library.
-- [tx4-go-pion](crates/tx4-go-pion) - Higher level rust bindings to the go pion webrtc library.
-- [tx4-signal](crates/tx4-signal) - Holochain webrtc signal client.
-- [tx4-signal-srv](crates/tx4-signal-srv) - Holochain webrtc signal server.
-- [tx4-demo](crates/tx4-demo) - Demo showing off tx4 p2p connectivity.
+- [tx5-core](crates/tx5-core) - Core types used in other tx5 crates.
+- [tx5-go-pion-sys](crates/tx5-go-pion-sys) - Low level rust bindings to the go pion webrtc library.
+- [tx5-go-pion](crates/tx5-go-pion) - Higher level rust bindings to the go pion webrtc library.
+- [tx5-signal](crates/tx5-signal) - Holochain webrtc signal client.
+- [tx5-signal-srv](crates/tx5-signal-srv) - Holochain webrtc signal server.
+- [tx5-demo](crates/tx5-demo) - Demo showing off tx5 p2p connectivity.

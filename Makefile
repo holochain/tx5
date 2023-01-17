@@ -1,4 +1,4 @@
-# go-pion-webrtc Makefile
+# tx5 Makefile
 
 .PHONY: all publish test static docs tools tool_rust tool_fmt tool_readme
 
@@ -8,35 +8,35 @@ all: test
 
 publish:
 	@case "$(crate)" in \
-		tx4-core) \
-			export MANIFEST="./crates/tx4-core/Cargo.toml"; \
+		tx5-core) \
+			export MANIFEST="./crates/tx5-core/Cargo.toml"; \
 			;; \
-		tx4-go-pion-sys) \
-			export MANIFEST="./crates/tx4-go-pion-sys/Cargo.toml"; \
+		tx5-go-pion-sys) \
+			export MANIFEST="./crates/tx5-go-pion-sys/Cargo.toml"; \
 			;; \
-		tx4-go-pion) \
-			export MANIFEST="./crates/tx4-go-pion/Cargo.toml"; \
+		tx5-go-pion) \
+			export MANIFEST="./crates/tx5-go-pion/Cargo.toml"; \
 			;; \
-		tx4-signal) \
-			export MANIFEST="./crates/tx4-signal/Cargo.toml"; \
+		tx5-signal) \
+			export MANIFEST="./crates/tx5-signal/Cargo.toml"; \
 			;; \
-		tx4-signal-srv) \
-			export MANIFEST="./crates/tx4-signal-srv/Cargo.toml"; \
+		tx5-signal-srv) \
+			export MANIFEST="./crates/tx5-signal-srv/Cargo.toml"; \
 			;; \
-		tx4) \
-			export MANIFEST="./crates/tx4/Cargo.toml"; \
+		tx5) \
+			export MANIFEST="./crates/tx5/Cargo.toml"; \
 			;; \
-		tx4-demo) \
-			export MANIFEST="./crates/tx4-demo/Cargo.toml"; \
+		tx5-demo) \
+			export MANIFEST="./crates/tx5-demo/Cargo.toml"; \
 			;; \
 		*) \
-			echo "USAGE: make publish crate=tx4-core"; \
-			echo "USAGE: make publish crate=tx4-go-pion-sys"; \
-			echo "USAGE: make publish crate=tx4-go-pion"; \
-			echo "USAGE: make publish crate=tx4-signal"; \
-			echo "USAGE: make publish crate=tx4-signal-srv"; \
-			echo "USAGE: make publish crate=tx4"; \
-			echo "USAGE: make publish crate=tx4-demo"; \
+			echo "USAGE: make publish crate=tx5-core"; \
+			echo "USAGE: make publish crate=tx5-go-pion-sys"; \
+			echo "USAGE: make publish crate=tx5-go-pion"; \
+			echo "USAGE: make publish crate=tx5-signal"; \
+			echo "USAGE: make publish crate=tx5-signal-srv"; \
+			echo "USAGE: make publish crate=tx5"; \
+			echo "USAGE: make publish crate=tx5-demo"; \
 			exit 1; \
 			;; \
 	esac; \
@@ -53,22 +53,22 @@ test: static tools
 static: docs tools
 	cargo fmt -- --check
 	cargo clippy
-	(cd crates/tx4-go-pion-sys; go fmt -mod vendor)
+	(cd crates/tx5-go-pion-sys; go fmt -mod vendor)
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 docs: tools
-	printf '### The `tx4-signal-srv` executable\n`tx4-signal-srv --help`\n```text\n' > crates/tx4-signal-srv/src/docs/srv_help.md
-	cargo run --manifest-path crates/tx4-signal-srv/Cargo.toml -- --help >> crates/tx4-signal-srv/src/docs/srv_help.md
-	printf '\n```\n' >> crates/tx4-signal-srv/src/docs/srv_help.md
-	cargo readme -r crates/tx4-signal-srv -o README.md
-	printf '\n' >> crates/tx4-signal-srv/README.md
-	cat crates/tx4-signal-srv/src/docs/srv_help.md >> crates/tx4-signal-srv/README.md
-	cargo readme -r crates/tx4-core -o README.md
-	cargo readme -r crates/tx4-go-pion-sys -o README.md
-	cargo readme -r crates/tx4-go-pion -o README.md
-	cargo readme -r crates/tx4-signal -o README.md
-	cargo readme -r crates/tx4 -o README.md
-	cargo readme -r crates/tx4-demo -o README.md
+	printf '### The `tx5-signal-srv` executable\n`tx5-signal-srv --help`\n```text\n' > crates/tx5-signal-srv/src/docs/srv_help.md
+	cargo run --manifest-path crates/tx5-signal-srv/Cargo.toml -- --help >> crates/tx5-signal-srv/src/docs/srv_help.md
+	printf '\n```\n' >> crates/tx5-signal-srv/src/docs/srv_help.md
+	cargo readme -r crates/tx5-signal-srv -o README.md
+	printf '\n' >> crates/tx5-signal-srv/README.md
+	cat crates/tx5-signal-srv/src/docs/srv_help.md >> crates/tx5-signal-srv/README.md
+	cargo readme -r crates/tx5-core -o README.md
+	cargo readme -r crates/tx5-go-pion-sys -o README.md
+	cargo readme -r crates/tx5-go-pion -o README.md
+	cargo readme -r crates/tx5-signal -o README.md
+	cargo readme -r crates/tx5 -o README.md
+	cargo readme -r crates/tx5-demo -o README.md
 
 tools: tool_rust tool_fmt tool_clippy tool_readme
 

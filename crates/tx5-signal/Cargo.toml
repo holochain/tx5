@@ -1,0 +1,36 @@
+[package]
+name = "tx5-signal"
+version = "0.0.1-alpha.1"
+description = "holochain webrtc signal client"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/holochain/tx5"
+documentation = "https://docs.rs/tx5-signal"
+authors = ["Holochain Core Dev Team <devcore@holochain.org>"]
+keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
+categories = ["network-programming"]
+edition = "2021"
+
+[dependencies]
+futures = { workspace = true }
+lair_keystore_api = { workspace = true }
+once_cell = { workspace = true }
+rcgen = { workspace = true }
+ring = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
+rustls-pemfile = { workspace = true }
+sha2 = { workspace = true }
+socket2 = { workspace = true }
+tokio = { workspace = true, features = [ "full" ] }
+tokio-rustls = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+tx5-core = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+rand-utf8 = { workspace = true }
+sodoken = { workspace = true }
+tracing-subscriber = { workspace = true }
+tx5-signal-srv = { workspace = true }

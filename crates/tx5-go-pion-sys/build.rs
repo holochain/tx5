@@ -49,11 +49,13 @@ fn go_check_version() {
 fn go_unzip_vendor() {
     //println!("cargo:warning=NOTE:go unzip vendor");
 
-    let manifest_path = std::env::var("CARGO_MANIFEST_DIR")
+    let out_dir = std::env::var("OUT_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("error reading out dir");
+
+    let mut vendor_path = std::env::var("CARGO_MANIFEST_DIR")
         .map(std::path::PathBuf::from)
         .expect("error reading manifest dir");
-
-    let mut vendor_path = manifest_path.clone();
     vendor_path.push("vendor.zip");
 
     zip::read::ZipArchive::new(
@@ -61,13 +63,38 @@ fn go_unzip_vendor() {
             .expect("failed to open vendor zip file"),
     )
     .expect("failed to open vendor zip file")
-    .extract(manifest_path)
+    .extract(out_dir)
     .expect("failed to extract vendor zip file");
 }
 
 fn go_build(path: &std::path::Path) {
+    let out_dir = std::env::var("OUT_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("error reading out dir");
+
+    let manifest_path = std::env::var("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("error reading manifest dir");
+
+    let cp = |f: &'static str| {
+        let mut a = manifest_path.clone();
+        a.push(f);
+        let mut b = out_dir.clone();
+        b.push(f);
+        std::fs::copy(a, b).expect("failed to copy go file");
+    };
+
+    cp("buffer.go");
+    cp("const.go");
+    cp("datachannel.go");
+    cp("main.go");
+    cp("peerconnection.go");
+    cp("go.sum");
+    cp("go.mod");
+
     let mut cmd = Command::new("go");
-    cmd.arg("build")
+    cmd.current_dir(out_dir)
+        .arg("build")
         .arg("-o")
         .arg(path)
         .arg("-mod=vendor")

@@ -53,7 +53,7 @@ test: static tools
 static: docs tools
 	cargo fmt -- --check
 	cargo clippy
-	(cd crates/tx5-go-pion-sys; go fmt -mod vendor)
+	(cd crates/tx5-go-pion-sys; go fmt)
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 docs: tools

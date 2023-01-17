@@ -17,11 +17,11 @@ publish:
 		tx5-go-pion) \
 			export MANIFEST="./crates/tx5-go-pion/Cargo.toml"; \
 			;; \
-		tx5-signal) \
-			export MANIFEST="./crates/tx5-signal/Cargo.toml"; \
-			;; \
 		tx5-signal-srv) \
 			export MANIFEST="./crates/tx5-signal-srv/Cargo.toml"; \
+			;; \
+		tx5-signal) \
+			export MANIFEST="./crates/tx5-signal/Cargo.toml"; \
 			;; \
 		tx5) \
 			export MANIFEST="./crates/tx5/Cargo.toml"; \
@@ -33,8 +33,8 @@ publish:
 			echo "USAGE: make publish crate=tx5-core"; \
 			echo "USAGE: make publish crate=tx5-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx5-go-pion"; \
-			echo "USAGE: make publish crate=tx5-signal"; \
 			echo "USAGE: make publish crate=tx5-signal-srv"; \
+			echo "USAGE: make publish crate=tx5-signal"; \
 			echo "USAGE: make publish crate=tx5"; \
 			echo "USAGE: make publish crate=tx5-demo"; \
 			exit 1; \

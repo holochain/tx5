@@ -40,8 +40,8 @@ fn go_check_version() {
         .parse()
         .expect("error parsing go version");
     assert!(
-        ver >= 1.19,
-        "go executable version must be >= 1.19, got: {}",
+        ver >= 1.18,
+        "go executable version must be >= 1.18, got: {}",
         ver
     );
 }

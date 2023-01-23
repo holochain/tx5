@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.0.1-alpha.1"
+version = "0.0.1-alpha.2"
 dependencies = [
  "futures",
  "once_cell",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.0.1-alpha.1"
+version = "0.0.1-alpha.2"
 dependencies = [
  "clap",
  "crossterm",
@@ -3048,7 +3048,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion"
-version = "0.0.1-alpha.1"
+version = "0.0.1-alpha.2"
 dependencies = [
  "parking_lot",
  "tokio",

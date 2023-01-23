@@ -72,6 +72,9 @@ fn go_build(path: &std::path::Path) {
         .map(std::path::PathBuf::from)
         .expect("error reading out dir");
 
+    let mut cache = out_dir.clone();
+    cache.push("go-build");
+
     let manifest_path = std::env::var("CARGO_MANIFEST_DIR")
         .map(std::path::PathBuf::from)
         .expect("error reading manifest dir");
@@ -94,6 +97,7 @@ fn go_build(path: &std::path::Path) {
 
     let mut cmd = Command::new("go");
     cmd.current_dir(out_dir)
+        .env("GOCACHE", cache)
         .arg("build")
         .arg("-o")
         .arg(path)

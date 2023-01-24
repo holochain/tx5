@@ -99,6 +99,8 @@ fn go_build(path: &std::path::Path) {
     cmd.current_dir(out_dir)
         .env("GOCACHE", cache)
         .arg("build")
+        .arg("-ldflags") // strip debug symbols
+        .arg("-s -w") // strip debug symbols
         .arg("-o")
         .arg(path)
         .arg("-mod=vendor")

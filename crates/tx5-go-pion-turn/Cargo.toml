@@ -1,0 +1,29 @@
+[package]
+name = "tx5-go-pion-turn"
+version = "0.0.1-alpha.1"
+edition = "2021"
+description = "Rust process wrapper around tx5-go-pion-turn executable"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/holochain/tx5"
+documentation = "https://docs.rs/tx5-go-pion-turn"
+authors = [ "Holochain Core Dev Team <devcore@holochain.org>" ]
+keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
+categories = ["network-programming"]
+exclude = [
+  # unzipped the vendor dir is > 10mb so we wouldn't be able to upload
+  # to crates.io, hence the need for the zip file
+  # actually this one is smaller, just coppied this logic from tx5-go-pion-sys
+  "vendor/",
+]
+
+[dependencies]
+once_cell = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = [ "process" ] }
+tx5-core = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = [ "full" ] }
+
+[build-dependencies]
+zip = { workspace = true }

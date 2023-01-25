@@ -3075,6 +3075,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx5-go-pion-turn"
+version = "0.0.1-alpha.1"
+dependencies = [
+ "once_cell",
+ "tempfile",
+ "tokio",
+ "tx5-core",
+ "zip",
+]
+
+[[package]]
 name = "tx5-signal"
 version = "0.0.1-alpha.1"
 dependencies = [

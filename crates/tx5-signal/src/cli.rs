@@ -378,12 +378,12 @@ impl Cli {
 
         let port = url.port().unwrap_or(443);
 
-        let endpoint = format!("{}:{}", host, port);
+        let endpoint = format!("{host}:{port}");
 
         let con_url = if use_tls {
-            format!("wss://{}/tx5-ws/{}", endpoint, x25519_pub)
+            format!("wss://{endpoint}/tx5-ws/{x25519_pub}")
         } else {
-            format!("ws://{}/tx5-ws/{}", endpoint, x25519_pub)
+            format!("ws://{endpoint}/tx5-ws/{x25519_pub}")
         };
 
         let mut err_list = Vec::new();
@@ -396,7 +396,7 @@ impl Cli {
                     break;
                 }
                 Err(err) => {
-                    err_list.push(format!("{:?}", err));
+                    err_list.push(format!("{err:?}"));
                     continue;
                 }
             }
@@ -404,7 +404,7 @@ impl Cli {
 
         let mut socket = match result_socket {
             Some(socket) => socket,
-            None => return Err(Error::err(format!("{:?}", err_list))),
+            None => return Err(Error::err(format!("{err_list:?}"))),
         };
 
         let auth_req = match socket.next().await {

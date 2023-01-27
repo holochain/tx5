@@ -161,8 +161,7 @@ pub async fn read_config(config_path: &std::path::Path) -> Result<Config> {
     {
         Err(err) => {
             return Err(Error::err(format!(
-                "Failed to open config file {:?}: {:?}",
-                config_path, err,
+                "Failed to open config file {config_path:?}: {err:?}",
             )))
         }
         Ok(file) => file,
@@ -171,8 +170,7 @@ pub async fn read_config(config_path: &std::path::Path) -> Result<Config> {
     let perms = match file.metadata().await {
         Err(err) => {
             return Err(Error::err(format!(
-                "Failed to load config file metadata {:?}: {:?}",
-                config_path, err
+                "Failed to load config file metadata {config_path:?}: {err:?}",
             )))
         }
         Ok(perms) => perms.permissions(),
@@ -180,8 +178,7 @@ pub async fn read_config(config_path: &std::path::Path) -> Result<Config> {
 
     if !perms.readonly() {
         return Err(Error::err(format!(
-            "Refusing to run with writable config file {:?}",
-            config_path
+            "Refusing to run with writable config file {config_path:?}",
         )));
     }
 
@@ -190,8 +187,7 @@ pub async fn read_config(config_path: &std::path::Path) -> Result<Config> {
         let mode = perms.mode() & 0o777;
         if mode != 0o400 {
             return Err(Error::err(format!(
-                "Refusing to run with config file not set to mode 0o400 {:?} 0o{:o}",
-                config_path, mode,
+                "Refusing to run with config file not set to mode 0o400 {config_path:?} 0o{mode:o}",
             )));
         }
     }
@@ -199,16 +195,14 @@ pub async fn read_config(config_path: &std::path::Path) -> Result<Config> {
     let mut conf = String::new();
     if let Err(err) = file.read_to_string(&mut conf).await {
         return Err(Error::err(format!(
-            "Failed to read config file {:?}: {:?}",
-            config_path, err,
+            "Failed to read config file {config_path:?}: {err:?}",
         )));
     }
 
     let conf: Config = match serde_json::from_str(&conf) {
         Err(err) => {
             return Err(Error::err(format!(
-                "Failed to parse config file {:?}: {:?}",
-                config_path, err,
+                "Failed to parse config file {config_path:?}: {err:?}",
             )))
         }
         Ok(res) => res,
@@ -230,8 +224,7 @@ pub async fn read_config(config_path: &std::path::Path) -> Result<Config> {
     {
         Err(err) => {
             return Err(Error::err(format!(
-                "Failed to build TlsConfig from config file {:?}: {:?}",
-                config_path, err,
+                "Failed to build TlsConfig from config file {config_path:?}: {err:?}",
             )))
         }
         Ok(tls) => tls,
@@ -253,8 +246,7 @@ pub async fn write_example_config(config_path: &std::path::Path) -> Result<()> {
     let mut file = match file.open(config_path).await {
         Err(err) => {
             return Err(Error::err(format!(
-                "Failed to create config file {:?}: {:?}",
-                config_path, err,
+                "Failed to create config file {config_path:?}: {err:?}",
             )))
         }
         Ok(file) => file,
@@ -272,16 +264,14 @@ pub async fn write_example_config(config_path: &std::path::Path) -> Result<()> {
 
     if let Err(err) = file.write_all(config.as_bytes()).await {
         return Err(Error::err(format!(
-            "Failed to initialize config file {:?}: {:?}",
-            config_path, err
+            "Failed to initialize config file {config_path:?}: {err:?}",
         )));
     };
 
     let mut perms = match file.metadata().await {
         Err(err) => {
             return Err(Error::err(format!(
-                "Failed to load config file metadata {:?}: {:?}",
-                config_path, err,
+                "Failed to load config file metadata {config_path:?}: {err:?}",
             )))
         }
         Ok(perms) => perms.permissions(),
@@ -293,15 +283,13 @@ pub async fn write_example_config(config_path: &std::path::Path) -> Result<()> {
 
     if let Err(err) = file.set_permissions(perms).await {
         return Err(Error::err(format!(
-            "Failed to set config file permissions {:?}: {:?}",
-            config_path, err,
+            "Failed to set config file permissions {config_path:?}: {err:?}",
         )));
     }
 
     if let Err(err) = file.shutdown().await {
         return Err(Error::err(format!(
-            "Failed to flush/close config file: {:?}",
-            err
+            "Failed to flush/close config file: {err:?}",
         )));
     }
 

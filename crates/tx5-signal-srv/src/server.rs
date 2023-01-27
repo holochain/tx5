@@ -116,13 +116,12 @@ fn reply_err(err: std::io::Error) -> impl warp::reply::Reply {
         warp::reply::html(format!(
             r#"<!DOCTYPE html>
 <html>
-    <head>{}</head>
+    <head>{err}</head>
     <body>
-        <h1>{}</h1>
+        <h1>{err}</h1>
     </body>
 </html>
 "#,
-            err, err,
         )),
         warp::http::StatusCode::BAD_REQUEST,
     )

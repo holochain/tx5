@@ -36,7 +36,7 @@ static EXE: Lazy<(std::path::PathBuf /*std::fs::File*/,)> = Lazy::new(|| {
     #[cfg(not(windows))]
     let ext = "";
 
-    path.push(format!("tx5-go-pion-turn-{}{}", EXE_HASH, ext));
+    path.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
 
     let mut opts = std::fs::OpenOptions::new();
 
@@ -86,7 +86,7 @@ impl Tx5TurnServer {
         let mut cmd = tokio::process::Command::new(EXE.0.as_os_str());
         cmd.kill_on_drop(true);
 
-        println!("ABOUT TO SPAWN: {:?}", cmd);
+        println!("ABOUT TO SPAWN: {cmd:?}");
 
         let proc = cmd.spawn()?;
 
@@ -97,7 +97,8 @@ impl Tx5TurnServer {
     /// Note, a drop will attempt to clean up the process, but to be sure,
     /// use this function.
     pub async fn stop(mut self) -> Result<()> {
-        self.proc.kill().await?;
+        // note, if the process already ended, kill may return an error.
+        let _ = self.proc.kill().await;
         self.proc.wait().await?;
         Ok(())
     }

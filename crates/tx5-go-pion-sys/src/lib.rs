@@ -238,8 +238,7 @@ impl Api {
                     buffer_id: slot_b,
                 },
                 oth => Event::Error(Error::err(format!(
-                    "invalid event_type: {}",
-                    oth
+                    "invalid event_type: {oth}",
                 ))),
             };
 

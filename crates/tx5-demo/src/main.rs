@@ -31,7 +31,7 @@ pub struct Opt {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     if let Err(err) = main_err().await {
-        eprintln!("{}", err);
+        eprintln!("{err}");
         std::process::exit(1);
     }
 }
@@ -327,7 +327,7 @@ async fn main_err() -> Result<()> {
                             stdout,
                             crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
                         )?;
-                        write!(stdout, "{}", o)?;
+                        write!(stdout, "{o}")?;
                         crossterm::queue!(
                             stdout,
                             crossterm::terminal::ScrollUp(1),
@@ -387,7 +387,7 @@ async fn main_err() -> Result<()> {
                     stdout,
                     crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
                 )?;
-                write!(stdout, "new shoutout> {}", input)?;
+                write!(stdout, "new shoutout> {input}")?;
 
                 stdout.flush()?;
             }
@@ -477,8 +477,7 @@ impl State {
                 {
                     tracing::info!(%name, %shoutout, "Updated Info");
                     let _ = t_send.send(TermEvt::Output(format!(
-                        "[UPD] {} ({:?}): {}",
-                        name, id, shoutout,
+                        "[UPD] {name} ({id:?}): {shoutout}",
                     )));
                     item.name = Some(name);
                     item.shoutout = Some(shoutout);
@@ -487,8 +486,7 @@ impl State {
             Vacant(e) => {
                 tracing::info!(%name, %shoutout, "New Peer");
                 let _ = t_send.send(TermEvt::Output(format!(
-                    "[NEW] {} ({:?}): {}",
-                    name, id, shoutout,
+                    "[NEW] {name} ({id:?}): {shoutout}",
                 )));
                 let mut item = Item::new(url.clone(), t_send.clone());
                 item.name = Some(name);
@@ -534,7 +532,7 @@ impl State {
 
         let t_send = inner.t_send.clone();
 
-        let _ = t_send.send(TermEvt::Output(format!("[NEW] ({:?})", id)));
+        let _ = t_send.send(TermEvt::Output(format!("[NEW] ({id:?})")));
 
         tracing::info!(%url, "demo");
         inner

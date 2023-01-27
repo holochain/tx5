@@ -779,10 +779,10 @@ impl State {
         ));
 
         let uniq = uniq();
-        let state_prefix = format!("tx5_ep_{}", uniq).into_boxed_str().into();
+        let state_prefix = format!("tx5_ep_{uniq}").into_boxed_str().into();
 
         let metric_conn_count = prometheus::IntGauge::new(
-            format!("{}_conn_count", state_prefix),
+            format!("{state_prefix}_conn_count"),
             "active connection count",
         )
         .map_err(Error::err)?;

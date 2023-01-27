@@ -744,7 +744,7 @@ impl ConnState {
         let uniq = uniq();
 
         let metric_bytes_snd = prometheus::IntCounter::new(
-            format!("{}_conn_{}_bytes_snd", state_prefix, uniq),
+            format!("{state_prefix}_conn_{uniq}_bytes_snd"),
             "bytes sent out of this connection",
         )
         .map_err(Error::err)?;
@@ -753,7 +753,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let metric_bytes_rcv = prometheus::IntCounter::new(
-            format!("{}_conn_{}_bytes_rcv", state_prefix, uniq),
+            format!("{state_prefix}_conn_{uniq}_bytes_rcv"),
             "incoming bytes received by this connection",
         )
         .map_err(Error::err)?;
@@ -762,7 +762,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let metric_age = MetricTimestamp::new(
-            format!("{}_conn_{}_age", state_prefix, uniq),
+            format!("{state_prefix}_conn_{uniq}_age"),
             "microseconds since this connection was created",
         )
         .map_err(Error::err)?;
@@ -771,7 +771,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let metric_last_active = MetricTimestamp::new(
-            format!("{}_conn_{}_last_active", state_prefix, uniq),
+            format!("{state_prefix}_conn_{uniq}_last_active"),
             "microseconds since we last sent or received data on this connection",
         )
         .map_err(Error::err)?;

@@ -41,8 +41,7 @@ fn go_check_version() {
         .expect("error parsing go version");
     assert!(
         ver >= 1.18,
-        "go executable version must be >= 1.18, got: {}",
-        ver
+        "go executable version must be >= 1.18, got: {ver}",
     );
 }
 
@@ -106,7 +105,7 @@ fn go_build(path: &std::path::Path) {
         .arg("-mod=vendor")
         .arg("-buildmode=c-shared");
 
-    println!("cargo:warning=NOTE:running go build: {:?}", cmd);
+    println!("cargo:warning=NOTE:running go build: {cmd:?}");
 
     assert!(
         cmd.spawn()
@@ -131,7 +130,7 @@ fn gen_rust_const() {
         let line = line.unwrap();
         let line = line.trim();
         if line.starts_with("//") {
-            out_lines.push(format!("/{}", line));
+            out_lines.push(format!("/{line}"));
         } else if line.starts_with("Ty") {
             let mut ws = line.split_whitespace();
             let id = ws.next().unwrap();
@@ -139,7 +138,7 @@ fn gen_rust_const() {
             ws.next().unwrap(); //ty
             ws.next().unwrap(); //=
             let val = ws.next().unwrap();
-            out_lines.push(format!("pub const {}: usize = {};", id, val));
+            out_lines.push(format!("pub const {id}: usize = {val};"));
         }
 
         let mut out: std::path::PathBuf =

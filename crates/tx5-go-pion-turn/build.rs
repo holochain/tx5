@@ -27,8 +27,7 @@ fn go_check_version() {
         .expect("error parsing go version");
     assert!(
         ver >= 1.18,
-        "go executable version must be >= 1.18, got: {}",
-        ver
+        "go executable version must be >= 1.18, got: {ver}",
     );
 }
 
@@ -85,7 +84,7 @@ fn go_build(path: &std::path::Path) {
         .arg(path)
         .arg("-mod=vendor");
 
-    println!("cargo:warning=NOTE:running go build: {:?}", cmd);
+    println!("cargo:warning=NOTE:running go build: {cmd:?}");
 
     assert!(
         cmd.spawn()
@@ -109,9 +108,8 @@ fn go_build(path: &std::path::Path) {
         exe_hash,
         format!(
             r#"
-        const EXE_HASH: &str = "{}";
+        const EXE_HASH: &str = "{hash}";
     "#,
-            hash
         ),
     )
     .expect("failed to write exe hash");

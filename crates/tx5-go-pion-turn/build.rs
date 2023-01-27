@@ -76,7 +76,7 @@ fn go_build(path: &std::path::Path) {
     cp("go.mod");
 
     let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir)
+    cmd.current_dir(out_dir.clone())
         .env("GOCACHE", cache)
         .arg("build")
         .arg("-ldflags") // strip debug symbols
@@ -95,4 +95,24 @@ fn go_build(path: &std::path::Path) {
             .success(),
         "error running go build",
     );
+
+    use sha2::Digest;
+    let data = std::fs::read(path).expect("failed to read generated exe");
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(data);
+    let hash =
+        base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
+
+    let mut exe_hash = out_dir;
+    exe_hash.push("exe_hash.rs");
+    std::fs::write(
+        exe_hash,
+        format!(
+            r#"
+        const EXE_HASH: &str = "{}";
+    "#,
+            hash
+        ),
+    )
+    .expect("failed to write exe hash");
 }

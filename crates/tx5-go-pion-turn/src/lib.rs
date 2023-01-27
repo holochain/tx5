@@ -17,38 +17,62 @@ pub mod deps {
     pub use tx5_core::deps::*;
 }
 
-const EXEC_BYTES: &[u8] =
+const EXE_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/tx5-go-pion-turn"));
+
+include!(concat!(env!("OUT_DIR"), "/exe_hash.rs"));
 
 pub use tx5_core::{Error, ErrorExt, Id, Result};
 
 use once_cell::sync::Lazy;
 
-static EXEC: Lazy<tempfile::TempPath> = Lazy::new(|| {
-    use std::io::Write;
+// keep the file handle open to mitigate replacements on some os
+static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
+    let mut path =
+        dirs::data_local_dir().expect("failed to determine data dir");
 
-    let mut file =
-        tempfile::NamedTempFile::new().expect("failed to open temp file");
+    #[cfg(windows)]
+    let ext = ".exe";
+    #[cfg(not(windows))]
+    let ext = "";
 
-    file.write_all(EXEC_BYTES)
-        .expect("filed to write executable bytes");
-    file.flush().expect("failed to flush executable bytes");
+    path.push(format!("tx5-go-pion-turn-{}{}", EXE_HASH, ext));
 
-    let mut perms = file
-        .as_file()
-        .metadata()
-        .expect("failed to read metadata")
-        .permissions();
-    perms.set_readonly(true);
+    let mut opts = std::fs::OpenOptions::new();
+
+    opts.write(true);
+    opts.create_new(true);
 
     #[cfg(not(windows))]
-    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o700);
 
-    file.as_file_mut()
-        .set_permissions(perms)
-        .expect("failed to set metadata");
+    if let Ok(mut file) = opts.open(&path) {
+        use std::io::Write;
 
-    file.into_temp_path()
+        file.write_all(EXE_BYTES)
+            .expect("failed to write executable bytes");
+        file.flush().expect("failed to flush executable bytes");
+    }
+
+    if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(&path) {
+        use std::io::Read;
+
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)
+            .expect("failed to read executable");
+
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(data);
+        let hash =
+            base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
+
+        assert_eq!(EXE_HASH, hash);
+
+        (path, file)
+    } else {
+        panic!("invalid executable");
+    }
 });
 
 /// Rust process wrapper around tx5-go-pion-turn executable.
@@ -59,7 +83,7 @@ pub struct Tx5TurnServer {
 impl Tx5TurnServer {
     /// Start up a new TURN server.
     pub async fn new() -> Result<Self> {
-        let mut cmd = tokio::process::Command::new(EXEC.as_os_str());
+        let mut cmd = tokio::process::Command::new(EXE.0.as_os_str());
         cmd.kill_on_drop(true);
 
         println!("ABOUT TO SPAWN: {:?}", cmd);

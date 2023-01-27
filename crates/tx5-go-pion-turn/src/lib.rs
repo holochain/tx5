@@ -27,7 +27,7 @@ pub use tx5_core::{Error, ErrorExt, Id, Result};
 use once_cell::sync::Lazy;
 
 // keep the file handle open to mitigate replacements on some os
-static EXE: Lazy<(std::path::PathBuf /*std::fs::File*/,)> = Lazy::new(|| {
+static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
     let mut path =
         dirs::data_local_dir().expect("failed to determine data dir");
 
@@ -69,7 +69,7 @@ static EXE: Lazy<(std::path::PathBuf /*std::fs::File*/,)> = Lazy::new(|| {
 
         assert_eq!(EXE_HASH, hash);
 
-        (path /*file*/,)
+        (path, file)
     } else {
         panic!("invalid executable");
     }

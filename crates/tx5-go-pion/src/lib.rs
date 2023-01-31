@@ -206,7 +206,8 @@ mod tests {
                 while let Some(cmd) = cmd_recv_2.recv().await {
                     match cmd {
                         Cmd::ICE(ice) => {
-                            peer2.add_ice_candidate(ice).await.unwrap()
+                            // ok if these are lost during test shutdown
+                            let _ = peer2.add_ice_candidate(ice).await;
                         }
                         Cmd::Offer(mut offer) => {
                             println!(

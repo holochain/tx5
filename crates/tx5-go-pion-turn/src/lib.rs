@@ -110,7 +110,7 @@ impl Tx5TurnServer {
                 .join(","),
         );
 
-        println!("ABOUT TO SPAWN: {cmd:?}");
+        tracing::info!("ABOUT TO SPAWN: {cmd:?}");
 
         let mut proc = cmd.spawn()?;
         drop(proc.stdin.take());

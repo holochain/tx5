@@ -52,7 +52,7 @@ publish:
 	git push --tags;
 
 test: static tools
-	RUST_BACKTRACE=1 cargo test
+	RUST_BACKTRACE=1 cargo test -- --nocapture
 
 static: docs tools
 	cargo fmt -- --check

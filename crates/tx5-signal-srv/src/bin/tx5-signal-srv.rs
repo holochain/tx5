@@ -29,7 +29,7 @@ pub async fn main() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     if let Err(err) = main_err().await {
-        eprintln!("{}", err);
+        eprintln!("{err}");
         std::process::exit(1);
     }
 }
@@ -40,7 +40,7 @@ async fn main_err() -> Result<()> {
 
     let config = match config_per_opt(opt).await? {
         ConfigPerOpt::ConfigWritten(path) => {
-            println!("# tx5-signal-srv WROTE CONFIG\n{:?}", path);
+            println!("# tx5-signal-srv WROTE CONFIG\n{path:?}");
             return Ok(());
         }
         ConfigPerOpt::ConfigLoaded(config) => config,
@@ -58,7 +58,7 @@ async fn main_err() -> Result<()> {
         } else {
             iface.ip().to_string()
         };
-        println!("# tx5-signal-srv ADDR ws://{}:{}", ip, port);
+        println!("# tx5-signal-srv ADDR ws://{ip}:{port}");
     }
 
     println!("# tx5-signal-srv START");

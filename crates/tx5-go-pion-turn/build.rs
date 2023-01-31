@@ -1,36 +1,22 @@
 use std::process::Command;
 
 fn main() {
-    //println!("cargo:warning=NOTE:running go-pion-webrtc-sys build.rs");
-
     println!("cargo:rerun-if-changed=go.mod");
     println!("cargo:rerun-if-changed=go.sum");
-    println!("cargo:rerun-if-changed=buffer.go");
-    println!("cargo:rerun-if-changed=const.go");
-    println!("cargo:rerun-if-changed=datachannel.go");
-    println!("cargo:rerun-if-changed=peerconnection.go");
     println!("cargo:rerun-if-changed=main.go");
     println!("cargo:rerun-if-changed=vendor.zip");
 
-    let mut lib_path = std::path::PathBuf::from(
+    let mut bin_path = std::path::PathBuf::from(
         std::env::var("OUT_DIR").expect("failed to read env OUT_DIR"),
     );
-    #[cfg(target_os = "macos")]
-    lib_path.push("go-pion-webrtc.dylib");
-    #[cfg(target_os = "windows")]
-    lib_path.push("go-pion-webrtc.dll");
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    lib_path.push("go-pion-webrtc.so");
+    bin_path.push("tx5-go-pion-turn");
 
     go_check_version();
     go_unzip_vendor();
-    go_build(&lib_path);
-    gen_rust_const();
+    go_build(&bin_path);
 }
 
 fn go_check_version() {
-    //println!("cargo:warning=NOTE:checking go version");
-
     let go_version = Command::new("go")
         .arg("version")
         .output()
@@ -46,8 +32,6 @@ fn go_check_version() {
 }
 
 fn go_unzip_vendor() {
-    //println!("cargo:warning=NOTE:go unzip vendor");
-
     let out_dir = std::env::var("OUT_DIR")
         .map(std::path::PathBuf::from)
         .expect("error reading out dir");
@@ -86,24 +70,19 @@ fn go_build(path: &std::path::Path) {
         std::fs::copy(a, b).expect("failed to copy go file");
     };
 
-    cp("buffer.go");
-    cp("const.go");
-    cp("datachannel.go");
     cp("main.go");
-    cp("peerconnection.go");
     cp("go.sum");
     cp("go.mod");
 
     let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir)
+    cmd.current_dir(out_dir.clone())
         .env("GOCACHE", cache)
         .arg("build")
         .arg("-ldflags") // strip debug symbols
         .arg("-s -w") // strip debug symbols
         .arg("-o")
         .arg(path)
-        .arg("-mod=vendor")
-        .arg("-buildmode=c-shared");
+        .arg("-mod=vendor");
 
     println!("cargo:warning=NOTE:running go build: {cmd:?}");
 
@@ -115,35 +94,23 @@ fn go_build(path: &std::path::Path) {
             .success(),
         "error running go build",
     );
-}
 
-fn gen_rust_const() {
-    use inflector::Inflector;
-    use std::io::BufRead;
+    use sha2::Digest;
+    let data = std::fs::read(path).expect("failed to read generated exe");
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(data);
+    let hash =
+        base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
 
-    let mut out_lines = Vec::new();
-
-    for line in
-        std::io::BufReader::new(std::fs::File::open("const.go").unwrap())
-            .lines()
-    {
-        let line = line.unwrap();
-        let line = line.trim();
-        if line.starts_with("//") {
-            out_lines.push(format!("/{line}"));
-        } else if line.starts_with("Ty") {
-            let mut ws = line.split_whitespace();
-            let id = ws.next().unwrap();
-            let id = (*id).to_screaming_snake_case();
-            ws.next().unwrap(); //ty
-            ws.next().unwrap(); //=
-            let val = ws.next().unwrap();
-            out_lines.push(format!("pub const {id}: usize = {val};"));
-        }
-
-        let mut out: std::path::PathBuf =
-            std::env::var_os("OUT_DIR").unwrap().into();
-        out.push("constants.rs");
-        std::fs::write(&out, out_lines.join("\n")).unwrap();
-    }
+    let mut exe_hash = out_dir;
+    exe_hash.push("exe_hash.rs");
+    std::fs::write(
+        exe_hash,
+        format!(
+            r#"
+        const EXE_HASH: &str = "{hash}";
+    "#,
+        ),
+    )
+    .expect("failed to write exe hash");
 }

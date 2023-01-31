@@ -1,6 +1,6 @@
-# tx5-go-pion
+# tx5-go-pion-turn
 
-Higher level rust bindings to the go pion webrtc library.
+Rust process wrapper around tx5-go-pion-turn executable.
 
 - :warning: This code is new and should not yet be considered secure for production use!
 

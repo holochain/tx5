@@ -48,8 +48,7 @@ impl Tx5Url {
             "ws" | "wss" => (),
             scheme => {
                 return Err(Error::err(format!(
-                    "invalid scheme, expected \"ws\" or \"wss\", got: {:?}",
-                    scheme,
+                    "invalid scheme, expected \"ws\" or \"wss\", got: {scheme:?}",
                 )));
             }
         }
@@ -67,8 +66,7 @@ impl Tx5Url {
                     if !first.is_empty() {
                         if first != "tx5-ws" {
                             return Err(Error::err(format!(
-                                "invalid first path segment, expected \"tx5-ws\", got: {:?}",
-                                first,
+                                "invalid first path segment, expected \"tx5-ws\", got: {first:?}",
                             )));
                         }
                         match seg.next() {
@@ -145,6 +143,6 @@ impl Tx5Url {
     pub fn endpoint(&self) -> String {
         let host = self.0.host_str().unwrap();
         let port = self.0.port().unwrap_or(443);
-        format!("{}:{}", host, port)
+        format!("{host}:{port}")
     }
 }

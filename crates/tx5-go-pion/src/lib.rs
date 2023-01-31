@@ -3,6 +3,8 @@
 
 //! Higher level rust bindings to the go pion webrtc library.
 //!
+//! - :warning: This code is new and should not yet be considered secure for production use!
+//!
 //! [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
 //! [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)
 //! [![Chat](https://img.shields.io/badge/chat-chat%2eholochain%2enet-blue.svg?style=flat-square)](https://chat.holochain.org)
@@ -51,26 +53,7 @@ mod tests {
     use std::sync::Arc;
 
     const STUN: &str = r#"{
-    "iceServers": [
-        {
-          "urls": ["stun:openrelay.metered.ca:80"]
-        },
-        {
-          "urls": ["turn:openrelay.metered.ca:80"],
-          "username": "openrelayproject",
-          "credential": "openrelayproject"
-        },
-        {
-          "urls": ["turn:openrelay.metered.ca:443"],
-          "username": "openrelayproject",
-          "credential": "openrelayproject"
-        },
-        {
-          "urls": ["turn:openrelay.metered.ca:443?transport=tcp"],
-          "username": "openrelayproject",
-          "credential": "openrelayproject"
-        }
-    ]
+    "iceServers": []
 }"#;
 
     fn init_tracing() {

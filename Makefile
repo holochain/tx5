@@ -2,7 +2,7 @@
 
 .PHONY: all publish test static docs tools tool_rust tool_fmt tool_readme
 
-SHELL = /usr/bin/env sh
+SHELL = /usr/bin/env sh -eu
 
 all: test
 
@@ -10,6 +10,9 @@ publish:
 	@case "$(crate)" in \
 		tx5-core) \
 			export MANIFEST="./crates/tx5-core/Cargo.toml"; \
+			;; \
+		tx5-go-pion-turn) \
+			export MANIFEST="./crates/tx5-go-pion-turn/Cargo.toml"; \
 			;; \
 		tx5-go-pion-sys) \
 			export MANIFEST="./crates/tx5-go-pion-sys/Cargo.toml"; \
@@ -31,6 +34,7 @@ publish:
 			;; \
 		*) \
 			echo "USAGE: make publish crate=tx5-core"; \
+			echo "USAGE: make publish crate=tx5-go-pion-turn"; \
 			echo "USAGE: make publish crate=tx5-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx5-go-pion"; \
 			echo "USAGE: make publish crate=tx5-signal-srv"; \

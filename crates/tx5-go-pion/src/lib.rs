@@ -67,7 +67,7 @@ mod tests {
     async fn peer_con() {
         init_tracing();
 
-        let (ice, _turn) = tx5_go_pion_turn::test_turn_server().await.unwrap();
+        let (ice, turn) = tx5_go_pion_turn::test_turn_server().await.unwrap();
 
         let config: PeerConnectionConfig =
             serde_json::from_str(&format!("{{\"iceServers\":[{ice}]}}"))
@@ -131,19 +131,22 @@ mod tests {
                     .unwrap()
                 };
 
+                println!("peer1 about to create data channel");
                 let chan1 = peer1
                     .create_data_channel(DataChannelConfig {
                         label: Some("data".into()),
                     })
                     .await
                     .unwrap();
-
                 res_send.send(Res::Chan1(chan1)).unwrap();
+                println!("peer1 create data channel complete");
 
+                println!("peer1 about to create offer");
                 let mut offer =
                     peer1.create_offer(OfferConfig::default()).await.unwrap();
                 peer1.set_local_description(&mut offer).await.unwrap();
                 cmd_send_2.send(Cmd::Offer(offer)).unwrap();
+                println!("peer1 offer complete");
 
                 while let Some(cmd) = cmd_recv_1.recv().await {
                     match cmd {
@@ -213,6 +216,8 @@ mod tests {
                                 )
                             );
                             peer2.set_remote_description(offer).await.unwrap();
+
+                            println!("peer2 about to create answer");
                             let mut answer = peer2
                                 .create_answer(AnswerConfig::default())
                                 .await
@@ -222,6 +227,7 @@ mod tests {
                                 .await
                                 .unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
+                            println!("peer2 answer complete");
                         }
                         _ => break,
                     }
@@ -243,6 +249,8 @@ mod tests {
 
         let (s_open, r_open) = std::sync::mpsc::sync_channel(32);
         let (s_data, r_data) = std::sync::mpsc::sync_channel(32);
+
+        println!("got data channels");
 
         // -- setup event handler for data channel 1 -- //
 
@@ -335,5 +343,6 @@ mod tests {
         cmd_send_2.send(Cmd::Shutdown).unwrap();
         hnd1.await.unwrap();
         hnd2.await.unwrap();
+        turn.stop().await.unwrap();
     }
 }

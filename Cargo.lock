@@ -3085,6 +3085,7 @@ dependencies = [
  "once_cell",
  "sha2 0.10.2",
  "tokio",
+ "tracing",
  "tx5-core",
  "zip",
 ]

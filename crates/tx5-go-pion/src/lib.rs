@@ -52,10 +52,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    const STUN: &str = r#"{
-    "iceServers": []
-}"#;
-
     fn init_tracing() {
         let subscriber = tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(
@@ -71,7 +67,11 @@ mod tests {
     async fn peer_con() {
         init_tracing();
 
-        let config: PeerConnectionConfig = serde_json::from_str(STUN).unwrap();
+        let (ice, _turn) = tx5_go_pion_turn::test_turn_server().await.unwrap();
+
+        let config: PeerConnectionConfig =
+            serde_json::from_str(&format!("{{\"iceServers\":[{ice}]}}"))
+                .unwrap();
 
         let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));

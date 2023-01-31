@@ -20,3 +20,4 @@ url = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
 tracing-subscriber = { workspace = true }
+tx5-go-pion-turn = { workspace = true }

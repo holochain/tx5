@@ -40,3 +40,4 @@ jobs:
           RUST_BACKTRACE: 1
         with:
           command: test
+          args: -- --nocapture

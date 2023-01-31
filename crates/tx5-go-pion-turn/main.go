@@ -17,7 +17,7 @@ func main() {
 	publicIP := flag.String("public-ip", "", "IP Address that TURN can be contacted by.")
 	port := flag.Int("port", 3478, "Listening port.")
 	users := flag.String("users", "", "List of username and password (e.g. \"user=pass,user=pass\")")
-	realm := flag.String("realm", "pion.ly", "Realm (defaults to \"pion.ly\")")
+	realm := flag.String("realm", "holo.host", "Realm (defaults to \"holo.host\")")
 	flag.Parse()
 
 	if len(*publicIP) == 0 {
@@ -32,6 +32,11 @@ func main() {
 	udpListener, err := net.ListenPacket("udp4", "0.0.0.0:"+strconv.Itoa(*port))
 	if err != nil {
 		log.Panicf("Failed to create TURN server listener: %s", err)
+	}
+	addr := udpListener.LocalAddr()
+	addr2, err := net.ResolveUDPAddr(addr.Network(), addr.String())
+	if err != nil {
+		log.Panicf("Failed to parse listener local addr: %s", err)
 	}
 
 	// Cache -users flag for easy lookup later
@@ -66,6 +71,8 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
+
+	log.Printf("#ICE#(turn:%s:%d?transport=udp)#", *publicIP, addr2.Port)
 
 	// Block until user sends SIGINT or SIGTERM
 	sigs := make(chan os.Signal, 1)

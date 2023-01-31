@@ -3,7 +3,6 @@
 Tx5 Holochain WebRTC P2P Communication Ecosystem
 
 - :warning: This code is new and should not yet be considered secure for production use!
-- :warning: This PROOF OF CONCEPT code is currently using the open TURN relay server generously provided by [https://www.metered.ca/tools/openrelay/](https://www.metered.ca/tools/openrelay/). PLEASE DO NOT use this for production purposes. Holochain will be introducing automation for running STUN/TURN along side our tx5-signal-srv code.
 
 [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
 [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)

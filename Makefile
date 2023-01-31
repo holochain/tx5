@@ -54,6 +54,7 @@ static: docs tools
 	cargo fmt -- --check
 	cargo clippy
 	(cd crates/tx5-go-pion-sys; go fmt)
+	(cd crates/tx5-go-pion-turn; go fmt)
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 docs: tools
@@ -64,6 +65,7 @@ docs: tools
 	printf '\n' >> crates/tx5-signal-srv/README.md
 	cat crates/tx5-signal-srv/src/docs/srv_help.md >> crates/tx5-signal-srv/README.md
 	cargo readme -r crates/tx5-core -o README.md
+	cargo readme -r crates/tx5-go-pion-turn -o README.md
 	cargo readme -r crates/tx5-go-pion-sys -o README.md
 	cargo readme -r crates/tx5-go-pion -o README.md
 	cargo readme -r crates/tx5-signal -o README.md

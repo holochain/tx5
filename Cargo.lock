@@ -3080,6 +3080,7 @@ version = "0.0.1-alpha.1"
 dependencies = [
  "base64",
  "dirs",
+ "get_if_addrs",
  "once_cell",
  "sha2 0.10.2",
  "tokio",

@@ -61,27 +61,6 @@ macro_rules! jsdoc {
     };
 }
 
-const ICE_SERVERS: &str = r#"[
-    {
-      "urls": ["stun:openrelay.metered.ca:80"]
-    },
-    {
-      "urls": ["turn:openrelay.metered.ca:80"],
-      "username": "openrelayproject",
-      "credential": "openrelayproject"
-    },
-    {
-      "urls": ["turn:openrelay.metered.ca:443"],
-      "username": "openrelayproject",
-      "credential": "openrelayproject"
-    },
-    {
-      "urls": ["turn:openrelay.metered.ca:443?transport=tcp"],
-      "username": "openrelayproject",
-      "credential": "openrelayproject"
-    }
-]"#;
-
 jsdoc! { Config {
     [
         (), port,
@@ -102,7 +81,7 @@ jsdoc! { Config {
     */
     [
         (), ice_servers,
-        serde_json::Value, (serde_json::from_str(ICE_SERVERS).unwrap()),
+        serde_json::Value, (serde_json::from_str("[]").unwrap()),
         hc4, "#iceServers", "webrtc configuration to broadcast",
     ],
     [

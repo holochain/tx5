@@ -19,6 +19,13 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::drop_non_drop)]
 
+// Link to CoreFoundation on any Apple device.
+#[cfg_attr(
+    any(target_os = "macos", target_os = "ios", target_os = "tvos"),
+    link(name = "CoreFoundation", kind = "framework")
+)]
+extern "C" {}
+
 /// Re-exported dependencies.
 pub mod deps {
     pub use libc;

@@ -1,7 +1,7 @@
 # Build Docker Image
 
 ```shell
-docker build -f ./Dockerfile ../../.. -t tx4-signal-srv
+docker build -f ./Dockerfile ../../.. -t tx5-signal-srv
 ```
 
 # Run, Generating Config File as Needed
@@ -14,6 +14,6 @@ docker run \
   --expose 8443 -p 443:8443 \
   --env RUST_LOG=trace \
   tx4-signal-srv \
-    --config /app/storage/tx4-signal-srv-config.json \
+    --config /app/storage/tx5-signal-srv-config.json \
     --run-with-init-if-needed
 ```

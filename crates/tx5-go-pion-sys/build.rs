@@ -95,6 +95,28 @@ fn go_build(path: &std::path::Path) {
     cp("go.mod");
 
     let mut cmd = Command::new("go");
+    cmd.current_dir(out_dir.clone())
+        .env("GOCACHE", cache.clone())
+        .arg("build")
+        .arg("-ldflags") // strip debug symbols
+        .arg("-s -w") // strip debug symbols
+        .arg("-o")
+        .arg(path)
+        .arg("-mod=vendor")
+        .arg("-buildmode=c-shared");
+
+    println!("cargo:warning=NOTE:running go build: {cmd:?}");
+
+    assert!(
+        cmd.spawn()
+            .expect("error spawing go build")
+            .wait()
+            .expect("error running go build")
+            .success(),
+        "error running go build",
+    );
+
+    let mut cmd = Command::new("go");
     cmd.current_dir(out_dir)
         .env("GOCACHE", cache)
         .arg("build")
@@ -103,7 +125,7 @@ fn go_build(path: &std::path::Path) {
         .arg("-o")
         .arg(path)
         .arg("-mod=vendor")
-        .arg("-buildmode=c-shared");
+        .arg("-buildmode=c-archive");
 
     println!("cargo:warning=NOTE:running go build: {cmd:?}");
 

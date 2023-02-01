@@ -71,6 +71,9 @@ fn go_build(path: &std::path::Path) {
         .map(std::path::PathBuf::from)
         .expect("error reading out dir");
 
+    let mut lib = out_dir.clone();
+    lib.push("libgo-pion-webrtc.a");
+
     let mut cache = out_dir.clone();
     cache.push("go-build");
 
@@ -117,13 +120,13 @@ fn go_build(path: &std::path::Path) {
     );
 
     let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir)
+    cmd.current_dir(out_dir.clone())
         .env("GOCACHE", cache)
         .arg("build")
         .arg("-ldflags") // strip debug symbols
         .arg("-s -w") // strip debug symbols
         .arg("-o")
-        .arg(path)
+        .arg(lib)
         .arg("-mod=vendor")
         .arg("-buildmode=c-archive");
 
@@ -137,6 +140,12 @@ fn go_build(path: &std::path::Path) {
             .success(),
         "error running go build",
     );
+
+    println!(
+        "cargo:rustc-link-search=native={}",
+        out_dir.to_string_lossy()
+    );
+    println!("cargo:rustc-link-lib=static=go-pion-webrtc");
 }
 
 fn gen_rust_const() {

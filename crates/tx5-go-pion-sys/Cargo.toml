@@ -14,6 +14,7 @@ exclude = [
   # to crates.io, hence the need for the zip file
   "vendor/",
 ]
+links = "go-pion-webrtc"
 
 [dependencies]
 libc = { workspace = true }

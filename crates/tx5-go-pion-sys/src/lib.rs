@@ -28,6 +28,7 @@
     any(target_os = "macos", target_os = "ios", target_os = "tvos"),
     link(name = "Security", kind = "framework")
 )]
+#[cfg_attr(windows, link(name = "legacy_stdio_definitions"))]
 extern "C" {}
 
 /// Re-exported dependencies.

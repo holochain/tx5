@@ -19,10 +19,14 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::drop_non_drop)]
 
-// Link to CoreFoundation on any Apple device.
+// Link to CoreFoundation / Security on any Apple device.
 #[cfg_attr(
     any(target_os = "macos", target_os = "ios", target_os = "tvos"),
     link(name = "CoreFoundation", kind = "framework")
+)]
+#[cfg_attr(
+    any(target_os = "macos", target_os = "ios", target_os = "tvos"),
+    link(name = "Security", kind = "framework")
 )]
 extern "C" {}
 

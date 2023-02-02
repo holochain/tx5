@@ -53,7 +53,6 @@ type RecvCb = Box<dyn FnMut(SignalMsg) + 'static + Send>;
 
 /// Builder for constructing a Cli instance.
 pub struct CliBuilder {
-    tls: Option<tls::TlsConfig>,
     recv_cb: RecvCb,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
@@ -63,7 +62,6 @@ pub struct CliBuilder {
 impl Default for CliBuilder {
     fn default() -> Self {
         Self {
-            tls: None,
             recv_cb: Box::new(|_| {}),
             lair_client: None,
             lair_tag: None,
@@ -73,17 +71,6 @@ impl Default for CliBuilder {
 }
 
 impl CliBuilder {
-    /// Set the TlsConfig.
-    pub fn set_tls(&mut self, tls: Option<tls::TlsConfig>) {
-        self.tls = tls;
-    }
-
-    /// Apply a TlsConfig.
-    pub fn with_tls(mut self, tls: Option<tls::TlsConfig>) -> Self {
-        self.set_tls(tls);
-        self
-    }
-
     /// Set the receiver callback.
     pub fn set_recv_cb<Cb>(&mut self, cb: Cb)
     where
@@ -138,6 +125,24 @@ impl CliBuilder {
     pub async fn build(self) -> Result<Cli> {
         Cli::priv_build(self).await
     }
+}
+
+fn priv_system_tls() -> Arc<rustls::ClientConfig> {
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs()
+        .expect("failed to load system tls certs")
+    {
+        roots
+            .add(&rustls::Certificate(cert.0))
+            .expect("faild to add cert to root");
+    }
+
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    )
 }
 
 type WriteSend = tokio::sync::mpsc::Sender<(
@@ -325,7 +330,6 @@ impl Cli {
 
     async fn priv_build(builder: CliBuilder) -> Result<Self> {
         let CliBuilder {
-            tls,
             recv_cb,
             lair_client,
             lair_tag,
@@ -355,8 +359,8 @@ impl Cli {
         };
 
         let use_tls = match url.scheme() {
-            "ws" => false,
-            "wss" => true,
+            "ws" => None,
+            "wss" => Some(priv_system_tls()),
             _ => {
                 return Err(Error::err(format!(
                     "invalid scheme, expected \"ws\" or \"wss\", got {:?}",
@@ -365,11 +369,7 @@ impl Cli {
             }
         };
 
-        if use_tls && tls.is_none() {
-            return Err(Error::err("tls required but no tls config supplied"));
-        }
-
-        tracing::debug!(?use_tls, %url, ?x25519_pub);
+        tracing::debug!(use_tls=%use_tls.is_some(), %url, ?x25519_pub);
 
         let host = match url.host_str() {
             None => return Err(Error::id("InvalidHost")),
@@ -380,7 +380,7 @@ impl Cli {
 
         let endpoint = format!("{host}:{port}");
 
-        let con_url = if use_tls {
+        let con_url = if use_tls.is_some() {
             format!("wss://{endpoint}/tx5-ws/{x25519_pub}")
         } else {
             format!("ws://{endpoint}/tx5-ws/{x25519_pub}")
@@ -390,7 +390,7 @@ impl Cli {
         let mut result_socket = None;
 
         for addr in tokio::net::lookup_host(&endpoint).await? {
-            match Self::priv_con(use_tls, &tls, host, &con_url, addr).await {
+            match Self::priv_con(&use_tls, host, &con_url, addr).await {
                 Ok(con) => {
                     result_socket = Some(con);
                     break;
@@ -471,8 +471,7 @@ impl Cli {
     }
 
     async fn priv_con(
-        use_tls: bool,
-        tls: &Option<crate::tls::TlsConfig>,
+        use_tls: &Option<Arc<rustls::ClientConfig>>,
         host: &str,
         con_url: &str,
         addr: std::net::SocketAddr,
@@ -490,16 +489,14 @@ impl Cli {
         };
 
         let socket: tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream> =
-            if use_tls {
+            if let Some(tls) = use_tls {
                 let name = host
                     .try_into()
                     .unwrap_or_else(|_| "tx5-signal".try_into().unwrap());
 
-                let socket = match tokio_rustls::TlsConnector::from(
-                    tls.as_ref().unwrap().cli.clone(),
-                )
-                .connect(name, socket)
-                .await
+                let socket = match tokio_rustls::TlsConnector::from(tls.clone())
+                    .connect(name, socket)
+                    .await
                 {
                     Ok(socket) => socket,
                     Err(err) => return Err(err),

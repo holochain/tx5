@@ -134,12 +134,27 @@ impl LibInner {
         opts.write(true);
         opts.create_new(true);
 
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+
         if let Ok(mut file) = opts.open(&path) {
             use std::io::Write;
 
             file.write_all(LIB_BYTES)
                 .expect("failed to write lib bytes");
             file.flush().expect("failed to flush lib bytes");
+
+            let mut perms = file
+                .metadata()
+                .expect("failed to get lib metadata")
+                .permissions();
+
+            perms.set_readonly(true);
+            #[cfg(unix)]
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o400);
+
+            file.set_permissions(perms)
+                .expect("failed to set lib permissions");
         }
 
         if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(&path)
@@ -147,8 +162,7 @@ impl LibInner {
             use std::io::Read;
 
             let mut data = Vec::new();
-            file.read_to_end(&mut data)
-                .expect("failed to read executable");
+            file.read_to_end(&mut data).expect("failed to read lib");
 
             use sha2::Digest;
             let mut hasher = sha2::Sha256::new();
@@ -159,6 +173,13 @@ impl LibInner {
             );
 
             assert_eq!(LIB_HASH, hash);
+
+            let perms = file
+                .metadata()
+                .expect("failed to get lib metadata")
+                .permissions();
+
+            assert!(perms.readonly());
 
             let lib =
                 libloading::Library::new(&path).expect("failed to load shared");

@@ -16,7 +16,6 @@
 pub mod deps {
     pub use libc;
     pub use once_cell;
-    pub use tempfile;
     pub use tx5_core::deps::*;
     pub use tx5_go_pion_sys;
     pub use tx5_go_pion_sys::deps::*;

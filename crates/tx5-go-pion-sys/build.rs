@@ -72,7 +72,11 @@ fn go_build(path: &std::path::Path) {
         .expect("error reading out dir");
 
     let mut lib = out_dir.clone();
+
+    #[cfg(not(windows))]
     lib.push("libgo-pion-webrtc.a");
+    #[cfg(windows)]
+    lib.push("go-pion-webrtc.lib");
 
     let mut cache = out_dir.clone();
     cache.push("go-build");

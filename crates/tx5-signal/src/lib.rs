@@ -60,7 +60,5 @@ pub(crate) fn tcp_configure(
 mod cli;
 pub use cli::*;
 
-pub mod tls;
-
 #[cfg(test)]
 mod tests;

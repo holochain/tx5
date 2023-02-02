@@ -23,7 +23,6 @@
 pub mod deps {
     pub use libc;
     pub use once_cell;
-    pub use tempfile;
     pub use tx5_core;
     pub use tx5_core::deps::*;
 }
@@ -33,7 +32,7 @@ pub use tx5_core::{Error, ErrorExt, Id, Result};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
 const LIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dylib"));
 
@@ -41,9 +40,16 @@ const LIB_BYTES: &[u8] =
 const LIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dll"));
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "windows",
+)))]
 const LIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
+
+include!(concat!(env!("OUT_DIR"), "/lib_hash.rs"));
 
 /// Constants.
 pub mod constants {
@@ -53,7 +59,7 @@ use constants::*;
 
 #[ouroboros::self_referencing]
 struct LibInner {
-    _temp_path: tempfile::TempPath,
+    _file: std::fs::File,
     lib: libloading::Library,
     #[borrows(lib)]
     // not 100% sure about this, but we never unload the lib,
@@ -106,35 +112,92 @@ struct LibInner {
 
 impl LibInner {
     unsafe fn priv_new() -> Self {
-        use std::io::Write;
-        let mut file =
-            tempfile::NamedTempFile::new().expect("failed to open temp file");
+        let mut path =
+            dirs::data_local_dir().expect("failed to determine data dir");
 
-        // TODO set some perms?
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
+        let ext = ".dylib";
+        #[cfg(target_os = "windows")]
+        let ext = ".dll";
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "windows",
+        )))]
+        let ext = ".so";
 
-        file.write_all(LIB_BYTES)
-            .expect("failed to write shared bytes");
-        file.flush().expect("failed to flush shared bytes");
+        path.push(format!("go-pion-webrtc-{LIB_HASH}{ext}"));
 
-        // TODO set readonly?
+        let mut opts = std::fs::OpenOptions::new();
 
-        // TODO - keep file open as a security mitigation?
-        let temp_path = file.into_temp_path();
+        opts.write(true);
+        opts.create_new(true);
 
-        let lib = libloading::Library::new(&temp_path)
-            .expect("failed to load shared");
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
 
-        LibInnerBuilder {
-            _temp_path: temp_path,
-            lib,
-            on_event_builder: |lib: &libloading::Library| {
-                lib.get(b"OnEvent").expect("failed to load symbol")
-            },
-            call_builder: |lib: &libloading::Library| {
-                lib.get(b"Call").expect("failed to load symbol")
-            },
+        if let Ok(mut file) = opts.open(&path) {
+            use std::io::Write;
+
+            file.write_all(LIB_BYTES)
+                .expect("failed to write lib bytes");
+            file.flush().expect("failed to flush lib bytes");
+
+            let mut perms = file
+                .metadata()
+                .expect("failed to get lib metadata")
+                .permissions();
+
+            perms.set_readonly(true);
+            #[cfg(unix)]
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o400);
+
+            file.set_permissions(perms)
+                .expect("failed to set lib permissions");
         }
-        .build()
+
+        if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(&path)
+        {
+            use std::io::Read;
+
+            let mut data = Vec::new();
+            file.read_to_end(&mut data).expect("failed to read lib");
+
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(data);
+            let hash = base64::encode_config(
+                hasher.finalize(),
+                base64::URL_SAFE_NO_PAD,
+            );
+
+            assert_eq!(LIB_HASH, hash);
+
+            let perms = file
+                .metadata()
+                .expect("failed to get lib metadata")
+                .permissions();
+
+            assert!(perms.readonly());
+
+            let lib =
+                libloading::Library::new(&path).expect("failed to load shared");
+
+            LibInnerBuilder {
+                _file: file,
+                lib,
+                on_event_builder: |lib: &libloading::Library| {
+                    lib.get(b"OnEvent").expect("failed to load symbol")
+                },
+                call_builder: |lib: &libloading::Library| {
+                    lib.get(b"Call").expect("failed to load symbol")
+                },
+            }
+            .build()
+        } else {
+            panic!("invalid lib");
+        }
     }
 }
 

@@ -3064,12 +3064,14 @@ name = "tx5-go-pion-sys"
 version = "0.0.1-alpha.5"
 dependencies = [
  "Inflector",
+ "base64",
+ "dirs",
  "libc",
  "libloading",
  "once_cell",
  "ouroboros",
  "parking_lot",
- "tempfile",
+ "sha2 0.10.2",
  "tracing",
  "tx5-core",
  "zip",

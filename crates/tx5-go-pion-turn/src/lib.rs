@@ -45,7 +45,7 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
     opts.write(true);
     opts.create_new(true);
 
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o700);
 
     if let Ok(mut file) = opts.open(&path) {
@@ -54,6 +54,18 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
         file.write_all(EXE_BYTES)
             .expect("failed to write executable bytes");
         file.flush().expect("failed to flush executable bytes");
+
+        let mut perms = file
+            .metadata()
+            .expect("failed to get executable metadata")
+            .permissions();
+
+        perms.set_readonly(true);
+        #[cfg(unix)]
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+
+        file.set_permissions(perms)
+            .expect("failed to set exe permissions");
     }
 
     if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(&path) {
@@ -70,6 +82,13 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
             base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
 
         assert_eq!(EXE_HASH, hash);
+
+        let perms = file
+            .metadata()
+            .expect("failed to get executable metadata")
+            .permissions();
+
+        assert!(perms.readonly());
 
         (path, file)
     } else {

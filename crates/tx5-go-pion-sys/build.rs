@@ -12,19 +12,9 @@ fn main() {
     println!("cargo:rerun-if-changed=main.go");
     println!("cargo:rerun-if-changed=vendor.zip");
 
-    let mut lib_path = std::path::PathBuf::from(
-        std::env::var("OUT_DIR").expect("failed to read env OUT_DIR"),
-    );
-    #[cfg(target_os = "macos")]
-    lib_path.push("go-pion-webrtc.dylib");
-    #[cfg(target_os = "windows")]
-    lib_path.push("go-pion-webrtc.dll");
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    lib_path.push("go-pion-webrtc.so");
-
     go_check_version();
     go_unzip_vendor();
-    go_build(&lib_path);
+    go_build();
     gen_rust_const();
 }
 
@@ -66,10 +56,24 @@ fn go_unzip_vendor() {
     .expect("failed to extract vendor zip file");
 }
 
-fn go_build(path: &std::path::Path) {
+fn go_build() {
     let out_dir = std::env::var("OUT_DIR")
         .map(std::path::PathBuf::from)
         .expect("error reading out dir");
+
+    let mut lib_path = out_dir.clone();
+
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
+    lib_path.push("go-pion-webrtc.dylib");
+    #[cfg(target_os = "windows")]
+    lib_path.push("go-pion-webrtc.dll");
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "windows"
+    )))]
+    lib_path.push("go-pion-webrtc.so");
 
     let mut cache = out_dir.clone();
     cache.push("go-build");
@@ -95,13 +99,13 @@ fn go_build(path: &std::path::Path) {
     cp("go.mod");
 
     let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir)
+    cmd.current_dir(out_dir.clone())
         .env("GOCACHE", cache)
         .arg("build")
         .arg("-ldflags") // strip debug symbols
         .arg("-s -w") // strip debug symbols
         .arg("-o")
-        .arg(path)
+        .arg(lib_path.clone())
         .arg("-mod=vendor")
         .arg("-buildmode=c-shared");
 
@@ -115,6 +119,25 @@ fn go_build(path: &std::path::Path) {
             .success(),
         "error running go build",
     );
+
+    use sha2::Digest;
+    let data = std::fs::read(lib_path).expect("failed to read generated lib");
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(data);
+    let hash =
+        base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
+
+    let mut exe_hash = out_dir;
+    exe_hash.push("lib_hash.rs");
+    std::fs::write(
+        exe_hash,
+        format!(
+            r#"
+        const LIB_HASH: &str = "{hash}";
+    "#,
+        ),
+    )
+    .expect("failed to write lib hash");
 }
 
 fn gen_rust_const() {

@@ -62,19 +62,28 @@ static: docs tools
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 docs: tools
+	cp -f crates/tx5-core/src/README.tpl README.md
 	printf '### The `tx5-signal-srv` executable\n`tx5-signal-srv --help`\n```text\n' > crates/tx5-signal-srv/src/docs/srv_help.md
 	cargo run --manifest-path crates/tx5-signal-srv/Cargo.toml -- --help >> crates/tx5-signal-srv/src/docs/srv_help.md
 	printf '\n```\n' >> crates/tx5-signal-srv/src/docs/srv_help.md
-	cargo readme -r crates/tx5-signal-srv -o README.md
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-signal-srv/README.md
+	cargo rdme --force -w tx5-signal-srv
 	printf '\n' >> crates/tx5-signal-srv/README.md
 	cat crates/tx5-signal-srv/src/docs/srv_help.md >> crates/tx5-signal-srv/README.md
-	cargo readme -r crates/tx5-core -o README.md
-	cargo readme -r crates/tx5-go-pion-turn -o README.md
-	cargo readme -r crates/tx5-go-pion-sys -o README.md
-	cargo readme -r crates/tx5-go-pion -o README.md
-	cargo readme -r crates/tx5-signal -o README.md
-	cargo readme -r crates/tx5 -o README.md
-	cargo readme -r crates/tx5-demo -o README.md
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-core/README.md
+	cargo rdme --force -w tx5-core
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-go-pion-turn/README.md
+	cargo rdme --force -w tx5-go-pion-turn
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-go-pion-sys/README.md
+	cargo rdme --force -w tx5-go-pion-sys
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-go-pion/README.md
+	cargo rdme --force -w tx5-go-pion
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-signal/README.md
+	cargo rdme --force -w tx5-signal
+	cp -f crates/tx5-core/src/README.tpl crates/tx5/README.md
+	cargo rdme --force -w tx5
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-demo/README.md
+	cargo rdme --force -w tx5-demo
 
 tools: tool_rust tool_fmt tool_clippy tool_readme
 
@@ -115,9 +124,9 @@ tool_clippy: tool_rust
 	fi;
 
 tool_readme: tool_rust
-	@if ! (cargo readme --version); \
+	@if ! (cargo rdme --version); \
 	then \
-		cargo install cargo-readme; \
+		cargo install cargo-rdme; \
 	else \
 		echo "# Makefile # readme ok"; \
 	fi;

@@ -43,13 +43,13 @@ tokio-tungstenite = { version = "0.17.1", features = [ "rustls-tls-native-roots"
 tracing = "0.1.36"
 tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.15", features = [ "env-filter" ] }
-tx5-core = { version = "0.0.1-alpha.1", path = "crates/tx5-core" }
-tx5-go-pion-turn = { version = "0.0.1-alpha.1", path = "crates/tx5-go-pion-turn" }
-tx5-go-pion-sys = { version = "0.0.1-alpha.5", path = "crates/tx5-go-pion-sys" }
-tx5-go-pion = { version = "0.0.1-alpha.3", path = "crates/tx5-go-pion" }
-tx5-signal-srv = { version = "0.0.1-alpha.1", path = "crates/tx5-signal-srv" }
-tx5-signal = { version = "0.0.1-alpha.1", path = "crates/tx5-signal" }
-tx5 = { version = "0.0.1-alpha.3", path = "crates/tx5" }
+tx5-core = { version = "0.0.1-alpha.2", path = "crates/tx5-core" }
+tx5-go-pion-turn = { version = "0.0.1-alpha.2", path = "crates/tx5-go-pion-turn" }
+tx5-go-pion-sys = { version = "0.0.1-alpha.6", path = "crates/tx5-go-pion-sys" }
+tx5-go-pion = { version = "0.0.1-alpha.4", path = "crates/tx5-go-pion" }
+tx5-signal-srv = { version = "0.0.1-alpha.2", path = "crates/tx5-signal-srv" }
+tx5-signal = { version = "0.0.1-alpha.2", path = "crates/tx5-signal" }
+tx5 = { version = "0.0.1-alpha.4", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
 warp = { version = "0.3.2", features = [ "websocket" ] }
 webrtc = { version = "0.5.0" }

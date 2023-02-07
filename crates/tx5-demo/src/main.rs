@@ -1,6 +1,7 @@
 #![deny(warnings)]
 #![deny(unsafe_code)]
 #![allow(clippy::needless_range_loop)]
+//! tx5-demo
 
 use clap::Parser;
 use std::collections::hash_map::Entry::*;

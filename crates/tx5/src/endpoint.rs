@@ -148,6 +148,8 @@ async fn new_sig_task(
     sig_url: Tx5Url,
     seed: state::SigStateSeed,
 ) {
+    tracing::debug!(%sig_url, "spawning new signal task");
+
     let (sig_snd, mut sig_rcv) = tokio::sync::mpsc::unbounded_channel();
 
     let (sig, cli_url) = match async {
@@ -169,10 +171,13 @@ async fn new_sig_task(
     {
         Ok(r) => r,
         Err(err) => {
+            tracing::error!(?err, "error connecting to signal server");
             seed.result_err(err);
             return;
         }
     };
+
+    tracing::debug!(%cli_url, "signal connection established");
 
     let sig = &sig;
 

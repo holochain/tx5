@@ -381,6 +381,7 @@ impl StateData {
         sig_url: Tx5Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
     ) -> Result<()> {
+        tracing::debug!(%sig_url, "begin register with signal server");
         let new_sig = |resp| -> SigState {
             let (sig, sig_evt) =
                 SigState::new(self.this.clone(), sig_url.clone(), resp);

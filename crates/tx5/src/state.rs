@@ -32,7 +32,8 @@ const MAX_CON_TIME: std::time::Duration = std::time::Duration::from_secs(120);
 const CON_CLOSE_SEND_GRACE: std::time::Duration =
     std::time::Duration::from_secs(5);
 
-pub(crate) fn uniq() -> u64 {
+// TODO - creates too many time series, just aggregate the full counts
+pub(crate) fn bad_uniq() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static UNIQ: AtomicU64 = AtomicU64::new(1);
     UNIQ.fetch_add(1, Ordering::Relaxed)
@@ -179,6 +180,7 @@ impl StateEvtSnd {
 }
 
 pub(crate) struct SendData {
+    msg_uniq: Uniq,
     data: Buf,
     timestamp: std::time::Instant,
     resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
@@ -199,6 +201,7 @@ impl Drop for RmConn {
 }
 
 struct StateData {
+    state_uniq: Uniq,
     this_id: Option<Id>,
     this: StateWeak,
     state_prefix: Arc<str>,
@@ -220,7 +223,7 @@ impl Drop for StateData {
 
 impl StateData {
     fn shutdown(&mut self, err: std::io::Error) {
-        tracing::trace!(this_id = ?self.this_id, "StateShutdown");
+        tracing::trace!(state_uniq = %self.state_uniq, this_id = ?self.this_id, "StateShutdown");
         let _ = self
             .metrics
             .unregister(Box::new(self.meta.metric_conn_count.clone()));
@@ -234,6 +237,7 @@ impl StateData {
                 conn.close(err.err_clone());
             }
         }
+        self.send_map.clear();
         self.evt.err(err);
     }
 
@@ -245,13 +249,14 @@ impl StateData {
                 self.assert_listener_sig(sig_url, resp).await
             }
             StateCmd::SendData {
+                msg_uniq,
                 rem_id,
                 data,
                 send_permit,
                 resp,
                 cli_url,
             } => {
-                self.send_data(rem_id, data, send_permit, resp, cli_url)
+                self.send_data(msg_uniq, rem_id, data, send_permit, resp, cli_url)
                     .await
             }
             StateCmd::Publish { evt } => self.publish(evt).await,
@@ -299,6 +304,7 @@ impl StateData {
                 {
                     true
                 } else {
+                    tracing::trace!(msg_uniq = %info.msg_uniq, "retain false");
                     if let Some(resp) = info.resp.take() {
                         let _ = resp.send(Err(Error::id("Timeout")));
                     }
@@ -333,6 +339,7 @@ impl StateData {
             let meta = conn.meta();
 
             let args = drop_consider::DropConsiderArgs {
+                conn_uniq: meta.conn_uniq.clone(),
                 cfg_conn_max_cnt: meta.config.max_conn_count() as i64,
                 cfg_conn_max_init: meta.config.max_conn_init().as_secs_f64(),
                 tot_conn_cnt,
@@ -381,7 +388,7 @@ impl StateData {
         sig_url: Tx5Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
     ) -> Result<()> {
-        tracing::debug!(%sig_url, "begin register with signal server");
+        tracing::debug!(state_uniq = %self.state_uniq, %sig_url, "begin register with signal server");
         let new_sig = |resp| -> SigState {
             let (sig, sig_evt) =
                 SigState::new(self.this.clone(), sig_url.clone(), resp);
@@ -410,11 +417,16 @@ impl StateData {
         sig_url: Tx5Url,
         rem_id: Id,
         maybe_offer: Option<Buf>,
+        maybe_msg_uniq: Option<Uniq>,
     ) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.assert_listener_sig(sig_url.clone(), s).await?;
 
         let sig = self.signal_map.get(&sig_url).unwrap().clone();
+
+        let conn_uniq = self.state_uniq.sub();
+
+        tracing::trace!(?maybe_msg_uniq, %conn_uniq, "create_new_conn");
 
         let cli_url = sig_url.to_client(rem_id);
         let conn = ConnState::new_and_publish(
@@ -425,6 +437,7 @@ impl StateData {
             self.meta.metric_conn_count.clone(),
             self.this.clone(),
             sig,
+            conn_uniq,
             self.this_id.unwrap(),
             cli_url.clone(),
             rem_id,
@@ -440,6 +453,7 @@ impl StateData {
 
     async fn send_data(
         &mut self,
+        msg_uniq: Uniq,
         rem_id: Id,
         data: Buf,
         send_permit: tokio::sync::OwnedSemaphorePermit,
@@ -450,6 +464,7 @@ impl StateData {
             .entry(rem_id)
             .or_default()
             .push_back(SendData {
+                msg_uniq: msg_uniq.clone(),
                 data,
                 timestamp: std::time::Instant::now(),
                 resp: Some(data_sent),
@@ -468,7 +483,7 @@ impl StateData {
         }
 
         let sig_url = cli_url.to_server();
-        self.create_new_conn(sig_url, rem_id, None).await
+        self.create_new_conn(sig_url, rem_id, None, Some(msg_uniq)).await
     }
 
     async fn publish(&mut self, evt: StateEvt) -> Result<()> {
@@ -562,7 +577,7 @@ impl StateData {
             }
         }
 
-        self.create_new_conn(sig_url, rem_id, Some(offer)).await
+        self.create_new_conn(sig_url, rem_id, Some(offer), None).await
     }
 
     async fn in_demo(&mut self, sig_url: Tx5Url, rem_id: Id) -> Result<()> {
@@ -648,6 +663,7 @@ enum StateCmd {
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
     },
     SendData {
+        msg_uniq: Uniq,
         rem_id: Id,
         data: Buf,
         send_permit: tokio::sync::OwnedSemaphorePermit,
@@ -697,6 +713,7 @@ enum StateCmd {
 
 async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
+    state_uniq: Uniq,
     this: StateWeak,
     state_prefix: Arc<str>,
     metrics: prometheus::Registry,
@@ -705,6 +722,7 @@ async fn state_task(
     recv_limit: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
     let mut data = StateData {
+        state_uniq,
         this_id: None,
         this,
         state_prefix,
@@ -734,6 +752,7 @@ async fn state_task(
 
 #[derive(Clone)]
 pub(crate) struct StateMeta {
+    pub(crate) state_uniq: Uniq,
     pub(crate) config: DynConfig,
     pub(crate) conn_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) snd_limit: Arc<tokio::sync::Semaphore>,
@@ -779,8 +798,10 @@ impl State {
             config.max_recv_bytes() as usize,
         ));
 
-        let uniq = uniq();
-        let state_prefix = format!("tx5_ep_{uniq}").into_boxed_str().into();
+        let state_uniq = Uniq::default();
+
+        let bad_uniq = bad_uniq();
+        let state_prefix = format!("tx5_ep_{bad_uniq}").into_boxed_str().into();
 
         let metric_conn_count = prometheus::IntGauge::new(
             format!("{state_prefix}_conn_count"),
@@ -792,6 +813,7 @@ impl State {
             .map_err(Error::err)?;
 
         let meta = StateMeta {
+            state_uniq: state_uniq.clone(),
             config,
             conn_limit,
             snd_limit,
@@ -804,6 +826,7 @@ impl State {
             Actor::new(move |this, rcv| {
                 state_task(
                     rcv,
+                    state_uniq,
                     StateWeak(this, meta.clone()),
                     state_prefix,
                     metrics,
@@ -885,7 +908,11 @@ impl State {
                 ));
             }
 
+            let msg_uniq = meta.state_uniq.sub();
             let len = data.len()?;
+
+            tracing::trace!(%msg_uniq, %len, "snd_data");
+
             if len > max_send_bytes as usize {
                 return Err(Error::id("DataTooLarge"));
             }
@@ -895,18 +922,34 @@ impl State {
                 .await
                 .map_err(Error::err)?;
 
+            tracing::trace!(%msg_uniq, "snd_data:got permit");
+
             let rem_id = cli_url.id().unwrap();
 
             let (s_sent, r_sent) = tokio::sync::oneshot::channel();
-            this.0.send(Ok(StateCmd::SendData {
+
+            if let Err(err) = this.0.send(Ok(StateCmd::SendData {
+                msg_uniq: msg_uniq.clone(),
                 rem_id,
                 data,
                 send_permit,
                 resp: s_sent,
                 cli_url,
-            }))?;
+            })) {
+                tracing::trace!(%msg_uniq, ?err, "std_data:complete err");
+                return Err(err);
+            }
 
-            r_sent.await.map_err(|_| Error::id("Closed"))?
+            match r_sent.await.map_err(|_| Error::id("Closed")) {
+                Ok(_) => {
+                    tracing::trace!(%msg_uniq, "snd_data:complete ok");
+                    Ok(())
+                }
+                Err(err) => {
+                    tracing::trace!(%msg_uniq, ?err, "std_data:complete err");
+                    Err(err)
+                }
+            }
         }
     }
 

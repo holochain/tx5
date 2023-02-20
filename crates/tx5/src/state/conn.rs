@@ -199,7 +199,7 @@ impl ConnStateEvtSnd {
                 }
                 Ok(buffer_state) => {
                     if let Some(conn) = conn.upgrade() {
-                        conn.set_buffer_state(buffer_state);
+                        conn.notify_send_complete(buffer_state);
                     }
                     if let Some(resp) = resp {
                         let _ = resp.send(Ok(()));
@@ -909,5 +909,10 @@ impl ConnState {
         let _ = self.0.send(Ok(ConnCmd::Send { to_send }));
     }
 
-    pub(crate) fn set_buffer_state(&self, _buffer_state: BufState) {}
+    pub(crate) fn notify_send_complete(&self, _buffer_state: BufState) {
+        // TODO - something with buffer state
+
+        // for now just trigger a check for another message to send
+        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend));
+    }
 }

@@ -256,8 +256,15 @@ impl StateData {
                 resp,
                 cli_url,
             } => {
-                self.send_data(msg_uniq, rem_id, data, send_permit, resp, cli_url)
-                    .await
+                self.send_data(
+                    msg_uniq,
+                    rem_id,
+                    data,
+                    send_permit,
+                    resp,
+                    cli_url,
+                )
+                .await
             }
             StateCmd::Publish { evt } => self.publish(evt).await,
             StateCmd::SigConnected { cli_url } => {
@@ -304,7 +311,7 @@ impl StateData {
                 {
                     true
                 } else {
-                    tracing::trace!(msg_uniq = %info.msg_uniq, "retain false");
+                    tracing::trace!(msg_uniq = %info.msg_uniq, "dropping msg due to timeout");
                     if let Some(resp) = info.resp.take() {
                         let _ = resp.send(Err(Error::id("Timeout")));
                     }
@@ -483,7 +490,8 @@ impl StateData {
         }
 
         let sig_url = cli_url.to_server();
-        self.create_new_conn(sig_url, rem_id, None, Some(msg_uniq)).await
+        self.create_new_conn(sig_url, rem_id, None, Some(msg_uniq))
+            .await
     }
 
     async fn publish(&mut self, evt: StateEvt) -> Result<()> {
@@ -577,7 +585,8 @@ impl StateData {
             }
         }
 
-        self.create_new_conn(sig_url, rem_id, Some(offer), None).await
+        self.create_new_conn(sig_url, rem_id, Some(offer), None)
+            .await
     }
 
     async fn in_demo(&mut self, sig_url: Tx5Url, rem_id: Id) -> Result<()> {
@@ -711,6 +720,7 @@ enum StateCmd {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
     state_uniq: Uniq,
@@ -941,10 +951,16 @@ impl State {
             }
 
             match r_sent.await.map_err(|_| Error::id("Closed")) {
-                Ok(_) => {
-                    tracing::trace!(%msg_uniq, "snd_data:complete ok");
-                    Ok(())
-                }
+                Ok(r) => match r {
+                    Ok(_) => {
+                        tracing::trace!(%msg_uniq, "snd_data:complete ok");
+                        Ok(())
+                    }
+                    Err(err) => {
+                        tracing::trace!(%msg_uniq, ?err, "std_data:complete err");
+                        Err(err)
+                    }
+                },
                 Err(err) => {
                     tracing::trace!(%msg_uniq, ?err, "std_data:complete err");
                     Err(err)

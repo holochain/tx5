@@ -21,6 +21,9 @@ pub use error::*;
 mod id;
 pub use id::*;
 
+mod uniq;
+pub use uniq::*;
+
 mod url;
 pub use crate::url::*;
 

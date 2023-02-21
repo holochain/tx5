@@ -81,7 +81,7 @@ jsdoc! { Config {
     */
     [
         (), ice_servers,
-        serde_json::Value, (serde_json::from_str("[]").unwrap()),
+        serde_json::Value, (serde_json::from_str("{\"iceServers\":[]}").unwrap()),
         hc4, "#iceServers", "webrtc configuration to broadcast",
     ],
     [

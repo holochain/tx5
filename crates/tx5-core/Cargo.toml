@@ -12,6 +12,8 @@ categories = ["network-programming"]
 
 [dependencies]
 base64 = { workspace = true }
+once_cell = { workspace = true }
+rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 url = { workspace = true }

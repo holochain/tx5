@@ -1,3 +1,5 @@
+use tx5_core::Uniq;
+
 #[derive(Debug)]
 pub(crate) enum DropConsiderResult {
     /// Force dropping the connection (supercedes ShouldKeep)
@@ -9,6 +11,7 @@ pub(crate) enum DropConsiderResult {
 
 #[derive(Debug)]
 pub(crate) struct DropConsiderArgs {
+    pub(crate) conn_uniq: Uniq,
     pub(crate) cfg_conn_max_cnt: i64,
     pub(crate) cfg_conn_max_init: f64,
     pub(crate) tot_conn_cnt: i64,
@@ -48,6 +51,7 @@ pub(crate) fn drop_consider(args: &DropConsiderArgs) -> DropConsiderResult {
 fn consider_max(args: &DropConsiderArgs) -> DropConsiderResult {
     if std::time::Duration::from_secs_f64(args.this_age_s) > super::MAX_CON_TIME
     {
+        tracing::trace!(conn_uniq = %args.conn_uniq, "MustDrop::consider_max");
         return DropConsiderResult::MustDrop;
     }
     DropConsiderResult::ShouldKeep
@@ -55,6 +59,7 @@ fn consider_max(args: &DropConsiderArgs) -> DropConsiderResult {
 
 fn consider_long_inactive(args: &DropConsiderArgs) -> DropConsiderResult {
     if args.this_last_active_s >= args.cfg_conn_max_init {
+        tracing::trace!(conn_uniq = %args.conn_uniq, "MustDrop::consider_long_inactive");
         return DropConsiderResult::MustDrop;
     }
     DropConsiderResult::ShouldKeep
@@ -62,6 +67,7 @@ fn consider_long_inactive(args: &DropConsiderArgs) -> DropConsiderResult {
 
 fn consider_long_unconnected(args: &DropConsiderArgs) -> DropConsiderResult {
     if !args.this_connected && args.this_age_s >= args.cfg_conn_max_init {
+        tracing::trace!(conn_uniq = %args.conn_uniq, "MustDrop::consider_long_unconnected");
         return DropConsiderResult::MustDrop;
     }
     DropConsiderResult::ShouldKeep
@@ -74,6 +80,7 @@ fn consider_connected_contention(
         && args.tot_conn_cnt >= args.cfg_conn_max_cnt
         && args.this_last_active_s >= args.cfg_conn_max_init / 2.0
     {
+        tracing::trace!(conn_uniq = %args.conn_uniq, "MustDrop::consider_connected_contention");
         return DropConsiderResult::MustDrop;
     }
     DropConsiderResult::ShouldKeep
@@ -109,6 +116,8 @@ fn consider_low_throughput(args: &DropConsiderArgs) -> DropConsiderResult {
         return DropConsiderResult::ShouldKeep;
     }
 
+    tracing::trace!(conn_uniq = %args.conn_uniq, "MustDrop::consider_low_throughput");
+
     // finally, if we haven't kept, recommend dropping
     DropConsiderResult::MustDrop
 }
@@ -119,6 +128,7 @@ fn consider_low_throughput(args: &DropConsiderArgs) -> DropConsiderResult {
 impl Default for DropConsiderArgs {
     fn default() -> Self {
         Self {
+            conn_uniq: Uniq::default(),
             cfg_conn_max_cnt: 20,
             cfg_conn_max_init: 20.0,
             tot_conn_cnt: 30,

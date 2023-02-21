@@ -199,7 +199,7 @@ impl ConnStateEvtSnd {
                 }
                 Ok(buffer_state) => {
                     if let Some(conn) = conn.upgrade() {
-                        conn.set_buffer_state(buffer_state);
+                        conn.notify_send_complete(buffer_state);
                     }
                     if let Some(resp) = resp {
                         let _ = resp.send(Ok(()));
@@ -212,6 +212,7 @@ impl ConnStateEvtSnd {
 }
 
 struct ConnStateData {
+    conn_uniq: Uniq,
     this: ConnStateWeak,
     metrics: prometheus::Registry,
     metric_conn_count: prometheus::IntGauge,
@@ -239,6 +240,7 @@ impl ConnStateData {
     fn shutdown(&mut self, err: std::io::Error) {
         tracing::debug!(
             ?err,
+            conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
             rem_id = ?self.rem_id,
             "ConnShutdown",
@@ -349,6 +351,7 @@ impl ConnStateData {
 
     async fn in_offer(&mut self, mut offer: Buf) -> Result<()> {
         tracing::trace!(
+            conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
             rem_id = ?self.rem_id,
             offer = %String::from_utf8_lossy(&offer.to_vec()?),
@@ -365,6 +368,7 @@ impl ConnStateData {
 
     async fn in_answer(&mut self, mut answer: Buf) -> Result<()> {
         tracing::trace!(
+            conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
             rem_id = ?self.rem_id,
             answer = %String::from_utf8_lossy(&answer.to_vec()?),
@@ -380,6 +384,7 @@ impl ConnStateData {
 
     async fn in_ice(&mut self, mut ice: Buf, cache: bool) -> Result<()> {
         tracing::trace!(
+            conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
 
             rem_id = ?self.rem_id,
@@ -429,15 +434,17 @@ impl ConnStateData {
     }
 
     async fn send(&mut self, to_send: SendData) -> Result<()> {
-        self.meta.metric_last_active.reset();
-
         let SendData {
+            msg_uniq,
             mut data,
             resp,
             send_permit,
             ..
         } = to_send;
 
+        tracing::trace!(conn_uniq = %self.conn_uniq, %msg_uniq, "conn send");
+
+        self.meta.metric_last_active.reset();
         self.meta.metric_bytes_snd.inc_by(data.len()? as u64);
 
         self.conn_evt
@@ -513,6 +520,7 @@ async fn conn_state_task(
     mut rcv: ManyRcv<ConnCmd>,
     this: ConnStateWeak,
     state: StateWeak,
+    conn_uniq: Uniq,
     this_id: Id,
     cli_url: Tx5Url,
     rem_id: Id,
@@ -523,6 +531,7 @@ async fn conn_state_task(
     metric_conn_count.inc();
 
     let mut data = ConnStateData {
+        conn_uniq,
         this,
         metrics,
         metric_conn_count,
@@ -555,7 +564,7 @@ async fn conn_state_task(
         match data.state.upgrade() {
             None => return Err(Error::id("Closed")),
             Some(state) => {
-                tracing::debug!(id = ?data.rem_id, "NewConn");
+                tracing::debug!(conn_uniq = %data.conn_uniq, id = ?data.rem_id, "NewConn");
                 let seed = ConnStateSeed::new(strong, conn_rcv);
                 state.publish(StateEvt::NewConn(ice_servers, seed));
             }
@@ -581,6 +590,7 @@ async fn conn_state_task(
 
 #[derive(Clone)]
 pub(crate) struct ConnStateMeta {
+    pub(crate) conn_uniq: Uniq,
     pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
     pub(crate) rcv_limit: Arc<tokio::sync::Semaphore>,
@@ -732,6 +742,7 @@ impl ConnState {
         metric_conn_count: prometheus::IntGauge,
         state: StateWeak,
         sig_state: SigStateWeak,
+        conn_uniq: Uniq,
         this_id: Id,
         cli_url: Tx5Url,
         rem_id: Id,
@@ -741,10 +752,11 @@ impl ConnState {
     ) -> Result<ConnStateWeak> {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
 
-        let uniq = uniq();
+        // TODO - creates too many time series, just aggregate the full counts
+        let bad_uniq = bad_uniq();
 
         let metric_bytes_snd = prometheus::IntCounter::new(
-            format!("{state_prefix}_conn_{uniq}_bytes_snd"),
+            format!("{state_prefix}_conn_{bad_uniq}_bytes_snd"),
             "bytes sent out of this connection",
         )
         .map_err(Error::err)?;
@@ -753,7 +765,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let metric_bytes_rcv = prometheus::IntCounter::new(
-            format!("{state_prefix}_conn_{uniq}_bytes_rcv"),
+            format!("{state_prefix}_conn_{bad_uniq}_bytes_rcv"),
             "incoming bytes received by this connection",
         )
         .map_err(Error::err)?;
@@ -762,7 +774,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let metric_age = MetricTimestamp::new(
-            format!("{state_prefix}_conn_{uniq}_age"),
+            format!("{state_prefix}_conn_{bad_uniq}_age"),
             "microseconds since this connection was created",
         )
         .map_err(Error::err)?;
@@ -771,7 +783,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let metric_last_active = MetricTimestamp::new(
-            format!("{state_prefix}_conn_{uniq}_last_active"),
+            format!("{state_prefix}_conn_{bad_uniq}_last_active"),
             "microseconds since we last sent or received data on this connection",
         )
         .map_err(Error::err)?;
@@ -780,6 +792,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let meta = ConnStateMeta {
+            conn_uniq: conn_uniq.clone(),
             config,
             connected: Arc::new(atomic::AtomicBool::new(false)),
             rcv_limit,
@@ -809,6 +822,7 @@ impl ConnState {
                     rcv,
                     ConnStateWeak(this, meta),
                     state,
+                    conn_uniq,
                     this_id,
                     cli_url,
                     rem_id,
@@ -895,5 +909,10 @@ impl ConnState {
         let _ = self.0.send(Ok(ConnCmd::Send { to_send }));
     }
 
-    pub(crate) fn set_buffer_state(&self, _buffer_state: BufState) {}
+    pub(crate) fn notify_send_complete(&self, _buffer_state: BufState) {
+        // TODO - something with buffer state
+
+        // for now just trigger a check for another message to send
+        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend));
+    }
 }

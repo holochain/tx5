@@ -282,9 +282,7 @@ async fn new_conn_task(
 
     let peer_snd2 = peer_snd.clone();
     let mut peer = match async {
-        let peer_config = Buf::from_json(serde_json::json!({
-            "iceServers": ice_servers,
-        }))?;
+        let peer_config = Buf::from_json(ice_servers)?;
 
         let peer =
             tx5_go_pion::PeerConnection::new(peer_config.imp.buf, move |evt| {

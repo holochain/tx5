@@ -58,13 +58,13 @@ impl SigStateSeed {
 /// State wishes to invoke an action on a signal instance.
 pub enum SigStateEvt {
     /// Forward an offer to a remote.
-    SndOffer(Id, Buf, OneSnd<()>),
+    SndOffer(Id, BackBuf, OneSnd<()>),
 
     /// Forward an answer to a remote.
-    SndAnswer(Id, Buf, OneSnd<()>),
+    SndAnswer(Id, BackBuf, OneSnd<()>),
 
     /// Forward an ICE candidate to a remote.
-    SndIce(Id, Buf, OneSnd<()>),
+    SndIce(Id, BackBuf, OneSnd<()>),
 
     /// Trigger a demo broadcast.
     SndDemo,
@@ -89,7 +89,7 @@ impl SigStateEvtSnd {
         let _ = self.0.send(Err(err));
     }
 
-    pub fn snd_offer(&self, sig: SigStateWeak, rem_id: Id, offer: Buf) {
+    pub fn snd_offer(&self, sig: SigStateWeak, rem_id: Id, offer: BackBuf) {
         let s = OneSnd::new(move |result| {
             if let Err(err) = result {
                 if let Some(sig) = sig.upgrade() {
@@ -100,7 +100,7 @@ impl SigStateEvtSnd {
         let _ = self.0.send(Ok(SigStateEvt::SndOffer(rem_id, offer, s)));
     }
 
-    pub fn snd_answer(&self, sig: SigStateWeak, rem_id: Id, offer: Buf) {
+    pub fn snd_answer(&self, sig: SigStateWeak, rem_id: Id, offer: BackBuf) {
         let s = OneSnd::new(move |result| {
             if let Err(err) = result {
                 if let Some(sig) = sig.upgrade() {
@@ -111,7 +111,7 @@ impl SigStateEvtSnd {
         let _ = self.0.send(Ok(SigStateEvt::SndAnswer(rem_id, offer, s)));
     }
 
-    pub fn snd_ice(&self, sig: SigStateWeak, rem_id: Id, ice: Buf) {
+    pub fn snd_ice(&self, sig: SigStateWeak, rem_id: Id, ice: BackBuf) {
         let s = OneSnd::new(move |result| {
             if let Err(err) = result {
                 if let Some(sig) = sig.upgrade() {
@@ -262,14 +262,14 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn offer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+    async fn offer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         if let Some(state) = self.state.upgrade() {
             state.in_offer(self.sig_url.clone(), rem_id, data)?;
         }
         Ok(())
     }
 
-    async fn answer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+    async fn answer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         if let Some(conn) = self.registered_conn_map.get(&rem_id) {
             if let Some(conn) = conn.upgrade() {
                 conn.in_answer(data);
@@ -278,7 +278,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn ice(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+    async fn ice(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         if let Some(conn) = self.registered_conn_map.get(&rem_id) {
             if let Some(conn) = conn.upgrade() {
                 conn.in_ice(data, true);
@@ -294,17 +294,17 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn snd_offer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+    async fn snd_offer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.sig_evt.snd_offer(self.this.clone(), rem_id, data);
         Ok(())
     }
 
-    async fn snd_answer(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+    async fn snd_answer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.sig_evt.snd_answer(self.this.clone(), rem_id, data);
         Ok(())
     }
 
-    async fn snd_ice(&mut self, rem_id: Id, data: Buf) -> Result<()> {
+    async fn snd_ice(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.sig_evt.snd_ice(self.this.clone(), rem_id, data);
         Ok(())
     }
@@ -335,30 +335,30 @@ enum SigCmd {
     },
     Offer {
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     Answer {
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     Ice {
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     Demo {
         rem_id: Id,
     },
     SndOffer {
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     SndAnswer {
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     SndIce {
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     SndDemo,
 }
@@ -441,17 +441,17 @@ impl SigState {
     }
 
     /// Receive an incoming offer from a remote.
-    pub fn offer(&self, rem_id: Id, data: Buf) -> Result<()> {
+    pub fn offer(&self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.0.send(Ok(SigCmd::Offer { rem_id, data }))
     }
 
     /// Receive an incoming answer from a remote.
-    pub fn answer(&self, rem_id: Id, data: Buf) -> Result<()> {
+    pub fn answer(&self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.0.send(Ok(SigCmd::Answer { rem_id, data }))
     }
 
     /// Receive an incoming ice candidate from a remote.
-    pub fn ice(&self, rem_id: Id, data: Buf) -> Result<()> {
+    pub fn ice(&self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.0.send(Ok(SigCmd::Ice { rem_id, data }))
     }
 
@@ -488,15 +488,15 @@ impl SigState {
         (Self(actor), ManyRcv(sig_rcv))
     }
 
-    pub(crate) fn snd_offer(&self, rem_id: Id, data: Buf) -> Result<()> {
+    pub(crate) fn snd_offer(&self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.0.send(Ok(SigCmd::SndOffer { rem_id, data }))
     }
 
-    pub(crate) fn snd_answer(&self, rem_id: Id, data: Buf) -> Result<()> {
+    pub(crate) fn snd_answer(&self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.0.send(Ok(SigCmd::SndAnswer { rem_id, data }))
     }
 
-    pub(crate) fn snd_ice(&self, rem_id: Id, data: Buf) -> Result<()> {
+    pub(crate) fn snd_ice(&self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.0.send(Ok(SigCmd::SndIce { rem_id, data }))
     }
 

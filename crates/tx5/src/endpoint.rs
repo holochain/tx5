@@ -226,15 +226,15 @@ async fn new_sig_task(
                             sig_state.demo(rem_pub)
                         }
                         Some(tx5_signal::SignalMsg::Offer { rem_pub, offer }) => {
-                            let offer = Buf::from_json(offer)?;
+                            let offer = BackBuf::from_json(offer)?;
                             sig_state.offer(rem_pub, offer)
                         }
                         Some(tx5_signal::SignalMsg::Answer { rem_pub, answer }) => {
-                            let answer = Buf::from_json(answer)?;
+                            let answer = BackBuf::from_json(answer)?;
                             sig_state.answer(rem_pub, answer)
                         }
                         Some(tx5_signal::SignalMsg::Ice { rem_pub, ice }) => {
-                            let ice = Buf::from_json(ice)?;
+                            let ice = BackBuf::from_json(ice)?;
                             sig_state.ice(rem_pub, ice)
                         }
                         None => Err(Error::id("SigClosed")),
@@ -311,7 +311,7 @@ async fn new_conn_task(
 
     let peer_snd2 = peer_snd.clone();
     let mut peer = match async {
-        let peer_config = Buf::from_json(ice_servers)?;
+        let peer_config = BackBuf::from_json(ice_servers)?;
 
         let peer =
             tx5_go_pion::PeerConnection::new(peer_config.imp.buf, move |evt| {
@@ -350,7 +350,7 @@ async fn new_conn_task(
                         break;
                     }
                     Some(MultiEvt::Peer(PeerEvt::ICECandidate(buf))) => {
-                        let buf = Buf::from_raw(buf);
+                        let buf = BackBuf::from_raw(buf);
                         if conn_state.ice(buf).is_err() {
                             break;
                         }
@@ -371,7 +371,7 @@ async fn new_conn_task(
                         break;
                     }
                     Some(MultiEvt::Data(DataEvt::Message(buf))) => {
-                        if conn_state.rcv_data(Buf::from_raw(buf)).is_err() {
+                        if conn_state.rcv_data(BackBuf::from_raw(buf)).is_err() {
                             break;
                         }
                     }
@@ -405,7 +405,7 @@ async fn new_conn_task(
                                 );
                             }
 
-                            Ok(Buf::from_raw(buf))
+                            Ok(BackBuf::from_raw(buf))
                         }).await;
                     }
                     Some(Ok(state::ConnStateEvt::CreateAnswer(mut resp))) => {
@@ -421,7 +421,7 @@ async fn new_conn_task(
                                     "create_answer",
                                 );
                             }
-                            Ok(Buf::from_raw(buf))
+                            Ok(BackBuf::from_raw(buf))
                         }).await;
                     }
                     Some(Ok(state::ConnStateEvt::SetLoc(buf, mut resp))) => {

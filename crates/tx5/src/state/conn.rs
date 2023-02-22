@@ -57,32 +57,32 @@ impl ConnStateSeed {
 
 /// Indication of the current buffer state.
 pub enum BufState {
-    /// Buffer is low, we can buffer more data.
+    /// BackBuffer is low, we can buffer more data.
     Low,
 
-    /// Buffer is high, we should wait / apply backpressure.
+    /// BackBuffer is high, we should wait / apply backpressure.
     High,
 }
 
 /// State wishes to invoke an action on a connection instance.
 pub enum ConnStateEvt {
     /// Request to create an offer.
-    CreateOffer(OneSnd<Buf>),
+    CreateOffer(OneSnd<BackBuf>),
 
     /// Request to create an answer.
-    CreateAnswer(OneSnd<Buf>),
+    CreateAnswer(OneSnd<BackBuf>),
 
     /// Request to set a local description.
-    SetLoc(Buf, OneSnd<()>),
+    SetLoc(BackBuf, OneSnd<()>),
 
     /// Request to set a remote description.
-    SetRem(Buf, OneSnd<()>),
+    SetRem(BackBuf, OneSnd<()>),
 
     /// Request to append a trickle ICE candidate.
-    SetIce(Buf, OneSnd<()>),
+    SetIce(BackBuf, OneSnd<()>),
 
     /// Request to send a message on the data channel.
-    SndData(Buf, OneSnd<BufState>),
+    SndData(BackBuf, OneSnd<BufState>),
 }
 
 impl std::fmt::Debug for ConnStateEvt {
@@ -126,7 +126,7 @@ impl ConnStateEvtSnd {
         let _ = self.0.send(Ok(ConnStateEvt::CreateAnswer(s)));
     }
 
-    pub fn set_loc(&self, conn: ConnStateWeak, data: Buf) {
+    pub fn set_loc(&self, conn: ConnStateWeak, data: BackBuf) {
         let s = OneSnd::new(move |result| {
             if let Err(err) = result {
                 if let Some(conn) = conn.upgrade() {
@@ -137,7 +137,12 @@ impl ConnStateEvtSnd {
         let _ = self.0.send(Ok(ConnStateEvt::SetLoc(data, s)));
     }
 
-    pub fn set_rem(&self, conn: ConnStateWeak, data: Buf, should_answer: bool) {
+    pub fn set_rem(
+        &self,
+        conn: ConnStateWeak,
+        data: BackBuf,
+        should_answer: bool,
+    ) {
         let s = if should_answer {
             OneSnd::new(move |result| match result {
                 Ok(_) => {
@@ -163,7 +168,7 @@ impl ConnStateEvtSnd {
         let _ = self.0.send(Ok(ConnStateEvt::SetRem(data, s)));
     }
 
-    pub fn set_ice(&self, _conn: ConnStateWeak, data: Buf) {
+    pub fn set_ice(&self, _conn: ConnStateWeak, data: BackBuf) {
         let s = OneSnd::new(move |result| {
             if let Err(err) = result {
                 tracing::debug!(?err, "ICEError");
@@ -182,7 +187,7 @@ impl ConnStateEvtSnd {
     pub fn snd_data(
         &self,
         conn: ConnStateWeak,
-        data: Buf,
+        data: BackBuf,
         resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
         send_permit: tokio::sync::OwnedSemaphorePermit,
     ) {
@@ -330,12 +335,12 @@ impl ConnStateData {
         }
     }
 
-    async fn ice(&mut self, data: Buf) -> Result<()> {
+    async fn ice(&mut self, data: BackBuf) -> Result<()> {
         let sig = self.get_sig()?;
         sig.snd_ice(self.rem_id, data)
     }
 
-    async fn self_offer(&mut self, offer: Result<Buf>) -> Result<()> {
+    async fn self_offer(&mut self, offer: Result<BackBuf>) -> Result<()> {
         let sig = self.get_sig()?;
         let mut offer = offer?;
         self.conn_evt.set_loc(self.this.clone(), offer.try_clone()?);
@@ -347,7 +352,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn self_answer(&mut self, answer: Result<Buf>) -> Result<()> {
+    async fn self_answer(&mut self, answer: Result<BackBuf>) -> Result<()> {
         let sig = self.get_sig()?;
         let mut answer = answer?;
         self.conn_evt
@@ -355,7 +360,7 @@ impl ConnStateData {
         sig.snd_answer(self.rem_id, answer)
     }
 
-    async fn in_offer(&mut self, mut offer: Buf) -> Result<()> {
+    async fn in_offer(&mut self, mut offer: BackBuf) -> Result<()> {
         tracing::trace!(
             conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
@@ -372,7 +377,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn in_answer(&mut self, mut answer: Buf) -> Result<()> {
+    async fn in_answer(&mut self, mut answer: BackBuf) -> Result<()> {
         tracing::trace!(
             conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
@@ -388,7 +393,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn in_ice(&mut self, mut ice: Buf, cache: bool) -> Result<()> {
+    async fn in_ice(&mut self, mut ice: BackBuf, cache: bool) -> Result<()> {
         tracing::trace!(
             conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
@@ -528,23 +533,23 @@ enum ConnCmd {
     NotifyConstructed,
     CheckConnectedTimeout,
     Ice {
-        data: Buf,
+        data: BackBuf,
     },
     SelfOffer {
-        offer: Result<Buf>,
+        offer: Result<BackBuf>,
     },
     ReqSelfAnswer,
     SelfAnswer {
-        answer: Result<Buf>,
+        answer: Result<BackBuf>,
     },
     InOffer {
-        offer: Buf,
+        offer: BackBuf,
     },
     InAnswer {
-        answer: Buf,
+        answer: BackBuf,
     },
     InIce {
-        ice: Buf,
+        ice: BackBuf,
         cache: bool,
     },
     Ready,
@@ -723,7 +728,7 @@ impl ConnState {
     }
 
     /// The connection generated an ice candidate for the remote.
-    pub fn ice(&self, data: Buf) -> Result<()> {
+    pub fn ice(&self, data: BackBuf) -> Result<()> {
         self.0.send(Ok(ConnCmd::Ice { data }))
     }
 
@@ -739,7 +744,7 @@ impl ConnState {
     /// fill up memory if the application is processing slowly.
     /// So it will error / trigger connection shutdown if we get
     /// too much of a backlog.
-    pub fn rcv_data(&self, mut data: Buf) -> Result<()> {
+    pub fn rcv_data(&self, mut data: BackBuf) -> Result<()> {
         // polling try_acquire doesn't fairly reserve a place in line,
         // so we need to timeout an actual acquire future..
 
@@ -819,7 +824,7 @@ impl ConnState {
         rem_id: Id,
         rcv_limit: Arc<tokio::sync::Semaphore>,
         sig_ready: tokio::sync::oneshot::Receiver<Result<Tx5Url>>,
-        maybe_offer: Option<Buf>,
+        maybe_offer: Option<BackBuf>,
     ) -> Result<ConnStateWeak> {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
 
@@ -948,7 +953,7 @@ impl ConnState {
         self.0.send(Ok(ConnCmd::NotifyConstructed))
     }
 
-    fn self_offer(&self, offer: Result<Buf>) {
+    fn self_offer(&self, offer: Result<BackBuf>) {
         let _ = self.0.send(Ok(ConnCmd::SelfOffer { offer }));
     }
 
@@ -956,19 +961,19 @@ impl ConnState {
         let _ = self.0.send(Ok(ConnCmd::ReqSelfAnswer));
     }
 
-    fn self_answer(&self, answer: Result<Buf>) {
+    fn self_answer(&self, answer: Result<BackBuf>) {
         let _ = self.0.send(Ok(ConnCmd::SelfAnswer { answer }));
     }
 
-    pub(crate) fn in_offer(&self, offer: Buf) {
+    pub(crate) fn in_offer(&self, offer: BackBuf) {
         let _ = self.0.send(Ok(ConnCmd::InOffer { offer }));
     }
 
-    pub(crate) fn in_answer(&self, answer: Buf) {
+    pub(crate) fn in_answer(&self, answer: BackBuf) {
         let _ = self.0.send(Ok(ConnCmd::InAnswer { answer }));
     }
 
-    pub(crate) fn in_ice(&self, ice: Buf, cache: bool) {
+    pub(crate) fn in_ice(&self, ice: BackBuf, cache: bool) {
         let _ = self.0.send(Ok(ConnCmd::InIce { ice, cache }));
     }
 

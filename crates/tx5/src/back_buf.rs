@@ -9,12 +9,12 @@ pub(crate) mod imp {
 }
 
 /// Tx5 buffer creation type via std::io::Write.
-pub struct BufWriter {
+pub struct BackBufWriter {
     imp: imp::ImpWriter,
     _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }
 
-impl BufWriter {
+impl BackBufWriter {
     /// Create a new Tx5 buffer writer.
     #[inline]
     pub fn new() -> Result<Self> {
@@ -26,15 +26,15 @@ impl BufWriter {
 
     /// Indicate we are done writing, and extract the internal buffer.
     #[inline]
-    pub fn finish(self) -> Buf {
-        Buf {
+    pub fn finish(self) -> BackBuf {
+        BackBuf {
             imp: self.imp.finish(),
             _not_sync: std::marker::PhantomData,
         }
     }
 }
 
-impl std::io::Write for BufWriter {
+impl std::io::Write for BackBufWriter {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.imp.write(buf)
@@ -61,18 +61,18 @@ impl std::io::Write for BufWriter {
 
 /// Tx5 buffer type for sending and receiving data.
 #[allow(clippy::len_without_is_empty)]
-pub struct Buf {
+pub struct BackBuf {
     pub(crate) imp: imp::Imp,
     pub(crate) _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }
 
-impl std::fmt::Debug for Buf {
+impl std::fmt::Debug for BackBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.imp.fmt(f)
     }
 }
 
-impl Buf {
+impl BackBuf {
     pub(crate) fn from_raw(buf: tx5_go_pion::GoBuf) -> Self {
         Self {
             imp: imp::Imp::from_raw(buf),
@@ -91,11 +91,11 @@ impl Buf {
 
     /// Build a tx5 buffer using std::io::Write.
     #[inline]
-    pub fn from_writer() -> Result<BufWriter> {
-        BufWriter::new()
+    pub fn from_writer() -> Result<BackBufWriter> {
+        BackBufWriter::new()
     }
 
-    /// Serialize a type as json into a new Buf.
+    /// Serialize a type as json into a new BackBuf.
     #[inline]
     pub fn from_json<S: serde::Serialize>(s: S) -> Result<Self> {
         Ok(Self {
@@ -136,31 +136,31 @@ impl Buf {
     }
 }
 
-impl std::io::Read for Buf {
+impl std::io::Read for BackBuf {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.imp.read(buf)
     }
 }
 
-/// Conversion type facilitating Into<&mut Buf>.
-pub enum BufRef<'lt> {
-    /// An owned Buf.
-    Owned(Result<Buf>),
+/// Conversion type facilitating Into<&mut BackBuf>.
+pub enum BackBufRef<'lt> {
+    /// An owned BackBuf.
+    Owned(Result<BackBuf>),
 
-    /// A borrowed Buf.
-    Borrowed(Result<&'lt mut Buf>),
+    /// A borrowed BackBuf.
+    Borrowed(Result<&'lt mut BackBuf>),
 }
 
-impl<'lt> BufRef<'lt> {
+impl<'lt> BackBufRef<'lt> {
     /// Get a mutable reference to the buffer.
-    pub fn as_mut_ref(&'lt mut self) -> Result<&'lt mut Buf> {
+    pub fn as_mut_ref(&'lt mut self) -> Result<&'lt mut BackBuf> {
         match self {
-            BufRef::Owned(o) => match o {
+            BackBufRef::Owned(o) => match o {
                 Ok(o) => Ok(o),
                 Err(e) => Err(e.err_clone()),
             },
-            BufRef::Borrowed(b) => match b {
+            BackBufRef::Borrowed(b) => match b {
                 Ok(b) => Ok(b),
                 Err(e) => Err(e.err_clone()),
             },
@@ -168,20 +168,20 @@ impl<'lt> BufRef<'lt> {
     }
 }
 
-impl From<Buf> for BufRef<'static> {
-    fn from(b: Buf) -> Self {
+impl From<BackBuf> for BackBufRef<'static> {
+    fn from(b: BackBuf) -> Self {
         Self::Owned(Ok(b))
     }
 }
 
-impl<'lt> From<&'lt mut Buf> for BufRef<'lt> {
-    fn from(b: &'lt mut Buf) -> Self {
+impl<'lt> From<&'lt mut BackBuf> for BackBufRef<'lt> {
+    fn from(b: &'lt mut BackBuf) -> Self {
         Self::Borrowed(Ok(b))
     }
 }
 
-impl<S: serde::Serialize> From<S> for BufRef<'static> {
+impl<S: serde::Serialize> From<S> for BackBufRef<'static> {
     fn from(s: S) -> Self {
-        Self::Owned(Buf::from_json(s))
+        Self::Owned(BackBuf::from_json(s))
     }
 }

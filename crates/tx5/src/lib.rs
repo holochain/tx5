@@ -44,8 +44,8 @@ pub use tx5_core::{Error, ErrorExt, Id, Result, Tx5Url};
 
 pub mod actor;
 
-mod buf;
-pub use buf::*;
+mod back_buf;
+pub use back_buf::*;
 
 /// Helper extension trait for `Box<dyn bytes::Buf + 'static + Send>`.
 pub trait BytesBufExt {

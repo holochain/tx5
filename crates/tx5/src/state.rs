@@ -217,7 +217,7 @@ impl StateEvtSnd {
 
 pub(crate) struct SendData {
     msg_uniq: Uniq,
-    data: Buf,
+    data: BackBuf,
     timestamp: std::time::Instant,
     resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
     send_permit: tokio::sync::OwnedSemaphorePermit,
@@ -225,7 +225,7 @@ pub(crate) struct SendData {
 
 struct IceData {
     timestamp: std::time::Instant,
-    ice: Buf,
+    ice: BackBuf,
 }
 
 struct RmConn(StateEvtSnd, Tx5Url);
@@ -459,7 +459,7 @@ impl StateData {
         &mut self,
         sig_url: Tx5Url,
         rem_id: Id,
-        maybe_offer: Option<Buf>,
+        maybe_offer: Option<BackBuf>,
         maybe_msg_uniq: Option<Uniq>,
     ) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
@@ -498,7 +498,7 @@ impl StateData {
         &mut self,
         msg_uniq: Uniq,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         data_sent: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
@@ -580,7 +580,7 @@ impl StateData {
         &mut self,
         sig_url: Tx5Url,
         rem_id: Id,
-        offer: Buf,
+        offer: BackBuf,
     ) -> Result<()> {
         if let Some((e, _)) = self.conn_map.get(&rem_id) {
             if let Some(conn) = e.upgrade() {
@@ -630,7 +630,7 @@ impl StateData {
         self.evt.publish(StateEvt::Demo(cli_url))
     }
 
-    async fn cache_ice(&mut self, rem_id: Id, ice: Buf) -> Result<()> {
+    async fn cache_ice(&mut self, rem_id: Id, ice: BackBuf) -> Result<()> {
         let list = self.ice_cache.entry(rem_id).or_default();
         list.push_back(IceData {
             timestamp: std::time::Instant::now(),
@@ -710,7 +710,7 @@ enum StateCmd {
     SendData {
         msg_uniq: Uniq,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         resp: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
@@ -728,7 +728,7 @@ enum StateCmd {
     InOffer {
         sig_url: Tx5Url,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     InDemo {
         sig_url: Tx5Url,
@@ -736,7 +736,7 @@ enum StateCmd {
     },
     CacheIce {
         rem_id: Id,
-        ice: Buf,
+        ice: BackBuf,
     },
     GetCachedIce {
         rem_id: Id,
@@ -980,7 +980,7 @@ impl State {
                         bytes::Buf::reader(bytes::Buf::take(data, loc_len));
 
                     // TODO - reserve the bytes before writing
-                    let mut buf = Buf::from_writer()?;
+                    let mut buf = BackBuf::from_writer()?;
                     buf.write_all(&ident.to_le_bytes())?;
                     std::io::copy(&mut tmp, &mut buf)?;
 
@@ -1084,7 +1084,7 @@ impl State {
         &self,
         sig_url: Tx5Url,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     ) -> Result<()> {
         self.0.send(Ok(StateCmd::InOffer {
             sig_url,
@@ -1097,7 +1097,7 @@ impl State {
         self.0.send(Ok(StateCmd::InDemo { sig_url, rem_id }))
     }
 
-    pub(crate) fn cache_ice(&self, rem_id: Id, ice: Buf) -> Result<()> {
+    pub(crate) fn cache_ice(&self, rem_id: Id, ice: BackBuf) -> Result<()> {
         self.0.send(Ok(StateCmd::CacheIce { rem_id, ice }))
     }
 

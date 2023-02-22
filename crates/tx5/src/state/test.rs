@@ -175,7 +175,7 @@ async fn extended_outgoing() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
-    resp.send(Buf::from_slice(b"offer"));
+    resp.send(BackBuf::from_slice(b"offer"));
 
     println!("got create_offer");
 
@@ -201,7 +201,7 @@ async fn extended_outgoing() {
     println!("set loc");
 
     test.sig_state
-        .answer(test.id_b, Buf::from_slice(b"answer").unwrap())
+        .answer(test.id_b, BackBuf::from_slice(b"answer").unwrap())
         .unwrap();
 
     match conn_evt.recv().await {
@@ -214,7 +214,9 @@ async fn extended_outgoing() {
 
     println!("set rem");
 
-    conn_state.ice(Buf::from_slice(b"ice").unwrap()).unwrap();
+    conn_state
+        .ice(BackBuf::from_slice(b"ice").unwrap())
+        .unwrap();
 
     match test.sig_evt.recv().await {
         Some(Ok(SigStateEvt::SndIce(id, mut buf, mut resp))) => {
@@ -226,7 +228,7 @@ async fn extended_outgoing() {
     }
 
     test.sig_state
-        .ice(test.id_b, Buf::from_slice(b"rem_ice").unwrap())
+        .ice(test.id_b, BackBuf::from_slice(b"rem_ice").unwrap())
         .unwrap();
 
     println!("sent ice");
@@ -267,11 +269,11 @@ async fn extended_outgoing() {
     println!("about to rcv");
 
     conn_state
-        .rcv_data(Buf::from_slice(b"\x01\0\0\0\0\0\0\0world").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\0world").unwrap())
         .unwrap();
 
     conn_state
-        .rcv_data(Buf::from_slice(b"\x01\0\0\0\0\0\0\0").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\0").unwrap())
         .unwrap();
 
     match test.state_evt.recv().await {
@@ -294,7 +296,7 @@ async fn short_incoming() {
     // -- receive an incoming offer -- //
 
     test.sig_state
-        .offer(test.id_b, Buf::from_slice(b"offer").unwrap())
+        .offer(test.id_b, BackBuf::from_slice(b"offer").unwrap())
         .unwrap();
 
     // -- new peer connection -- //
@@ -323,7 +325,7 @@ async fn short_incoming() {
         oth => panic!("unexpected {:?}", oth),
     };
 
-    resp.send(Buf::from_slice(b"answer"));
+    resp.send(BackBuf::from_slice(b"answer"));
 
     println!("got create_answer");
 
@@ -382,7 +384,7 @@ async fn polite_in_offer() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
-    resp.send(Buf::from_slice(b"offer"));
+    resp.send(BackBuf::from_slice(b"offer"));
 
     println!("got create_offer");
 
@@ -411,7 +413,7 @@ async fn polite_in_offer() {
     //   maybe because the other node started a racy try to connect to us too?
 
     test.sig_state
-        .offer(test.id_b, Buf::from_slice(b"in_offer").unwrap())
+        .offer(test.id_b, BackBuf::from_slice(b"in_offer").unwrap())
         .unwrap();
 
     match conn_evt.recv().await {
@@ -450,7 +452,7 @@ async fn polite_in_offer() {
         oth => panic!("unexpected {:?}", oth),
     };
 
-    resp.send(Buf::from_slice(b"answer"));
+    resp.send(BackBuf::from_slice(b"answer"));
 
     println!("got create_answer");
 
@@ -531,7 +533,7 @@ async fn impolite_in_offer() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
-    resp.send(Buf::from_slice(b"offer"));
+    resp.send(BackBuf::from_slice(b"offer"));
 
     println!("got create_offer");
 
@@ -560,14 +562,14 @@ async fn impolite_in_offer() {
     //   maybe because the other node started a racy try to connect to us too?
 
     test.sig_state
-        .offer(test.id_a, Buf::from_slice(b"in_offer").unwrap())
+        .offer(test.id_a, BackBuf::from_slice(b"in_offer").unwrap())
         .unwrap();
 
     // since we're the IMPOLITE node, we just ignore this offer
     // and continue with the negotiation of the original connection.
 
     test.sig_state
-        .answer(test.id_a, Buf::from_slice(b"answer").unwrap())
+        .answer(test.id_a, BackBuf::from_slice(b"answer").unwrap())
         .unwrap();
 
     match conn_evt.recv().await {

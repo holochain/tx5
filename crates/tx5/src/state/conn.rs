@@ -308,7 +308,7 @@ impl ConnStateData {
 
     async fn tick_1s(&mut self) -> Result<()> {
         if self.meta.metric_last_active.elapsed()
-            > std::time::Duration::from_secs(20)
+            > self.meta.config.max_conn_init()
             && !self.connected()
         {
             self.shutdown(Error::id("InactivityTimeout"));
@@ -869,7 +869,7 @@ impl ConnState {
 
         let meta = ConnStateMeta {
             conn_uniq: conn_uniq.clone(),
-            config,
+            config: config.clone(),
             connected: Arc::new(atomic::AtomicBool::new(false)),
             rcv_limit,
             metric_bytes_snd,
@@ -917,7 +917,7 @@ impl ConnState {
 
         let weak = actor.weak();
         tokio::task::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            tokio::time::sleep(config.max_conn_init()).await;
             if let Some(actor) = weak.upgrade() {
                 actor.check_connected_timeout().await;
             }

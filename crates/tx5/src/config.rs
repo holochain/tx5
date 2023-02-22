@@ -161,10 +161,10 @@ impl IntoConfig for DefConfig {
                 self.max_send_bytes.unwrap_or(16 * 1024 * 1024);
             let max_recv_bytes =
                 self.max_recv_bytes.unwrap_or(16 * 1024 * 1024);
-            let max_conn_count = self.max_conn_count.unwrap_or(40);
+            let max_conn_count = self.max_conn_count.unwrap_or(255);
             let max_conn_init = self
                 .max_conn_init
-                .unwrap_or(std::time::Duration::from_secs(20));
+                .unwrap_or(std::time::Duration::from_secs(60));
             let metrics = self
                 .metrics
                 .unwrap_or_else(|| prometheus::default_registry().clone());
@@ -271,7 +271,7 @@ impl DefConfig {
     }
 
     /// Set the max concurrent connection count.
-    /// The default is `40`.
+    /// The default is `255`.
     pub fn set_max_conn_count(&mut self, max_conn_count: u32) {
         self.max_conn_count = Some(max_conn_count);
     }
@@ -283,7 +283,7 @@ impl DefConfig {
     }
 
     /// Set the max connection init (connect) time.
-    /// The default is `20` seconds.
+    /// The default is `60` seconds.
     pub fn set_max_conn_init(&mut self, max_conn_init: std::time::Duration) {
         self.max_conn_init = Some(max_conn_init);
     }

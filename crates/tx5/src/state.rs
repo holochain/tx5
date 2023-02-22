@@ -24,13 +24,14 @@ mod test;
 /// The max connection open time. Would be nice for this to be a negotiation,
 /// so that it could be configured... but right now we just need both sides
 /// to agree, so it is hard-coded.
-const MAX_CON_TIME: std::time::Duration = std::time::Duration::from_secs(120);
+const MAX_CON_TIME: std::time::Duration =
+    std::time::Duration::from_secs(60 * 5);
 
 /// The connection send grace period. Connections will not send new messages
 /// when within this duration from the MAX_CON_TIME close.
 /// Similar to MAX_CON_TIME, this has to be hard-coded for now.
 const CON_CLOSE_SEND_GRACE: std::time::Duration =
-    std::time::Duration::from_secs(5);
+    std::time::Duration::from_secs(30);
 
 // TODO - creates too many time series, just aggregate the full counts
 pub(crate) fn bad_uniq() -> u64 {
@@ -433,8 +434,12 @@ impl StateData {
     ) -> Result<()> {
         tracing::debug!(state_uniq = %self.state_uniq, %sig_url, "begin register with signal server");
         let new_sig = |resp| -> SigState {
-            let (sig, sig_evt) =
-                SigState::new(self.this.clone(), sig_url.clone(), resp);
+            let (sig, sig_evt) = SigState::new(
+                self.this.clone(),
+                sig_url.clone(),
+                resp,
+                self.meta.config.max_conn_init(),
+            );
             let seed = SigStateSeed::new(sig.clone(), sig_evt);
             let _ = self.evt.publish(StateEvt::NewSig(sig_url.clone(), seed));
             sig

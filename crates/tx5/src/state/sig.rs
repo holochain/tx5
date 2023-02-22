@@ -466,6 +466,7 @@ impl SigState {
         state: StateWeak,
         sig_url: Tx5Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
+        timeout: std::time::Duration,
     ) -> (Self, ManyRcv<SigStateEvt>) {
         let (sig_snd, sig_rcv) = tokio::sync::mpsc::unbounded_channel();
         let actor = Actor::new(move |this, rcv| {
@@ -480,7 +481,7 @@ impl SigState {
         });
         let weak = SigStateWeak(actor.weak());
         tokio::task::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            tokio::time::sleep(timeout).await;
             if let Some(actor) = weak.upgrade() {
                 actor.check_connected_timeout().await;
             }

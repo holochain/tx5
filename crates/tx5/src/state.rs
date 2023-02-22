@@ -962,15 +962,20 @@ impl State {
                 let ident = meta
                     .snd_ident
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let mut done = false;
+
                 let mut buf_list = Vec::new();
 
                 const MAX_MSG: usize = (16 * 1024) - 8;
-                while !done {
+                while data.has_remaining() {
                     let loc_len = std::cmp::min(data.remaining(), MAX_MSG);
-                    if loc_len == 0 {
-                        done = true;
-                    }
+                    let ident = if data.remaining() <= loc_len {
+                        ident.set_finish()
+                    } else {
+                        ident.unset_finish()
+                    };
+
+                    tracing::trace!(ident=%ident.unset_finish(), is_finish=%ident.is_finish(), %loc_len, "prepare send");
+
                     let mut tmp =
                         bytes::Buf::reader(bytes::Buf::take(data, loc_len));
 

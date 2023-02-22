@@ -470,30 +470,40 @@ impl ConnStateData {
 
         self.meta.metric_bytes_rcv.inc_by(len as u64);
 
+        let is_finish = ident.is_finish();
+        let ident = ident.unset_finish();
+
         match self.rcv_pending.entry(ident) {
             std::collections::hash_map::Entry::Vacant(e) => {
-                if data.is_empty() {
-                    tracing::trace!(%ident, "rcv empty");
-                    // special case for fully empty message
+                if data.is_empty() || is_finish {
+                    tracing::trace!(%is_finish, %ident, "rcv already finished");
+                    // special case for oneshot message
                     if let Some(state) = self.state.upgrade() {
+                        let mut bl = BytesList::new();
+                        if !data.is_empty() {
+                            bl.push(data);
+                        }
                         state.publish(StateEvt::RcvData(
                             self.cli_url.clone(),
-                            BytesList::new().into_dyn(),
+                            bl.into_dyn(),
                             vec![Permit(vec![permit])],
                         ));
                     }
                 } else {
-                    tracing::trace!(%ident, byte_count=%len, "rcv new");
+                    tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv new");
                     let mut bl = BytesList::new();
                     bl.push(data);
                     e.insert((bl, vec![permit]));
                 }
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                if data.is_empty() {
-                    tracing::trace!(%ident, "rcv complete");
+                if data.is_empty() || is_finish {
+                    tracing::trace!(%is_finish, %ident, "rcv complete");
                     // we've gotten to the end
-                    let (bl, permit) = e.remove();
+                    let (mut bl, permit) = e.remove();
+                    if !data.is_empty() {
+                        bl.push(data);
+                    }
                     if let Some(state) = self.state.upgrade() {
                         state.publish(StateEvt::RcvData(
                             self.cli_url.clone(),
@@ -502,7 +512,7 @@ impl ConnStateData {
                         ));
                     }
                 } else {
-                    tracing::trace!(%ident, byte_count=%len, "rcv next");
+                    tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv next");
                     e.get_mut().0.push(data);
                     e.get_mut().1.push(permit);
                 }

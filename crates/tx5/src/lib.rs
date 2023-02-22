@@ -63,6 +63,28 @@ impl BytesBufExt for Box<dyn bytes::Buf + 'static + Send> {
     }
 }
 
+const FINISH: u64 = 1 << 63;
+
+trait FinishExt: Sized {
+    fn set_finish(&self) -> Self;
+    fn unset_finish(&self) -> Self;
+    fn is_finish(&self) -> bool;
+}
+
+impl FinishExt for u64 {
+    fn set_finish(&self) -> Self {
+        *self | FINISH
+    }
+
+    fn unset_finish(&self) -> Self {
+        *self & !FINISH
+    }
+
+    fn is_finish(&self) -> bool {
+        *self & FINISH > 0
+    }
+}
+
 /// A set of distinct chunks of bytes that can be treated as a single unit
 //#[derive(Clone, Default)]
 #[derive(Default)]

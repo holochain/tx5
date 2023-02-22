@@ -258,14 +258,6 @@ async fn extended_outgoing() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
-    match conn_evt.recv().await {
-        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
-            assert_eq!(data.to_vec().unwrap().len(), 8);
-            resp.send(Ok(BufState::Low));
-        }
-        oth => panic!("unexpected: {:?}", oth),
-    };
-
     println!("snd data");
 
     task.await.unwrap();
@@ -500,14 +492,6 @@ async fn polite_in_offer() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
-    match conn_evt.recv().await {
-        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
-            assert_eq!(data.to_vec().unwrap().len(), 8);
-            resp.send(Ok(BufState::Low));
-        }
-        oth => panic!("unexpected: {:?}", oth),
-    };
-
     println!("snd data");
 
     // finally the data is sent
@@ -608,14 +592,6 @@ async fn impolite_in_offer() {
     match conn_evt.recv().await {
         Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
             assert_eq!(&data.to_vec().unwrap()[8..], b"hello");
-            resp.send(Ok(BufState::Low));
-        }
-        oth => panic!("unexpected: {:?}", oth),
-    };
-
-    match conn_evt.recv().await {
-        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
-            assert_eq!(data.to_vec().unwrap().len(), 8);
             resp.send(Ok(BufState::Low));
         }
         oth => panic!("unexpected: {:?}", oth),

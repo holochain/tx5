@@ -20,6 +20,7 @@ backend-go-pion = [ "tx5-go-pion" ]
 backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
+bytes = { workspace = true }
 futures = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }

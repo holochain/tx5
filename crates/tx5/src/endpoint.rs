@@ -4,7 +4,6 @@ use crate::*;
 use tx5_core::Tx5Url;
 
 /// Event type emitted by a tx5 endpoint.
-#[derive(Debug)]
 pub enum EpEvt {
     /// Connection established.
     Connected {
@@ -24,11 +23,11 @@ pub enum EpEvt {
         rem_cli_url: Tx5Url,
 
         /// The payload of the message.
-        data: Buf,
+        data: Box<dyn bytes::Buf + 'static + Send>,
 
         /// Drop this when you've accepted the data to allow additional
         /// incoming messages.
-        permit: state::Permit,
+        permit: Vec<state::Permit>,
     },
 
     /// Received a demo broadcast.
@@ -36,6 +35,36 @@ pub enum EpEvt {
         /// The remote client url that is available for communication.
         rem_cli_url: Tx5Url,
     },
+}
+
+impl std::fmt::Debug for EpEvt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EpEvt::Connected { rem_cli_url } => f
+                .debug_struct("EpEvt::Connected")
+                .field("rem_cli_url", rem_cli_url)
+                .finish(),
+            EpEvt::Disconnected { rem_cli_url } => f
+                .debug_struct("EpEvt::Disconnected")
+                .field("rem_cli_url", rem_cli_url)
+                .finish(),
+            EpEvt::Data {
+                rem_cli_url,
+                data,
+                permit: _,
+            } => {
+                let data_len = data.remaining();
+                f.debug_struct("EpEvt::Data")
+                    .field("rem_cli_url", rem_cli_url)
+                    .field("data_len", &data_len)
+                    .finish()
+            }
+            EpEvt::Demo { rem_cli_url } => f
+                .debug_struct("EpEvt::Demo")
+                .field("rem_cli_url", rem_cli_url)
+                .finish(),
+        }
+    }
 }
 
 /// A tx5 endpoint representing an instance that can send and receive.
@@ -119,10 +148,10 @@ impl Ep {
     }
 
     /// Send data to a remote on this tx5 endpoint.
-    pub fn send(
+    pub fn send<B: bytes::Buf>(
         &self,
         rem_cli_url: Tx5Url,
-        data: Buf,
+        data: B,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
         self.state.snd_data(rem_cli_url, data)
     }
@@ -431,79 +460,5 @@ async fn new_conn_task(
                 }
             }
         };
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    fn init_tracing() {
-        let subscriber = tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(
-                tracing_subscriber::filter::EnvFilter::from_default_env(),
-            )
-            .with_file(true)
-            .with_line_number(true)
-            .finish();
-        let _ = tracing::subscriber::set_global_default(subscriber);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn endpoint_sanity() {
-        init_tracing();
-
-        let mut srv_config = tx5_signal_srv::Config::default();
-        srv_config.port = 0;
-        //srv_config.ice_servers = serde_json::json!([]);
-        srv_config.demo = true;
-
-        let (addr, srv_driver) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
-        tokio::task::spawn(srv_driver);
-
-        let sig_port = addr.port();
-
-        // TODO remove
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-        let sig_url =
-            Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
-        println!("sig_url: {}", sig_url);
-
-        let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
-
-        let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
-
-        println!("cli_url1: {}", cli_url1);
-
-        let (ep2, mut ep_rcv2) = Ep::new().await.unwrap();
-
-        let cli_url2 = ep2.listen(sig_url).await.unwrap();
-
-        println!("cli_url2: {}", cli_url2);
-
-        ep1.send(cli_url2, Buf::from_slice(b"hello").unwrap())
-            .await
-            .unwrap();
-
-        match ep_rcv2.recv().await {
-            Some(Ok(EpEvt::Connected { .. })) => (),
-            oth => panic!("unexpected: {:?}", oth),
-        }
-
-        let recv = ep_rcv2.recv().await;
-
-        match recv {
-            Some(Ok(EpEvt::Data {
-                rem_cli_url,
-                mut data,
-                ..
-            })) => {
-                assert_eq!(cli_url1, rem_cli_url);
-                assert_eq!(b"hello", data.to_vec().unwrap().as_slice());
-            }
-            oth => panic!("unexpected {:?}", oth),
-        }
     }
 }

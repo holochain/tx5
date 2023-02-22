@@ -224,6 +224,8 @@ struct ConnStateData {
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
     rcv_offer: bool,
+    rcv_pending:
+        HashMap<u64, (BytesList, Vec<tokio::sync::OwnedSemaphorePermit>)>,
 }
 
 impl Drop for ConnStateData {
@@ -291,7 +293,11 @@ impl ConnStateData {
             ConnCmd::Ready => self.ready().await,
             ConnCmd::MaybeFetchForSend => self.maybe_fetch_for_send().await,
             ConnCmd::Send { to_send } => self.send(to_send).await,
-            ConnCmd::Recv { data, permit } => self.recv(data, permit).await,
+            ConnCmd::Recv {
+                ident,
+                data,
+                permit,
+            } => self.recv(ident, data, permit).await,
         }
     }
 
@@ -455,19 +461,52 @@ impl ConnStateData {
 
     async fn recv(
         &mut self,
-        mut data: Buf,
+        ident: u64,
+        data: bytes::Bytes,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<()> {
+        let len = data.len();
         self.meta.metric_last_active.reset();
 
-        self.meta.metric_bytes_rcv.inc_by(data.len()? as u64);
+        self.meta.metric_bytes_rcv.inc_by(len as u64);
 
-        if let Some(state) = self.state.upgrade() {
-            state.publish(StateEvt::RcvData(
-                self.cli_url.clone(),
-                data,
-                Permit(permit),
-            ));
+        match self.rcv_pending.entry(ident) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                if data.is_empty() {
+                    tracing::trace!(%ident, "rcv empty");
+                    // special case for fully empty message
+                    if let Some(state) = self.state.upgrade() {
+                        state.publish(StateEvt::RcvData(
+                            self.cli_url.clone(),
+                            BytesList::new().into_dyn(),
+                            vec![Permit(vec![permit])],
+                        ));
+                    }
+                } else {
+                    tracing::trace!(%ident, byte_count=%len, "rcv new");
+                    let mut bl = BytesList::new();
+                    bl.push(data);
+                    e.insert((bl, vec![permit]));
+                }
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                if data.is_empty() {
+                    tracing::trace!(%ident, "rcv complete");
+                    // we've gotten to the end
+                    let (bl, permit) = e.remove();
+                    if let Some(state) = self.state.upgrade() {
+                        state.publish(StateEvt::RcvData(
+                            self.cli_url.clone(),
+                            bl.into_dyn(),
+                            vec![Permit(permit)],
+                        ));
+                    }
+                } else {
+                    tracing::trace!(%ident, byte_count=%len, "rcv next");
+                    e.get_mut().0.push(data);
+                    e.get_mut().1.push(permit);
+                }
+            }
         }
 
         Ok(())
@@ -504,7 +543,8 @@ enum ConnCmd {
         to_send: SendData,
     },
     Recv {
-        data: Buf,
+        ident: u64,
+        data: bytes::Bytes,
         permit: tokio::sync::OwnedSemaphorePermit,
     },
 }
@@ -543,6 +583,7 @@ async fn conn_state_task(
         conn_evt,
         sig_state,
         rcv_offer: false,
+        rcv_pending: HashMap::new(),
     };
 
     let mut permit = None;
@@ -688,26 +729,39 @@ impl ConnState {
     /// fill up memory if the application is processing slowly.
     /// So it will error / trigger connection shutdown if we get
     /// too much of a backlog.
-    pub fn rcv_data(&self, data: Buf) -> Result<()> {
+    pub fn rcv_data(&self, mut data: Buf) -> Result<()> {
+        // polling try_acquire doesn't fairly reserve a place in line,
+        // so we need to timeout an actual acquire future..
+
         // we've got 15 ms of time to acquire the recv permit
         // this is a little more forgiving than just blanket deny
         // if the app is a little slow, but it's also not so much time
         // that we'll end up stalling other tasks that need to run.
 
-        let mut data = data;
-        let len = data.len()?;
-        if len > self.1.config.max_recv_bytes() as usize {
-            let err = Error::id("DataTooLarge");
-            self.close(err.err_clone());
-            return Err(err);
-        }
-
-        // polling try_acquire doesn't fairly reserve a place in line,
-        // so we need to timeout an actual acquire future..
-
         let fut = tokio::time::timeout(
             std::time::Duration::from_millis(15),
             async move {
+                use std::io::Read;
+
+                let mut len = data.len()?;
+                if len > 16 * 1024 {
+                    return Err(Error::id("MsgChunkTooLarge"));
+                }
+                if len < 8 {
+                    return Err(Error::id("MsgChunkInvalid"));
+                }
+
+                let mut ident = [0; 8];
+                data.read_exact(&mut ident[..])?;
+                let ident = u64::from_le_bytes(ident);
+
+                len -= 8;
+
+                let buf = bytes::BytesMut::with_capacity(len);
+                let mut buf = bytes::BufMut::writer(buf);
+                std::io::copy(&mut data, &mut buf)?;
+                let buf = buf.into_inner().freeze();
+
                 let permit = self
                     .1
                     .rcv_limit
@@ -715,15 +769,22 @@ impl ConnState {
                     .acquire_many_owned(len as u32)
                     .await
                     .map_err(|_| Error::id("Closed"))?;
-                self.0.send(Ok(ConnCmd::Recv { data, permit }))
+
+                self.0.send(Ok(ConnCmd::Recv {
+                    ident,
+                    data: buf,
+                    permit,
+                }))
             },
         );
 
         // need an external (futures) polling executor, because tokio
         // won't let us use blocking_recv, since we're still in the runtime.
 
-        futures::executor::block_on(fut)
-            .map_err(|_| Error::id("RecvQueueFull"))?
+        futures::executor::block_on(fut).map_err(|_| {
+            tracing::error!("SLOW_APP: failed to receive in timely manner");
+            Error::id("RecvQueueFull")
+        })?
     }
 
     /// The send buffer *was* high, but has now transitioned to low.

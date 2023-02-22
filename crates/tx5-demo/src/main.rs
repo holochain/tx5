@@ -7,7 +7,7 @@ use clap::Parser;
 use std::collections::hash_map::Entry::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tx5::{Error, Id, Result, Tx5Url};
+use tx5::{BytesBufExt, Error, Id, Result, Tx5Url};
 
 #[derive(Debug, Parser)]
 #[clap(name = "tx5-demo", version, about = "Holochain Tx5 WebRTC Demo Cli")]
@@ -137,9 +137,7 @@ async fn main_err() -> Result<()> {
                         tx5::EpEvt::Connected { rem_cli_url: _ }
                         | tx5::EpEvt::Disconnected { rem_cli_url: _ } => (),
                         tx5::EpEvt::Data {
-                            rem_cli_url,
-                            mut data,
-                            ..
+                            rem_cli_url, data, ..
                         } => {
                             let data = data.to_vec().unwrap();
                             if data.len() < 3 {
@@ -176,10 +174,8 @@ async fn main_err() -> Result<()> {
                             // task this out so we don't backlog responses
                             let ep = ep.clone();
                             tokio::task::spawn(async move {
-                                let two_msg =
-                                    tx5::Buf::from_slice([2, 0]).unwrap();
                                 if let Err(err) =
-                                    ep.send(rem_cli_url, two_msg).await
+                                    ep.send(rem_cli_url, &[2, 0][..]).await
                                 {
                                     tracing::error!(?err);
                                 }
@@ -217,8 +213,9 @@ async fn main_err() -> Result<()> {
                         one_msg.extend_from_slice(name.as_bytes());
                         one_msg.push(0);
                         one_msg.extend_from_slice(so.as_bytes());
-                        let one_msg = tx5::Buf::from_slice(&one_msg).unwrap();
-                        if let Err(err) = ep.send(url.clone(), one_msg).await {
+                        if let Err(err) =
+                            ep.send(url.clone(), one_msg.as_slice()).await
+                        {
                             let _ = t_send.send(TermEvt::Output(format!(
                                 "[ERR] ({:?}): {}",
                                 url.id().unwrap(),

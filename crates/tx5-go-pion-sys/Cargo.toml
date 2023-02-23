@@ -19,6 +19,7 @@ links = "go-pion-webrtc"
 [dependencies]
 base64 = { workspace = true }
 dirs = { workspace = true }
+dunce = { workspace = true }
 libc = { workspace = true }
 libloading = { workspace = true }
 once_cell = { workspace = true }

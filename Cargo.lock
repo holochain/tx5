@@ -3069,6 +3069,7 @@ dependencies = [
  "Inflector",
  "base64",
  "dirs",
+ "dunce",
  "libc",
  "libloading",
  "once_cell",

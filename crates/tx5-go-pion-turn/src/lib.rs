@@ -33,6 +33,8 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
 
     path.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
 
+    eprintln!("check exec file: {path:?}");
+
     let mut opts = std::fs::OpenOptions::new();
 
     opts.write(true);
@@ -59,6 +61,8 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
 
         file.set_permissions(perms)
             .expect("failed to set exe permissions");
+
+        eprintln!("wrote exec file: {path:?}");
     }
 
     if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(&path) {
@@ -83,9 +87,11 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
 
         assert!(perms.readonly());
 
+        eprintln!("success correct exec file: {path:?}");
+
         (path, file)
     } else {
-        panic!("invalid executable");
+        panic!("invalid executable: {path:?}");
     }
 });
 

@@ -23,76 +23,83 @@ use once_cell::sync::Lazy;
 
 // keep the file handle open to mitigate replacements on some oses
 static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
-    let mut path =
+    let mut path_1 =
         dirs::data_local_dir().expect("failed to determine data dir");
+    let mut path_2 =
+        dunce::canonicalize(".").expect("failed to canonicalize current dir");
 
     #[cfg(windows)]
     let ext = ".exe";
     #[cfg(not(windows))]
     let ext = "";
 
-    path.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
+    path_1.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
+    path_2.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
 
-    eprintln!("check exec file: {path:?}");
+    for path in [&path_1, &path_2] {
+        eprintln!("check exec file: {path:?}");
 
-    let mut opts = std::fs::OpenOptions::new();
+        let mut opts = std::fs::OpenOptions::new();
 
-    opts.write(true);
-    opts.create_new(true);
+        opts.write(true);
+        opts.create_new(true);
 
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o700);
-
-    if let Ok(mut file) = opts.open(&path) {
-        use std::io::Write;
-
-        file.write_all(EXE_BYTES)
-            .expect("failed to write executable bytes");
-        file.flush().expect("failed to flush executable bytes");
-
-        let mut perms = file
-            .metadata()
-            .expect("failed to get executable metadata")
-            .permissions();
-
-        perms.set_readonly(true);
         #[cfg(unix)]
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o700);
 
-        file.set_permissions(perms)
-            .expect("failed to set exe permissions");
+        if let Ok(mut file) = opts.open(path) {
+            use std::io::Write;
 
-        eprintln!("wrote exec file: {path:?}");
+            file.write_all(EXE_BYTES)
+                .expect("failed to write executable bytes");
+            file.flush().expect("failed to flush executable bytes");
+
+            let mut perms = file
+                .metadata()
+                .expect("failed to get executable metadata")
+                .permissions();
+
+            perms.set_readonly(true);
+            #[cfg(unix)]
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+
+            file.set_permissions(perms)
+                .expect("failed to set exe permissions");
+
+            eprintln!("wrote exec file: {path:?}");
+        }
+
+        if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(path)
+        {
+            use std::io::Read;
+
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)
+                .expect("failed to read executable");
+
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(data);
+            let hash = base64::encode_config(
+                hasher.finalize(),
+                base64::URL_SAFE_NO_PAD,
+            );
+
+            assert_eq!(EXE_HASH, hash);
+
+            let perms = file
+                .metadata()
+                .expect("failed to get executable metadata")
+                .permissions();
+
+            assert!(perms.readonly());
+
+            eprintln!("success correct exec file: {path:?}");
+
+            return (path.clone(), file);
+        }
     }
-
-    if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(&path) {
-        use std::io::Read;
-
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)
-            .expect("failed to read executable");
-
-        use sha2::Digest;
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(data);
-        let hash =
-            base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
-
-        assert_eq!(EXE_HASH, hash);
-
-        let perms = file
-            .metadata()
-            .expect("failed to get executable metadata")
-            .permissions();
-
-        assert!(perms.readonly());
-
-        eprintln!("success correct exec file: {path:?}");
-
-        (path, file)
-    } else {
-        panic!("invalid executable: {path:?}");
-    }
+    panic!("invalid executable paths: {path_1:?} {path_2:?}");
 });
 
 /// Rust process wrapper around tx5-go-pion-turn executable.

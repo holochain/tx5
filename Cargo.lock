@@ -3086,6 +3086,7 @@ version = "0.0.1-alpha.2"
 dependencies = [
  "base64",
  "dirs",
+ "dunce",
  "get_if_addrs",
  "once_cell",
  "sha2 0.10.2",

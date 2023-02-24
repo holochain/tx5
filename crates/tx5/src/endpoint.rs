@@ -4,7 +4,6 @@ use crate::*;
 use tx5_core::Tx5Url;
 
 /// Event type emitted by a tx5 endpoint.
-#[derive(Debug)]
 pub enum EpEvt {
     /// Connection established.
     Connected {
@@ -24,11 +23,11 @@ pub enum EpEvt {
         rem_cli_url: Tx5Url,
 
         /// The payload of the message.
-        data: Buf,
+        data: Box<dyn bytes::Buf + 'static + Send>,
 
         /// Drop this when you've accepted the data to allow additional
         /// incoming messages.
-        permit: state::Permit,
+        permit: Vec<state::Permit>,
     },
 
     /// Received a demo broadcast.
@@ -36,6 +35,36 @@ pub enum EpEvt {
         /// The remote client url that is available for communication.
         rem_cli_url: Tx5Url,
     },
+}
+
+impl std::fmt::Debug for EpEvt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EpEvt::Connected { rem_cli_url } => f
+                .debug_struct("EpEvt::Connected")
+                .field("rem_cli_url", rem_cli_url)
+                .finish(),
+            EpEvt::Disconnected { rem_cli_url } => f
+                .debug_struct("EpEvt::Disconnected")
+                .field("rem_cli_url", rem_cli_url)
+                .finish(),
+            EpEvt::Data {
+                rem_cli_url,
+                data,
+                permit: _,
+            } => {
+                let data_len = data.remaining();
+                f.debug_struct("EpEvt::Data")
+                    .field("rem_cli_url", rem_cli_url)
+                    .field("data_len", &data_len)
+                    .finish()
+            }
+            EpEvt::Demo { rem_cli_url } => f
+                .debug_struct("EpEvt::Demo")
+                .field("rem_cli_url", rem_cli_url)
+                .finish(),
+        }
+    }
 }
 
 /// A tx5 endpoint representing an instance that can send and receive.
@@ -119,10 +148,10 @@ impl Ep {
     }
 
     /// Send data to a remote on this tx5 endpoint.
-    pub fn send(
+    pub fn send<B: bytes::Buf>(
         &self,
         rem_cli_url: Tx5Url,
-        data: Buf,
+        data: B,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
         self.state.snd_data(rem_cli_url, data)
     }
@@ -197,15 +226,15 @@ async fn new_sig_task(
                             sig_state.demo(rem_pub)
                         }
                         Some(tx5_signal::SignalMsg::Offer { rem_pub, offer }) => {
-                            let offer = Buf::from_json(offer)?;
+                            let offer = BackBuf::from_json(offer)?;
                             sig_state.offer(rem_pub, offer)
                         }
                         Some(tx5_signal::SignalMsg::Answer { rem_pub, answer }) => {
-                            let answer = Buf::from_json(answer)?;
+                            let answer = BackBuf::from_json(answer)?;
                             sig_state.answer(rem_pub, answer)
                         }
                         Some(tx5_signal::SignalMsg::Ice { rem_pub, ice }) => {
-                            let ice = Buf::from_json(ice)?;
+                            let ice = BackBuf::from_json(ice)?;
                             sig_state.ice(rem_pub, ice)
                         }
                         None => Err(Error::id("SigClosed")),
@@ -282,7 +311,7 @@ async fn new_conn_task(
 
     let peer_snd2 = peer_snd.clone();
     let mut peer = match async {
-        let peer_config = Buf::from_json(ice_servers)?;
+        let peer_config = BackBuf::from_json(ice_servers)?;
 
         let peer =
             tx5_go_pion::PeerConnection::new(peer_config.imp.buf, move |evt| {
@@ -321,7 +350,7 @@ async fn new_conn_task(
                         break;
                     }
                     Some(MultiEvt::Peer(PeerEvt::ICECandidate(buf))) => {
-                        let buf = Buf::from_raw(buf);
+                        let buf = BackBuf::from_raw(buf);
                         if conn_state.ice(buf).is_err() {
                             break;
                         }
@@ -342,7 +371,7 @@ async fn new_conn_task(
                         break;
                     }
                     Some(MultiEvt::Data(DataEvt::Message(buf))) => {
-                        if conn_state.rcv_data(Buf::from_raw(buf)).is_err() {
+                        if conn_state.rcv_data(BackBuf::from_raw(buf)).is_err() {
                             break;
                         }
                     }
@@ -376,7 +405,7 @@ async fn new_conn_task(
                                 );
                             }
 
-                            Ok(Buf::from_raw(buf))
+                            Ok(BackBuf::from_raw(buf))
                         }).await;
                     }
                     Some(Ok(state::ConnStateEvt::CreateAnswer(mut resp))) => {
@@ -392,7 +421,7 @@ async fn new_conn_task(
                                     "create_answer",
                                 );
                             }
-                            Ok(Buf::from_raw(buf))
+                            Ok(BackBuf::from_raw(buf))
                         }).await;
                     }
                     Some(Ok(state::ConnStateEvt::SetLoc(buf, mut resp))) => {
@@ -431,79 +460,5 @@ async fn new_conn_task(
                 }
             }
         };
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    fn init_tracing() {
-        let subscriber = tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(
-                tracing_subscriber::filter::EnvFilter::from_default_env(),
-            )
-            .with_file(true)
-            .with_line_number(true)
-            .finish();
-        let _ = tracing::subscriber::set_global_default(subscriber);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn endpoint_sanity() {
-        init_tracing();
-
-        let mut srv_config = tx5_signal_srv::Config::default();
-        srv_config.port = 0;
-        //srv_config.ice_servers = serde_json::json!([]);
-        srv_config.demo = true;
-
-        let (addr, srv_driver) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
-        tokio::task::spawn(srv_driver);
-
-        let sig_port = addr.port();
-
-        // TODO remove
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-        let sig_url =
-            Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
-        println!("sig_url: {}", sig_url);
-
-        let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
-
-        let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
-
-        println!("cli_url1: {}", cli_url1);
-
-        let (ep2, mut ep_rcv2) = Ep::new().await.unwrap();
-
-        let cli_url2 = ep2.listen(sig_url).await.unwrap();
-
-        println!("cli_url2: {}", cli_url2);
-
-        ep1.send(cli_url2, Buf::from_slice(b"hello").unwrap())
-            .await
-            .unwrap();
-
-        match ep_rcv2.recv().await {
-            Some(Ok(EpEvt::Connected { .. })) => (),
-            oth => panic!("unexpected: {:?}", oth),
-        }
-
-        let recv = ep_rcv2.recv().await;
-
-        match recv {
-            Some(Ok(EpEvt::Data {
-                rem_cli_url,
-                mut data,
-                ..
-            })) => {
-                assert_eq!(cli_url1, rem_cli_url);
-                assert_eq!(b"hello", data.to_vec().unwrap().as_slice());
-            }
-            oth => panic!("unexpected {:?}", oth),
-        }
     }
 }

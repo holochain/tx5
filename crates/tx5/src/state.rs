@@ -24,13 +24,14 @@ mod test;
 /// The max connection open time. Would be nice for this to be a negotiation,
 /// so that it could be configured... but right now we just need both sides
 /// to agree, so it is hard-coded.
-const MAX_CON_TIME: std::time::Duration = std::time::Duration::from_secs(120);
+const MAX_CON_TIME: std::time::Duration =
+    std::time::Duration::from_secs(60 * 5);
 
 /// The connection send grace period. Connections will not send new messages
 /// when within this duration from the MAX_CON_TIME close.
 /// Similar to MAX_CON_TIME, this has to be hard-coded for now.
 const CON_CLOSE_SEND_GRACE: std::time::Duration =
-    std::time::Duration::from_secs(5);
+    std::time::Duration::from_secs(30);
 
 // TODO - creates too many time series, just aggregate the full counts
 pub(crate) fn bad_uniq() -> u64 {
@@ -128,7 +129,7 @@ impl<T: 'static + Send> OneSnd<T> {
 }
 
 /// Drop this when you consider the data "received".
-pub struct Permit(tokio::sync::OwnedSemaphorePermit);
+pub struct Permit(Vec<tokio::sync::OwnedSemaphorePermit>);
 
 impl std::fmt::Debug for Permit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -137,7 +138,6 @@ impl std::fmt::Debug for Permit {
 }
 
 /// State wishes to invoke an action.
-#[derive(Debug)]
 pub enum StateEvt {
     /// Request to create a new signal client connection.
     NewSig(Tx5Url, SigStateSeed),
@@ -149,7 +149,7 @@ pub enum StateEvt {
     NewConn(serde_json::Value, ConnStateSeed),
 
     /// Incoming data received on a peer connection.
-    RcvData(Tx5Url, Buf, Permit),
+    RcvData(Tx5Url, Box<dyn bytes::Buf + 'static + Send>, Vec<Permit>),
 
     /// Received a demo broadcast.
     Demo(Tx5Url),
@@ -164,6 +164,43 @@ pub enum StateEvt {
     /// Note, you may get disconnected events for connections that were never
     /// successfully established.
     Disconnected(Tx5Url),
+}
+
+impl std::fmt::Debug for StateEvt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StateEvt::NewSig(url, _seed) => f
+                .debug_struct("StateEvt::NewSig")
+                .field("url", url)
+                .finish(),
+            StateEvt::Address(url) => f
+                .debug_struct("StateEvt::Address")
+                .field("url", url)
+                .finish(),
+            StateEvt::NewConn(info, _seed) => f
+                .debug_struct("StateEvt::NewConn")
+                .field("info", info)
+                .finish(),
+            StateEvt::RcvData(url, data, _permit) => {
+                let data_len = data.remaining();
+                f.debug_struct("StateEvt::RcvData")
+                    .field("url", url)
+                    .field("data_len", &data_len)
+                    .finish()
+            }
+            StateEvt::Demo(url) => {
+                f.debug_struct("StateEvt::Demo").field("url", url).finish()
+            }
+            StateEvt::Connected(url) => f
+                .debug_struct("StateEvt::Connected")
+                .field("url", url)
+                .finish(),
+            StateEvt::Disconnected(url) => f
+                .debug_struct("StateEvt::Disconnected")
+                .field("url", url)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -181,7 +218,7 @@ impl StateEvtSnd {
 
 pub(crate) struct SendData {
     msg_uniq: Uniq,
-    data: Buf,
+    data: BackBuf,
     timestamp: std::time::Instant,
     resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
     send_permit: tokio::sync::OwnedSemaphorePermit,
@@ -189,7 +226,7 @@ pub(crate) struct SendData {
 
 struct IceData {
     timestamp: std::time::Instant,
-    ice: Buf,
+    ice: BackBuf,
 }
 
 struct RmConn(StateEvtSnd, Tx5Url);
@@ -397,8 +434,12 @@ impl StateData {
     ) -> Result<()> {
         tracing::debug!(state_uniq = %self.state_uniq, %sig_url, "begin register with signal server");
         let new_sig = |resp| -> SigState {
-            let (sig, sig_evt) =
-                SigState::new(self.this.clone(), sig_url.clone(), resp);
+            let (sig, sig_evt) = SigState::new(
+                self.this.clone(),
+                sig_url.clone(),
+                resp,
+                self.meta.config.max_conn_init(),
+            );
             let seed = SigStateSeed::new(sig.clone(), sig_evt);
             let _ = self.evt.publish(StateEvt::NewSig(sig_url.clone(), seed));
             sig
@@ -423,7 +464,7 @@ impl StateData {
         &mut self,
         sig_url: Tx5Url,
         rem_id: Id,
-        maybe_offer: Option<Buf>,
+        maybe_offer: Option<BackBuf>,
         maybe_msg_uniq: Option<Uniq>,
     ) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
@@ -462,7 +503,7 @@ impl StateData {
         &mut self,
         msg_uniq: Uniq,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         data_sent: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
@@ -544,7 +585,7 @@ impl StateData {
         &mut self,
         sig_url: Tx5Url,
         rem_id: Id,
-        offer: Buf,
+        offer: BackBuf,
     ) -> Result<()> {
         if let Some((e, _)) = self.conn_map.get(&rem_id) {
             if let Some(conn) = e.upgrade() {
@@ -594,7 +635,7 @@ impl StateData {
         self.evt.publish(StateEvt::Demo(cli_url))
     }
 
-    async fn cache_ice(&mut self, rem_id: Id, ice: Buf) -> Result<()> {
+    async fn cache_ice(&mut self, rem_id: Id, ice: BackBuf) -> Result<()> {
         let list = self.ice_cache.entry(rem_id).or_default();
         list.push_back(IceData {
             timestamp: std::time::Instant::now(),
@@ -674,7 +715,7 @@ enum StateCmd {
     SendData {
         msg_uniq: Uniq,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         resp: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
@@ -692,7 +733,7 @@ enum StateCmd {
     InOffer {
         sig_url: Tx5Url,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     },
     InDemo {
         sig_url: Tx5Url,
@@ -700,7 +741,7 @@ enum StateCmd {
     },
     CacheIce {
         rem_id: Id,
-        ice: Buf,
+        ice: BackBuf,
     },
     GetCachedIce {
         rem_id: Id,
@@ -767,6 +808,7 @@ pub(crate) struct StateMeta {
     pub(crate) conn_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) snd_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) metric_conn_count: prometheus::IntGauge,
+    pub(crate) snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Weak version of State.
@@ -828,6 +870,7 @@ impl State {
             conn_limit,
             snd_limit,
             metric_conn_count,
+            snd_ident: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         };
 
         let (state_snd, state_rcv) = tokio::sync::mpsc::unbounded_channel();
@@ -902,70 +945,114 @@ impl State {
     /// Schedule data to be sent out over a channel managed by the state system.
     /// The future will resolve immediately if there is still space
     /// in the outgoing buffer, or once there is again space in the buffer.
-    pub fn snd_data(
+    pub fn snd_data<B: bytes::Buf>(
         &self,
         cli_url: Tx5Url,
-        data: Buf,
+        mut data: B,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
+        use std::io::Write;
+
         let max_send_bytes = self.1.config.max_send_bytes();
-        let this = self.clone();
-        let mut data = data;
         let meta = self.1.clone();
+
+        let buf_list = if bytes::Buf::remaining(&data) > max_send_bytes as usize
+        {
+            Err(Error::id("DataTooLarge"))
+        } else if !cli_url.is_client() {
+            Err(Error::err(
+                "Invalid tx5 signal server url, expect client url",
+            ))
+        } else {
+            (|| {
+                let ident = meta
+                    .snd_ident
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                let mut buf_list = Vec::new();
+
+                const MAX_MSG: usize = (16 * 1024) - 8;
+                while data.has_remaining() {
+                    let loc_len = std::cmp::min(data.remaining(), MAX_MSG);
+                    let ident = if data.remaining() <= loc_len {
+                        ident.set_finish()
+                    } else {
+                        ident.unset_finish()
+                    };
+
+                    tracing::trace!(ident=%ident.unset_finish(), is_finish=%ident.is_finish(), %loc_len, "prepare send");
+
+                    let mut tmp =
+                        bytes::Buf::reader(bytes::Buf::take(data, loc_len));
+
+                    // TODO - reserve the bytes before writing
+                    let mut buf = BackBuf::from_writer()?;
+                    buf.write_all(&ident.to_le_bytes())?;
+                    std::io::copy(&mut tmp, &mut buf)?;
+
+                    buf_list.push(buf.finish());
+
+                    data = tmp.into_inner().into_inner();
+                }
+
+                Ok(buf_list)
+            })()
+        };
+
+        let this = self.clone();
         async move {
-            if !cli_url.is_client() {
-                return Err(Error::err(
-                    "Invalid tx5 signal server url, expect client url",
-                ));
-            }
-
+            let cli_url = &cli_url;
             let msg_uniq = meta.state_uniq.sub();
-            let len = data.len()?;
 
-            tracing::trace!(%msg_uniq, %len, "snd_data");
+            let buf_list = buf_list?;
 
-            if len > max_send_bytes as usize {
-                return Err(Error::id("DataTooLarge"));
-            }
-            let send_permit = meta
-                .snd_limit
-                .acquire_many_owned(len as u32)
-                .await
-                .map_err(Error::err)?;
+            for (idx, mut buf) in buf_list.into_iter().enumerate() {
+                let len = buf.len()?;
 
-            tracing::trace!(%msg_uniq, "snd_data:got permit");
+                tracing::trace!(%msg_uniq, %len, "snd_data");
 
-            let rem_id = cli_url.id().unwrap();
+                let send_permit = meta
+                    .snd_limit
+                    .clone()
+                    .acquire_many_owned(len as u32)
+                    .await
+                    .map_err(Error::err)?;
 
-            let (s_sent, r_sent) = tokio::sync::oneshot::channel();
+                tracing::trace!(%msg_uniq, %idx, %len, "snd_data:got permit");
 
-            if let Err(err) = this.0.send(Ok(StateCmd::SendData {
-                msg_uniq: msg_uniq.clone(),
-                rem_id,
-                data,
-                send_permit,
-                resp: s_sent,
-                cli_url,
-            })) {
-                tracing::trace!(%msg_uniq, ?err, "std_data:complete err");
-                return Err(err);
-            }
+                let rem_id = cli_url.id().unwrap();
 
-            match r_sent.await.map_err(|_| Error::id("Closed")) {
-                Ok(r) => match r {
-                    Ok(_) => {
-                        tracing::trace!(%msg_uniq, "snd_data:complete ok");
-                        Ok(())
-                    }
+                let (s_sent, r_sent) = tokio::sync::oneshot::channel();
+
+                if let Err(err) = this.0.send(Ok(StateCmd::SendData {
+                    msg_uniq: msg_uniq.clone(),
+                    rem_id,
+                    data: buf,
+                    send_permit,
+                    resp: s_sent,
+                    cli_url: cli_url.clone(),
+                })) {
+                    tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
+                    return Err(err);
+                }
+
+                match r_sent.await.map_err(|_| Error::id("Closed")) {
+                    Ok(r) => match r {
+                        Ok(_) => {
+                            tracing::trace!(%msg_uniq, %idx, "snd_data:complete ok");
+                        }
+                        Err(err) => {
+                            tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
+                            return Err(err);
+                        }
+                    },
                     Err(err) => {
-                        tracing::trace!(%msg_uniq, ?err, "std_data:complete err");
-                        Err(err)
+                        tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
+                        return Err(err);
                     }
-                },
-                Err(err) => {
-                    tracing::trace!(%msg_uniq, ?err, "std_data:complete err");
-                    Err(err)
                 }
             }
+
+            Ok(())
         }
     }
 
@@ -1002,7 +1089,7 @@ impl State {
         &self,
         sig_url: Tx5Url,
         rem_id: Id,
-        data: Buf,
+        data: BackBuf,
     ) -> Result<()> {
         self.0.send(Ok(StateCmd::InOffer {
             sig_url,
@@ -1015,7 +1102,7 @@ impl State {
         self.0.send(Ok(StateCmd::InDemo { sig_url, rem_id }))
     }
 
-    pub(crate) fn cache_ice(&self, rem_id: Id, ice: Buf) -> Result<()> {
+    pub(crate) fn cache_ice(&self, rem_id: Id, ice: BackBuf) -> Result<()> {
         self.0.send(Ok(StateCmd::CacheIce { rem_id, ice }))
     }
 

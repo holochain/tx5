@@ -127,7 +127,7 @@ impl LibInner {
         path_2.push(format!("go-pion-webrtc-{LIB_HASH}{ext}"));
 
         for path in [&path_1, &path_2] {
-            eprintln!("check lib file: {path:?}");
+            tracing::trace!("check lib file: {path:?}");
 
             let mut opts = std::fs::OpenOptions::new();
 
@@ -156,7 +156,7 @@ impl LibInner {
                 file.set_permissions(perms)
                     .expect("failed to set lib permissions");
 
-                eprintln!("wrote lib file: {path:?}");
+                tracing::trace!("wrote lib file: {path:?}");
             }
 
             if let Ok(mut file) =
@@ -187,7 +187,7 @@ impl LibInner {
                 let lib = libloading::Library::new(path)
                     .expect("failed to load shared");
 
-                eprintln!("success correct lib file: {path:?}");
+                tracing::trace!("success correct lib file: {path:?}");
 
                 return LibInnerBuilder {
                     _file: file,

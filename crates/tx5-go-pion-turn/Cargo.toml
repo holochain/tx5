@@ -1,6 +1,6 @@
 [package]
 name = "tx5-go-pion-turn"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 edition = "2021"
 description = "Rust process wrapper around tx5-go-pion-turn executable"
 license = "MIT OR Apache-2.0"
@@ -29,6 +29,7 @@ tx5-core = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = [ "full" ] }
+tracing-subscriber = { workspace = true }
 
 [build-dependencies]
 base64 = { workspace = true }

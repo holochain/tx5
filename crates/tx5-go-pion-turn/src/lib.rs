@@ -37,7 +37,7 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
     path_2.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
 
     for path in [&path_1, &path_2] {
-        eprintln!("check exec file: {path:?}");
+        tracing::trace!("check exec file: {path:?}");
 
         let mut opts = std::fs::OpenOptions::new();
 
@@ -66,7 +66,7 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
             file.set_permissions(perms)
                 .expect("failed to set exe permissions");
 
-            eprintln!("wrote exec file: {path:?}");
+            tracing::trace!("wrote exec file: {path:?}");
         }
 
         if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(path)
@@ -94,7 +94,7 @@ static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
 
             assert!(perms.readonly());
 
-            eprintln!("success correct exec file: {path:?}");
+            tracing::trace!("success correct exec file: {path:?}");
 
             return (path.clone(), file);
         }
@@ -215,8 +215,21 @@ pub async fn test_turn_server() -> Result<(String, Tx5TurnServer)> {
 mod tests {
     use super::*;
 
+    fn init_tracing() {
+        let subscriber = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(
+                tracing_subscriber::filter::EnvFilter::from_default_env(),
+            )
+            .with_file(true)
+            .with_line_number(true)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn sanity() {
+        init_tracing();
+
         let (ice, srv) = test_turn_server().await.unwrap();
 
         println!("{}", ice);

@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.0.1-alpha.4"
+version = "0.0.1-alpha.5"
 dependencies = [
  "bytes",
  "futures",
@@ -3025,7 +3025,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-core"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "base64",
  "once_cell",
@@ -3037,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.0.1-alpha.4"
+version = "0.0.1-alpha.5"
 dependencies = [
  "clap",
  "crossterm",
@@ -3051,7 +3051,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion"
-version = "0.0.1-alpha.4"
+version = "0.0.1-alpha.5"
 dependencies = [
  "parking_lot",
  "tokio",
@@ -3064,7 +3064,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-sys"
-version = "0.0.1-alpha.6"
+version = "0.0.1-alpha.7"
 dependencies = [
  "Inflector",
  "base64",
@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-turn"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "base64",
  "dirs",
@@ -3093,13 +3093,14 @@ dependencies = [
  "sha2 0.10.2",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "tx5-core",
  "zip",
 ]
 
 [[package]]
 name = "tx5-signal"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "futures",
  "lair_keystore_api",
@@ -3126,7 +3127,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal-srv"
-version = "0.0.1-alpha.2"
+version = "0.0.1-alpha.3"
 dependencies = [
  "clap",
  "dirs",

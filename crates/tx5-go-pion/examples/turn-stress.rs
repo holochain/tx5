@@ -221,7 +221,7 @@ async fn spawn_chan(
             std::io::Write::write_all(&mut std::io::stdout(), b".").unwrap();
             std::io::Write::flush(&mut std::io::stdout()).unwrap();
             let cnt = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if cnt == 10 {
+            if cnt == MSG_CNT {
                 if let Some(s_d) = s_d.lock().unwrap().take() {
                     let _ = s_d.send(());
                 }

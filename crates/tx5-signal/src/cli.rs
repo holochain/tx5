@@ -146,12 +146,12 @@ fn priv_system_tls() -> Arc<rustls::ClientConfig> {
 }
 
 type WriteSend = tokio::sync::mpsc::Sender<(
-    Vec<u8>,
+    Message,
     tokio::sync::oneshot::Sender<Result<()>>,
 )>;
 
 type WriteRecv = tokio::sync::mpsc::Receiver<(
-    Vec<u8>,
+    Message,
     tokio::sync::oneshot::Sender<Result<()>>,
 )>;
 
@@ -281,7 +281,12 @@ impl Cli {
         tokio::task::spawn(async move {
             let (s, r) = tokio::sync::oneshot::channel();
             let _ = write_send
-                .send((wire::Wire::DemoV1 { rem_pub }.encode().unwrap(), s))
+                .send((
+                    Message::binary(
+                        wire::Wire::DemoV1 { rem_pub }.encode().unwrap(),
+                    ),
+                    s,
+                ))
                 .await;
             let _ = r.await;
         });
@@ -320,7 +325,7 @@ impl Cli {
             let (s, r) = tokio::sync::oneshot::channel();
 
             write_send
-                .send((wire, s))
+                .send((Message::binary(wire), s))
                 .await
                 .map_err(|_| Error::id("ClientClosed"))?;
 
@@ -456,8 +461,28 @@ impl Cli {
             recv_cb,
             x25519_pub,
             lair_client.clone(),
+            write_send.clone(),
             write_recv,
         ));
+
+        let keep_alive = write_send.clone();
+        tokio::task::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                let (s, r) = tokio::sync::oneshot::channel();
+                if keep_alive
+                    .send((Message::Ping(Vec::new()), s))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                match r.await {
+                    Ok(Err(_)) | Err(_) => break,
+                    Ok(Ok(_)) => (),
+                }
+            }
+        });
 
         Ok(Self {
             addr: url,
@@ -525,32 +550,46 @@ impl Cli {
 
 async fn con_task(
     socket: Socket,
-    recv_cb: RecvCb,
-    x25519_pub: Id,
-    lair_client: LairClient,
-    write_recv: WriteRecv,
-) {
-    if let Err(err) =
-        con_task_err(socket, recv_cb, x25519_pub, lair_client, write_recv).await
-    {
-        tracing::error!(?err);
-    }
-}
-
-async fn con_task_err(
-    socket: Socket,
     mut recv_cb: RecvCb,
     x25519_pub: Id,
     lair_client: LairClient,
+    write_send: WriteSend,
     mut write_recv: WriteRecv,
-) -> Result<()> {
+) {
+    macro_rules! dbg_err {
+        ($e:expr) => {
+            match $e {
+                Err(err) => {
+                    tracing::debug!(?err);
+                    return;
+                }
+                Ok(r) => r,
+            }
+        };
+    }
+
     let (mut write, mut read) = socket.split();
 
     tokio::select! {
-        r = async move {
+        _ = async move {
             while let Some(msg) = read.next().await {
-                let msg = msg.map_err(Error::err)?.into_data();
-                match wire::Wire::decode(&msg)? {
+                let msg = dbg_err!(msg);
+                if let Message::Pong(_) = &msg {
+                    tracing::debug!("ws-pong");
+                    continue;
+                }
+                if let Message::Ping(v) = &msg {
+                    tracing::debug!("ws-ping");
+                    let (s, r) = tokio::sync::oneshot::channel();
+                    let _ = write_send.send((Message::Pong(v.clone()), s)).await;
+                    if let Err(err) = r.await {
+                        tracing::debug!(?err);
+                        return;
+                    }
+                    continue;
+                }
+                let msg = msg.into_data();
+                match dbg_err!(wire::Wire::decode(&msg)) {
                     wire::Wire::DemoV1 { rem_pub } => {
                         recv_cb(SignalMsg::Demo { rem_pub });
                     }
@@ -568,24 +607,24 @@ async fn con_task_err(
                             // MAYBE - should we squelch rem_pub?
                         }
                     }
-                    _ => return Err(Error::id("InvalidClientMsg")),
+                    _ => {
+                        tracing::debug!("InvalidClientMsg");
+                        return;
+                    }
                 }
             }
+        } => (),
 
-            Ok(())
-        } => r,
-
-        r = async move {
+        _ = async move {
             while let Some((msg, resp)) = write_recv.recv().await {
-                if let Err(err) = write.send(Message::binary(msg)).await.map_err(Error::err) {
+                if let Err(err) = write.send(msg).await.map_err(Error::err) {
                     let _ = resp.send(Err(err.err_clone()));
-                    return Err(err);
+                    tracing::debug!(?err);
+                    return;
                 }
                 let _ = resp.send(Ok(()));
             }
-
-            Ok(())
-        } => r,
+        } => (),
     }
 }
 

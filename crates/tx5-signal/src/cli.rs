@@ -391,6 +391,9 @@ impl Cli {
             format!("ws://{endpoint}/tx5-ws/{x25519_pub}")
         };
 
+        let url = url::Url::parse(&con_url).map_err(Error::err)?;
+        tracing::debug!(%url);
+
         let mut err_list = Vec::new();
         let mut result_socket = None;
 
@@ -450,9 +453,6 @@ impl Cli {
             .await
             .map_err(Error::err)?;
 
-        let url = url::Url::parse(&con_url).map_err(Error::err)?;
-
-        tracing::debug!(%url);
 
         let (write_send, write_recv) = tokio::sync::mpsc::channel(1);
 

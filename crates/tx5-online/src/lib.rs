@@ -76,7 +76,9 @@ static RCV: Lazy<OnlineReceiver> = Lazy::new(|| {
                 }
             });
 
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let s = rand::Rng::gen_range(&mut rand::thread_rng(), 4.0..8.0);
+            let s = std::time::Duration::from_secs_f64(s);
+            tokio::time::sleep(s).await;
         }
     });
 

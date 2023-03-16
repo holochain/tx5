@@ -20,6 +20,7 @@
 ### Tx5 Support Crates
 
 - [ tx5-core ](https://github.com/holochain/tx5/tree/main/crates/tx5-core) - [ ![crates.io](https://img.shields.io/crates/v/tx5-core) ](https://crates.io/crates/tx5-core) - Core types used in other tx5 crates.
+- [ tx5-online ](https://github.com/holochain/tx5/tree/main/crates/tx5-online) - [ ![crates.io](https://img.shields.io/crates/v/tx5-online) ](https://crates.io/crates/tx5-online) - Network online connectivity status events.
 - [ tx5-go-pion-turn ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion-turn) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion-turn) ](https://crates.io/crates/tx5-go-pion-turn) - Rust process wrapper around tx5-go-pion-turn executable.
 - [ tx5-go-pion-sys ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion-sys) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion-sys) ](https://crates.io/crates/tx5-go-pion-sys) - Low level rust bindings to the go pion webrtc library.
 - [ tx5-go-pion ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion) ](https://crates.io/crates/tx5-go-pion) - Higher level rust bindings to the go pion webrtc library.

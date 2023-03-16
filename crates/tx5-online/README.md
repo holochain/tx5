@@ -30,8 +30,8 @@
 
 <!-- cargo-rdme start -->
 
-#### tx5-core
+#### tx5-online
 
-Holochain WebRTC p2p communication ecosystem core types.
+Holochain WebRTC p2p communication ecosystem online connectivity events.
 
 <!-- cargo-rdme end -->

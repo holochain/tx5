@@ -11,6 +11,9 @@ publish:
 		tx5-core) \
 			export MANIFEST="./crates/tx5-core/Cargo.toml"; \
 			;; \
+		tx5-online) \
+			export MANIFEST="./crates/tx5-online/Cargo.toml"; \
+			;; \
 		tx5-go-pion-turn) \
 			export MANIFEST="./crates/tx5-go-pion-turn/Cargo.toml"; \
 			;; \
@@ -34,6 +37,7 @@ publish:
 			;; \
 		*) \
 			echo "USAGE: make publish crate=tx5-core"; \
+			echo "USAGE: make publish crate=tx5-online"; \
 			echo "USAGE: make publish crate=tx5-go-pion-turn"; \
 			echo "USAGE: make publish crate=tx5-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx5-go-pion"; \
@@ -72,6 +76,8 @@ docs: tools
 	cat crates/tx5-signal-srv/src/docs/srv_help.md >> crates/tx5-signal-srv/README.md
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-core/README.md
 	cargo rdme --force -w tx5-core
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-online/README.md
+	cargo rdme --force -w tx5-online
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-go-pion-turn/README.md
 	cargo rdme --force -w tx5-go-pion-turn
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-go-pion-sys/README.md

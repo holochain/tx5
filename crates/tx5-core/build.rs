@@ -12,6 +12,7 @@ fn main() {
             r##"
 /// Internal unstable api to include the tx5 common doc header.
 #[macro_export]
+#[doc(hidden)]
 macro_rules! __doc_header {{
     () => {{
         r#"{data}"#

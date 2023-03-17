@@ -3244,6 +3244,7 @@ dependencies = [
  "futures",
  "lair_keystore_api",
  "once_cell",
+ "parking_lot",
  "rand",
  "rand-utf8",
  "rcgen 0.9.3",

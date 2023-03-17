@@ -23,7 +23,7 @@ impl SigStateSeed {
     pub fn result_ok(
         mut self,
         cli_url: Tx5Url,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
     ) -> Result<(SigState, ManyRcv<SigStateEvt>)> {
         self.done = true;
         let (sig, sig_evt) = self.output.take().unwrap();
@@ -134,7 +134,7 @@ struct SigStateData {
     sig_evt: SigStateEvtSnd,
     connected: bool,
     cli_url: Option<Tx5Url>,
-    ice_servers: Option<serde_json::Value>,
+    ice_servers: Option<Arc<serde_json::Value>>,
     pending_sig_resp: Vec<tokio::sync::oneshot::Sender<Result<Tx5Url>>>,
     registered_conn_map: HashMap<Id, ConnStateWeak>,
 }
@@ -219,7 +219,7 @@ impl SigStateData {
     async fn notify_connected(
         &mut self,
         cli_url: Tx5Url,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
     ) -> Result<()> {
         self.connected = true;
         self.cli_url = Some(cli_url.clone());
@@ -237,7 +237,7 @@ impl SigStateData {
         &mut self,
         rem_id: Id,
         conn: ConnStateWeak,
-        resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+        resp: tokio::sync::oneshot::Sender<Result<Arc<serde_json::Value>>>,
     ) -> Result<()> {
         self.registered_conn_map.insert(rem_id, conn);
         let _ = resp.send(
@@ -322,12 +322,12 @@ enum SigCmd {
     },
     NotifyConnected {
         cli_url: Tx5Url,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
     },
     RegisterConn {
         rem_id: Id,
         conn: ConnStateWeak,
-        resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+        resp: tokio::sync::oneshot::Sender<Result<Arc<serde_json::Value>>>,
     },
     UnregisterConn {
         rem_id: Id,
@@ -513,7 +513,7 @@ impl SigState {
         &self,
         rem_id: Id,
         conn: ConnStateWeak,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<Arc<serde_json::Value>> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.0.send(Ok(SigCmd::RegisterConn {
             rem_id,
@@ -537,7 +537,7 @@ impl SigState {
     fn notify_connected(
         &self,
         cli_url: Tx5Url,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
     ) -> Result<()> {
         self.0.send(Ok(SigCmd::NotifyConnected {
             cli_url,

@@ -1,6 +1,7 @@
 //! Tx5 endpoint.
 
 use crate::*;
+use std::sync::Arc;
 use tx5_core::Tx5Url;
 
 /// Event type emitted by a tx5 endpoint.
@@ -210,7 +211,7 @@ async fn new_sig_task(
 
     let sig = &sig;
 
-    let ice_servers = sig.ice_servers().clone();
+    let ice_servers = sig.ice_servers();
 
     let (sig_state, mut sig_evt) = match seed.result_ok(cli_url, ice_servers) {
         Err(_) => return,
@@ -287,7 +288,7 @@ async fn new_sig_task(
 #[cfg(feature = "backend-go-pion")]
 pub(crate) fn on_new_conn(
     config: DynConfig,
-    ice_servers: serde_json::Value,
+    ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
     tokio::task::spawn(new_conn_task(config, ice_servers, seed));
@@ -296,7 +297,7 @@ pub(crate) fn on_new_conn(
 #[cfg(feature = "backend-go-pion")]
 async fn new_conn_task(
     _config: DynConfig,
-    ice_servers: serde_json::Value,
+    ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
     use tx5_go_pion::DataChannelEvent as DataEvt;

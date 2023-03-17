@@ -146,7 +146,7 @@ pub enum StateEvt {
     Address(Tx5Url),
 
     /// Request to create a new webrtc peer connection.
-    NewConn(serde_json::Value, ConnStateSeed),
+    NewConn(Arc<serde_json::Value>, ConnStateSeed),
 
     /// Incoming data received on a peer connection.
     RcvData(Tx5Url, Box<dyn bytes::Buf + 'static + Send>, Vec<Permit>),

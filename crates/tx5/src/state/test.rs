@@ -69,8 +69,9 @@ impl Test {
         };
 
         let cli = if as_a { cli_a.clone() } else { cli_b.clone() };
-        let (sig_state, sig_evt) =
-            sig_seed.result_ok(cli, serde_json::json!([])).unwrap();
+        let (sig_state, sig_evt) = sig_seed
+            .result_ok(cli, Arc::new(serde_json::json!([])))
+            .unwrap();
 
         task.await.unwrap();
 

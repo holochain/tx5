@@ -34,7 +34,7 @@ pub trait Config: 'static + Send + Sync {
     /// A request to open a new peer connection.
     fn on_new_conn(
         &self,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
         seed: state::ConnStateSeed,
     );
 }
@@ -72,7 +72,7 @@ struct DefConfigBuilt {
         dyn Fn(DynConfig, Tx5Url, state::SigStateSeed) + 'static + Send + Sync,
     >,
     on_new_conn_cb: Arc<
-        dyn Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+        dyn Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,
@@ -116,7 +116,7 @@ impl Config for DefConfigBuilt {
 
     fn on_new_conn(
         &self,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
         seed: state::ConnStateSeed,
     ) {
         if let Some(this) = self.this.upgrade() {
@@ -146,7 +146,7 @@ pub struct DefConfig {
     >,
     on_new_conn_cb: Option<
         Arc<
-            dyn Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+            dyn Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
                 + 'static
                 + Send
                 + Sync,
@@ -356,7 +356,7 @@ impl DefConfig {
     /// on the feature flipper chosen at compile time.
     pub fn set_new_conn_cb<Cb>(&mut self, cb: Cb)
     where
-        Cb: Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+        Cb: Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,
@@ -367,7 +367,7 @@ impl DefConfig {
     /// See `set_new_conn_cb()`, this is the builder version.
     pub fn with_new_conn_cb<Cb>(mut self, cb: Cb) -> Self
     where
-        Cb: Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+        Cb: Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,

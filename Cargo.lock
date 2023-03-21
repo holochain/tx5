@@ -3252,6 +3252,7 @@ dependencies = [
  "rustls 0.20.6",
  "rustls-native-certs",
  "rustls-pemfile",
+ "serde_json",
  "sha2 0.10.2",
  "socket2",
  "sodoken",

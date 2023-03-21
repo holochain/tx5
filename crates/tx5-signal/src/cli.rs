@@ -187,6 +187,7 @@ pub struct Cli {
     ice: Arc<Mutex<Arc<serde_json::Value>>>,
     write_send: WriteSend,
     seq: Seq,
+    _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     x25519_pub: Id,
 }
@@ -339,14 +340,55 @@ impl Cli {
             url,
         } = builder;
 
-        let lair_client = match lair_client {
-            Some(lair_client) => lair_client,
-            None => return Err(Error::id("LairClientRequired")),
-        };
+        let mut lair_keystore = None;
 
         let lair_tag = match lair_tag {
             Some(lair_tag) => lair_tag,
-            None => return Err(Error::id("LairTagRequired")),
+            None => rand_utf8::rand_utf8(&mut rand::thread_rng(), 32).into(),
+        };
+
+        let lair_client = match lair_client {
+            Some(lair_client) => lair_client,
+            None => {
+                let passphrase = sodoken::BufRead::new_no_lock(
+                    rand_utf8::rand_utf8(&mut rand::thread_rng(), 32)
+                        .as_bytes(),
+                );
+
+                // this is a memory keystore,
+                // so weak persistence security is okay,
+                // since it will not be persisted.
+                // The private keys will still be mem_locked
+                // so they shouldn't be swapped to disk.
+                let keystore_config = PwHashLimits::Minimum
+                    .with_exec(|| {
+                        LairServerConfigInner::new("/", passphrase.clone())
+                    })
+                    .await
+                    .unwrap();
+
+                let keystore = PwHashLimits::Minimum
+                    .with_exec(|| {
+                        lair_keystore_api::in_proc_keystore::InProcKeystore::new(
+                            Arc::new(keystore_config),
+                            lair_keystore_api::mem_store::create_mem_store_factory(),
+                            passphrase,
+                        )
+                    })
+                    .await
+                    .unwrap();
+
+                let lair_client = keystore.new_client().await.unwrap();
+
+                lair_client
+                    .new_seed(lair_tag.clone(), None, false)
+                    .await
+                    .unwrap();
+
+                lair_keystore = Some(keystore);
+
+                lair_client
+            }
         };
 
         let url = match url {
@@ -443,6 +485,7 @@ impl Cli {
             ice,
             write_send,
             seq: Seq::new(),
+            _lair_keystore: lair_keystore,
             lair_client,
             x25519_pub,
         })

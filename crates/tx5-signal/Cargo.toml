@@ -16,11 +16,13 @@ lair_keystore_api = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
+rand-utf8 = { workspace = true }
 rcgen = { workspace = true }
 ring = { workspace = true }
 rustls = { workspace = true }
 rustls-native-certs = { workspace = true }
 rustls-pemfile = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
 socket2 = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }

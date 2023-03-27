@@ -69,6 +69,34 @@ impl Test {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn wrong_version() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.ice_servers = serde_json::json!([]);
+    srv_config.demo = true;
+
+    let (addr, srv_driver) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+
+    let srv_port = addr.port();
+
+    tracing::info!(%srv_port);
+
+    tokio::select! {
+        _ = srv_driver => (),
+        _ = async move {
+            // TODO remove
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v1/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.unwrap();
+            assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v0/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.is_err());
+        } => (),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sanity() {
     init_tracing();
 

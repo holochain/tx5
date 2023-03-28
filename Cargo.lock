@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.0.1-alpha.6"
+version = "0.0.1-alpha.7"
 dependencies = [
  "bytes",
  "futures",
@@ -3165,7 +3165,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.0.1-alpha.6"
+version = "0.0.1-alpha.7"
 dependencies = [
  "clap",
  "crossterm",
@@ -3239,7 +3239,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal"
-version = "0.0.1-alpha.4"
+version = "0.0.1-alpha.5"
 dependencies = [
  "futures",
  "lair_keystore_api",
@@ -3268,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal-srv"
-version = "0.0.1-alpha.4"
+version = "0.0.1-alpha.5"
 dependencies = [
  "clap",
  "dirs",

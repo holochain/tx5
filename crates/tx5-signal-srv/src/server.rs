@@ -28,6 +28,12 @@ impl IntGaugeGuard {
 pub type ServerDriver =
     std::pin::Pin<Box<dyn Future<Output = ()> + 'static + Send>>;
 
+/// Protocol Version
+#[derive(Debug)]
+enum ProtoVer {
+    V1,
+}
+
 /// The main entrypoint tx5-signal-server logic task.
 pub fn exec_tx5_signal_srv(
     config: Config,
@@ -48,9 +54,15 @@ pub fn exec_tx5_signal_srv(
     use warp::Filter;
     use warp::Reply;
 
-    let tx5_ws = warp::path!("tx5-ws" / String)
+    let tx5_ws = warp::path!("tx5-ws" / String / String)
         .and(warp::ws())
-        .map(move |client_pub: String, ws: warp::ws::Ws| {
+        .map(move |ver: String, client_pub: String, ws: warp::ws::Ws| {
+            let ver = if ver == "v1" {
+                ProtoVer::V1
+            } else {
+                return reply_err(Error::id("InvalidVersion")).into_response();
+            };
+
             let active_ws_g =
                 IntGaugeGuard::new(CLIENT_ACTIVE_WS_COUNT.clone());
             CLIENT_WS_COUNT.inc();
@@ -64,7 +76,8 @@ pub fn exec_tx5_signal_srv(
                 .max_message_size(tx5_core::ws::MAX_MESSAGE_SIZE)
                 .max_frame_size(tx5_core::ws::MAX_FRAME_SIZE)
                 .on_upgrade(move |ws| async move {
-                    client_task(ws, client_pub, ice_servers, srv_hnd).await;
+                    client_task(ws, ver, client_pub, ice_servers, srv_hnd)
+                        .await;
                     drop(active_ws_g);
                 })
                 .into_response()
@@ -125,6 +138,7 @@ fn reply_err(err: std::io::Error) -> impl warp::reply::Reply {
 
 async fn client_task(
     mut ws: warp::ws::WebSocket,
+    ver: ProtoVer,
     client_pub: sodoken::BufReadSized<{ crypto_box::PUBLICKEYBYTES }>,
     ice_servers: Arc<serde_json::Value>,
     srv_hnd: Arc<SrvHnd>,
@@ -151,6 +165,8 @@ async fn client_task(
     dbg_err!(srv_hnd.register(client_id, out_send.clone()).await);
 
     CLIENT_AUTH_WS_COUNT.inc();
+
+    tracing::info!(?client_id, ?ver, "Accepted Incoming Connection");
 
     let srv_hnd_read = srv_hnd.clone();
     let client_id_read = client_id;

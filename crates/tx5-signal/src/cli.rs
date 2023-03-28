@@ -13,6 +13,8 @@ type Socket = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
 
+const PROTO_VER: &str = "v1";
+
 /// Incoming signal message from a remote node.
 #[derive(Debug)]
 pub enum SignalMsg {
@@ -425,10 +427,16 @@ impl Cli {
 
         let endpoint = format!("{host}:{port}");
 
-        let con_url = if use_tls.is_some() {
-            format!("wss://{endpoint}/tx5-ws/{x25519_pub}")
+        let (con_url, con_url_versioned) = if use_tls.is_some() {
+            (
+                format!("wss://{endpoint}/tx5-ws/{x25519_pub}"),
+                format!("wss://{endpoint}/tx5-ws/{PROTO_VER}/{x25519_pub}"),
+            )
         } else {
-            format!("ws://{endpoint}/tx5-ws/{x25519_pub}")
+            (
+                format!("ws://{endpoint}/tx5-ws/{x25519_pub}"),
+                format!("ws://{endpoint}/tx5-ws/{PROTO_VER}/{x25519_pub}"),
+            )
         };
 
         let url = url::Url::parse(&con_url).map_err(Error::err)?;
@@ -447,7 +455,7 @@ impl Cli {
         hnd.push(tokio::task::spawn(con_task(
             use_tls,
             host.to_string(),
-            con_url,
+            con_url_versioned,
             endpoint,
             ice.clone(),
             recv_cb,

@@ -857,7 +857,23 @@ async fn decode_fwd(
 
     let msg = wire::FwdInnerV1::decode(&msg)?;
 
-    // TODO - validate / track seq per rem_pub
+    let now = std::time::SystemTime::UNIX_EPOCH
+        .elapsed()
+        .unwrap()
+        .as_secs_f64()
+        * 1000.0;
+
+    let seq = msg.get_seq();
+
+    // five minutes in milliseconds
+    const FIVE_MIN_MS: f64 = 1000.0 * 60.0 * 5.0;
+
+    if seq > (now + FIVE_MIN_MS) || seq < (now - FIVE_MIN_MS) {
+        tracing::warn!(%now, %seq, "Invalid seq");
+        return Ok(());
+    }
+
+    // TODO - track seq per rem_pub
 
     match msg {
         wire::FwdInnerV1::Offer { offer, .. } => {

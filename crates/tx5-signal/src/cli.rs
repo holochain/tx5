@@ -182,6 +182,54 @@ impl Seq {
     }
 }
 
+type SeqMap = std::collections::HashMap<Id, f64>;
+struct SeqTrack(Arc<parking_lot::Mutex<SeqMap>>);
+
+impl SeqTrack {
+    pub fn new() -> Self {
+        Self(Arc::new(parking_lot::Mutex::new(SeqMap::new())))
+    }
+
+    pub fn check(&self, rem_pub: Id, seq: f64) -> bool {
+        let now = std::time::SystemTime::UNIX_EPOCH
+            .elapsed()
+            .unwrap()
+            .as_secs_f64()
+            * 1000.0;
+
+        // five minutes in milliseconds
+        const FIVE_MIN_MS: f64 = 1000.0 * 60.0 * 5.0;
+
+        if seq > (now + FIVE_MIN_MS) || seq < (now - FIVE_MIN_MS) {
+            tracing::warn!(%now, %seq, "SeqOutOfWindow");
+            return false;
+        }
+
+        let mut map = self.0.lock();
+
+        // first, prune
+        map.retain(|_, s| *s > (now + FIVE_MIN_MS));
+
+        use std::collections::hash_map::Entry;
+        match map.entry(rem_pub) {
+            Entry::Occupied(mut e) => {
+                let prev: f64 = *e.get();
+                if prev >= seq {
+                    tracing::warn!(%prev, %seq, "SeqOutOfOrder");
+                    false
+                } else {
+                    *e.get_mut() = seq;
+                    true
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(seq);
+                true
+            }
+        }
+    }
+}
+
 /// Tx5-signal client connection type.
 pub struct Cli {
     addr: url::Url,
@@ -765,6 +813,7 @@ async fn con_manage_connection(
     }
 
     let (mut write, mut read) = socket.split();
+    let mut seq_track = SeqTrack::new();
 
     tokio::select! {
         _ = async move {
@@ -793,6 +842,7 @@ async fn con_manage_connection(
                     wire::Wire::FwdV1 { rem_pub, nonce, cipher } => {
                         if let Err(err) = decode_fwd(
                             &mut recv_cb,
+                            &mut seq_track,
                             &x25519_pub,
                             lair_client,
                             rem_pub,
@@ -839,6 +889,7 @@ async fn con_manage_connection(
 
 async fn decode_fwd(
     recv_cb: &mut RecvCb,
+    seq_track: &mut SeqTrack,
     x25519_pub: &Id,
     lair_client: &LairClient,
     rem_pub: Id,
@@ -857,23 +908,11 @@ async fn decode_fwd(
 
     let msg = wire::FwdInnerV1::decode(&msg)?;
 
-    let now = std::time::SystemTime::UNIX_EPOCH
-        .elapsed()
-        .unwrap()
-        .as_secs_f64()
-        * 1000.0;
-
     let seq = msg.get_seq();
 
-    // five minutes in milliseconds
-    const FIVE_MIN_MS: f64 = 1000.0 * 60.0 * 5.0;
-
-    if seq > (now + FIVE_MIN_MS) || seq < (now - FIVE_MIN_MS) {
-        tracing::warn!(%now, %seq, "Invalid seq");
+    if !seq_track.check(rem_pub, seq) {
         return Ok(());
     }
-
-    // TODO - track seq per rem_pub
 
     match msg {
         wire::FwdInnerV1::Offer { offer, .. } => {

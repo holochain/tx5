@@ -40,6 +40,9 @@ import (
 	"fmt"
 	"sync"
 	"unsafe"
+
+	"github.com/pion/logging"
+	"github.com/pion/webrtc/v3"
 )
 
 type UintPtrT = C.uintptr_t
@@ -64,6 +67,53 @@ func LoadBytesSafe(ptr UintPtrT, length UintPtrT) *bytes.Buffer {
 	buf.Grow(len(raw))
 	buf.Write(raw)
 	return buf
+}
+
+type customLogger struct{}
+
+func (c customLogger) Trace(msg string) {
+	EmitTrace(LvlTrace, msg)
+}
+func (c customLogger) Tracef(format string, args ...interface{}) {
+	c.Trace(fmt.Sprintf(format, args...))
+}
+func (c customLogger) Debug(msg string) {
+	EmitTrace(LvlDebug, msg)
+}
+func (c customLogger) Debugf(format string, args ...interface{}) {
+	c.Debug(fmt.Sprintf(format, args...))
+}
+func (c customLogger) Info(msg string) {
+	EmitTrace(LvlInfo, msg)
+}
+func (c customLogger) Infof(format string, args ...interface{}) {
+	c.Info(fmt.Sprintf(format, args...))
+}
+func (c customLogger) Warn(msg string) {
+	EmitTrace(LvlWarn, msg)
+}
+func (c customLogger) Warnf(format string, args ...interface{}) {
+	c.Warn(fmt.Sprintf(format, args...))
+}
+func (c customLogger) Error(msg string) {
+	EmitTrace(LvlError, msg)
+}
+func (c customLogger) Errorf(format string, args ...interface{}) {
+	c.Error(fmt.Sprintf(format, args...))
+}
+
+type customLoggerFactory struct{}
+
+func (c customLoggerFactory) NewLogger(subsystem string) logging.LeveledLogger {
+	return customLogger{}
+}
+
+var webrtc_api *webrtc.API
+
+func init() {
+	webrtc_api = webrtc.NewAPI(webrtc.WithSettingEngine(webrtc.SettingEngine{
+		LoggerFactory: customLoggerFactory{},
+	}))
 }
 
 func MessageCbInvoke(

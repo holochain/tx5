@@ -36,9 +36,17 @@ jobs:
         with:
           go-version: '=1.20.0'
 
-      - name: Rust Toolchain
+      - name: Rust Toolchain Linux/Mac
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         uses: actions-rs/toolchain@v1
         with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust Toolchain Win
+        if: matrix.os = 'windows-latest'
+        uses: actions-rs/toolchain@v1
+        with:
+          target: x86_64-pc-windows-gnu
           toolchain: ${{ matrix.toolchain }}
 
       - name: Cargo Test

@@ -43,7 +43,7 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust Toolchain Win
-        if: matrix.os = 'windows-latest'
+        if: matrix.os == 'windows-latest'
         uses: actions-rs/toolchain@v1
         with:
           target: x86_64-pc-windows-gnu

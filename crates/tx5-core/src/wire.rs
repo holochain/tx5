@@ -206,4 +206,13 @@ impl FwdInnerV1 {
             FwdInnerV1::Ice { seq, .. } => *seq = new_seq,
         }
     }
+
+    /// Get the seq.
+    pub fn get_seq(&self) -> f64 {
+        match self {
+            FwdInnerV1::Offer { seq, .. } => *seq,
+            FwdInnerV1::Answer { seq, .. } => *seq,
+            FwdInnerV1::Ice { seq, .. } => *seq,
+        }
+    }
 }

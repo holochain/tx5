@@ -1,17 +1,12 @@
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 #![deny(warnings)]
+#![doc = include_str!("README.tpl")]
+//! # tx5-core
+//!
+//! Holochain WebRTC p2p communication ecosystem core types.
 
-//! Holochain WebRTC P2P Communication Ecosystem Core Types.
-//!
-//! - :warning: This code is new and should not yet be considered secure for production use!
-//!
-//! [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
-//! [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)
-//! [![Chat](https://img.shields.io/badge/chat-chat%2eholochain%2enet-blue.svg?style=flat-square)](https://chat.holochain.org)
-//!
-//! [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-//! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+include!(concat!(env!("OUT_DIR"), "/readme.rs"));
 
 /// Re-exported dependencies.
 pub mod deps {
@@ -25,6 +20,9 @@ pub use error::*;
 
 mod id;
 pub use id::*;
+
+mod uniq;
+pub use uniq::*;
 
 mod url;
 pub use crate::url::*;

@@ -71,7 +71,8 @@ func CallPeerConAlloc(
 
 	var tmpConfig PeerConConfig
 	if err := json.Unmarshal(buf.buf.Bytes(), &tmpConfig); err != nil {
-		panic(err)
+		errStr := fmt.Sprintf("%s: %s", err, buf.buf.Bytes())
+		panic(errStr)
 	}
 
 	var config_parsed webrtc.Configuration
@@ -85,7 +86,7 @@ func CallPeerConAlloc(
 		config_parsed.Certificates = append(config_parsed.Certificates, *cert)
 	}
 
-	con, err := webrtc.NewPeerConnection(config_parsed)
+	con, err := webrtc_api.NewPeerConnection(config_parsed)
 	if err != nil {
 		panic(err)
 	}

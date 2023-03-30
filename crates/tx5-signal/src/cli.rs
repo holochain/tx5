@@ -2,6 +2,7 @@ use crate::*;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use lair_keystore_api::prelude::*;
+use parking_lot::Mutex;
 use std::future::Future;
 use std::sync::atomic;
 use std::sync::Arc;
@@ -11,6 +12,8 @@ use tx5_core::wire;
 type Socket = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
+
+const PROTO_VER: &str = "v1";
 
 /// Incoming signal message from a remote node.
 #[derive(Debug)]
@@ -53,7 +56,6 @@ type RecvCb = Box<dyn FnMut(SignalMsg) + 'static + Send>;
 
 /// Builder for constructing a Cli instance.
 pub struct CliBuilder {
-    tls: Option<tls::TlsConfig>,
     recv_cb: RecvCb,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
@@ -63,7 +65,6 @@ pub struct CliBuilder {
 impl Default for CliBuilder {
     fn default() -> Self {
         Self {
-            tls: None,
             recv_cb: Box::new(|_| {}),
             lair_client: None,
             lair_tag: None,
@@ -73,17 +74,6 @@ impl Default for CliBuilder {
 }
 
 impl CliBuilder {
-    /// Set the TlsConfig.
-    pub fn set_tls(&mut self, tls: Option<tls::TlsConfig>) {
-        self.tls = tls;
-    }
-
-    /// Apply a TlsConfig.
-    pub fn with_tls(mut self, tls: Option<tls::TlsConfig>) -> Self {
-        self.set_tls(tls);
-        self
-    }
-
     /// Set the receiver callback.
     pub fn set_recv_cb<Cb>(&mut self, cb: Cb)
     where
@@ -140,15 +130,28 @@ impl CliBuilder {
     }
 }
 
-type WriteSend = tokio::sync::mpsc::Sender<(
-    Vec<u8>,
-    tokio::sync::oneshot::Sender<Result<()>>,
-)>;
+fn priv_system_tls() -> Arc<rustls::ClientConfig> {
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs()
+        .expect("failed to load system tls certs")
+    {
+        roots
+            .add(&rustls::Certificate(cert.0))
+            .expect("faild to add cert to root");
+    }
 
-type WriteRecv = tokio::sync::mpsc::Receiver<(
-    Vec<u8>,
-    tokio::sync::oneshot::Sender<Result<()>>,
-)>;
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    )
+}
+
+type Respond = tokio::sync::oneshot::Sender<Result<()>>;
+
+type WriteSend = tokio::sync::mpsc::Sender<(Message, Respond)>;
+type WriteRecv = tokio::sync::mpsc::Receiver<(Message, Respond)>;
 
 struct Seq(atomic::AtomicU64);
 
@@ -179,13 +182,105 @@ impl Seq {
     }
 }
 
+// five minutes in milliseconds
+const FIVE_MIN_MS: f64 = 1000.0 * 60.0 * 5.0;
+
+type SeqMap = std::collections::HashMap<Id, f64>;
+struct SeqTrack(Arc<parking_lot::Mutex<SeqMap>>);
+
+impl SeqTrack {
+    pub fn new() -> Self {
+        Self(Arc::new(parking_lot::Mutex::new(SeqMap::new())))
+    }
+
+    pub fn check(&self, rem_pub: Id, seq: f64) -> bool {
+        self.check_inner(
+            rem_pub,
+            seq,
+            std::time::SystemTime::UNIX_EPOCH
+                .elapsed()
+                .unwrap()
+                .as_secs_f64()
+                * 1000.0,
+        )
+    }
+
+    fn check_inner(&self, rem_pub: Id, seq: f64, now: f64) -> bool {
+        if seq > (now + FIVE_MIN_MS) || seq < (now - FIVE_MIN_MS) {
+            tracing::warn!(%now, %seq, "SeqOutOfWindow");
+            return false;
+        }
+
+        let mut map = self.0.lock();
+
+        // first, prune
+        map.retain(|_, s| *s > (now - FIVE_MIN_MS));
+
+        use std::collections::hash_map::Entry;
+        match map.entry(rem_pub) {
+            Entry::Occupied(mut e) => {
+                let prev: f64 = *e.get();
+                if prev >= seq {
+                    tracing::warn!(%prev, %seq, "SeqOutOfOrder");
+                    false
+                } else {
+                    *e.get_mut() = seq;
+                    true
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(seq);
+                true
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn seq_track_after_window() {
+        let st = SeqTrack::new();
+        assert!(!st.check_inner([0; 32].into(), FIVE_MIN_MS * 2.0, 0.0));
+    }
+
+    #[test]
+    fn seq_track_before_window() {
+        let st = SeqTrack::new();
+        assert!(!st.check_inner([0; 32].into(), 0.0, FIVE_MIN_MS * 2.0));
+    }
+
+    #[test]
+    fn seq_track_out_of_order() {
+        let st = SeqTrack::new();
+        assert!(st.check_inner([0; 32].into(), 1.0, 2.0));
+        assert!(!st.check_inner([0; 32].into(), 0.0, 2.0));
+    }
+
+    #[test]
+    fn seq_track_expire_ok() {
+        // this test lacks a degree of correctness in order to test pruning
+        let st = SeqTrack::new();
+        assert!(st.check_inner([0; 32].into(), 1.0, 0.0));
+        assert!(st.check_inner(
+            [1; 32].into(),
+            FIVE_MIN_MS * 2.0,
+            FIVE_MIN_MS * 2.0
+        ));
+        assert!(st.check_inner([0; 32].into(), 0.0, 1.0));
+    }
+}
+
 /// Tx5-signal client connection type.
 pub struct Cli {
     addr: url::Url,
-    hnd: tokio::task::JoinHandle<()>,
-    ice: serde_json::Value,
+    hnd: Vec<tokio::task::JoinHandle<()>>,
+    ice: Arc<Mutex<Arc<serde_json::Value>>>,
     write_send: WriteSend,
     seq: Seq,
+    _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     x25519_pub: Id,
 }
@@ -204,7 +299,9 @@ impl Cli {
 
     /// Shutdown this client instance.
     pub fn close(&self) {
-        self.hnd.abort();
+        for h in self.hnd.iter() {
+            h.abort();
+        }
     }
 
     /// Get the id (x25519 public key) that this local node is identified by.
@@ -218,8 +315,8 @@ impl Cli {
     }
 
     /// Get the ice server list provided by the server.
-    pub fn ice_servers(&self) -> &serde_json::Value {
-        &self.ice
+    pub fn ice_servers(&self) -> Arc<serde_json::Value> {
+        self.ice.lock().clone()
     }
 
     /// Send a WebRTC offer to a remote node on the signal server.
@@ -276,7 +373,12 @@ impl Cli {
         tokio::task::spawn(async move {
             let (s, r) = tokio::sync::oneshot::channel();
             let _ = write_send
-                .send((wire::Wire::DemoV1 { rem_pub }.encode().unwrap(), s))
+                .send((
+                    Message::binary(
+                        wire::Wire::DemoV1 { rem_pub }.encode().unwrap(),
+                    ),
+                    s,
+                ))
                 .await;
             let _ = r.await;
         });
@@ -315,7 +417,7 @@ impl Cli {
             let (s, r) = tokio::sync::oneshot::channel();
 
             write_send
-                .send((wire, s))
+                .send((Message::binary(wire), s))
                 .await
                 .map_err(|_| Error::id("ClientClosed"))?;
 
@@ -325,21 +427,61 @@ impl Cli {
 
     async fn priv_build(builder: CliBuilder) -> Result<Self> {
         let CliBuilder {
-            tls,
             recv_cb,
             lair_client,
             lair_tag,
             url,
         } = builder;
 
-        let lair_client = match lair_client {
-            Some(lair_client) => lair_client,
-            None => return Err(Error::id("LairClientRequired")),
-        };
+        let mut lair_keystore = None;
 
         let lair_tag = match lair_tag {
             Some(lair_tag) => lair_tag,
-            None => return Err(Error::id("LairTagRequired")),
+            None => rand_utf8::rand_utf8(&mut rand::thread_rng(), 32).into(),
+        };
+
+        let lair_client = match lair_client {
+            Some(lair_client) => lair_client,
+            None => {
+                let passphrase = sodoken::BufRead::new_no_lock(
+                    rand_utf8::rand_utf8(&mut rand::thread_rng(), 32)
+                        .as_bytes(),
+                );
+
+                // this is a memory keystore,
+                // so weak persistence security is okay,
+                // since it will not be persisted.
+                // The private keys will still be mem_locked
+                // so they shouldn't be swapped to disk.
+                let keystore_config = PwHashLimits::Minimum
+                    .with_exec(|| {
+                        LairServerConfigInner::new("/", passphrase.clone())
+                    })
+                    .await
+                    .unwrap();
+
+                let keystore = PwHashLimits::Minimum
+                    .with_exec(|| {
+                        lair_keystore_api::in_proc_keystore::InProcKeystore::new(
+                            Arc::new(keystore_config),
+                            lair_keystore_api::mem_store::create_mem_store_factory(),
+                            passphrase,
+                        )
+                    })
+                    .await
+                    .unwrap();
+
+                let lair_client = keystore.new_client().await.unwrap();
+
+                lair_client
+                    .new_seed(lair_tag.clone(), None, false)
+                    .await
+                    .unwrap();
+
+                lair_keystore = Some(keystore);
+
+                lair_client
+            }
         };
 
         let url = match url {
@@ -355,8 +497,8 @@ impl Cli {
         };
 
         let use_tls = match url.scheme() {
-            "ws" => false,
-            "wss" => true,
+            "ws" => None,
+            "wss" => Some(priv_system_tls()),
             _ => {
                 return Err(Error::err(format!(
                     "invalid scheme, expected \"ws\" or \"wss\", got {:?}",
@@ -365,11 +507,7 @@ impl Cli {
             }
         };
 
-        if use_tls && tls.is_none() {
-            return Err(Error::err("tls required but no tls config supplied"));
-        }
-
-        tracing::debug!(?use_tls, %url, ?x25519_pub);
+        tracing::debug!(use_tls=%use_tls.is_some(), %url, ?x25519_pub);
 
         let host = match url.host_str() {
             None => return Err(Error::id("InvalidHost")),
@@ -380,84 +518,65 @@ impl Cli {
 
         let endpoint = format!("{host}:{port}");
 
-        let con_url = if use_tls {
-            format!("wss://{endpoint}/tx5-ws/{x25519_pub}")
-        } else {
-            format!("ws://{endpoint}/tx5-ws/{x25519_pub}")
-        };
-
-        let mut err_list = Vec::new();
-        let mut result_socket = None;
-
-        for addr in tokio::net::lookup_host(&endpoint).await? {
-            match Self::priv_con(use_tls, &tls, host, &con_url, addr).await {
-                Ok(con) => {
-                    result_socket = Some(con);
-                    break;
-                }
-                Err(err) => {
-                    err_list.push(format!("{err:?}"));
-                    continue;
-                }
-            }
-        }
-
-        let mut socket = match result_socket {
-            Some(socket) => socket,
-            None => return Err(Error::err(format!("{err_list:?}"))),
-        };
-
-        let auth_req = match socket.next().await {
-            Some(Ok(auth_req)) => auth_req.into_data(),
-            Some(Err(err)) => return Err(Error::err(err)),
-            None => return Err(Error::id("InvalidServerAuthReq")),
-        };
-
-        let (srv_pub, nonce, cipher, ice) = match wire::Wire::decode(&auth_req)?
-        {
-            wire::Wire::AuthReqV1 {
-                srv_pub,
-                nonce,
-                cipher,
-                ice,
-            } => (srv_pub, nonce, cipher, ice),
-            _ => return Err(Error::id("InvalidServerAuthReq")),
-        };
-
-        let con_key = lair_client
-            .crypto_box_xsalsa_open_by_pub_key(
-                srv_pub.0.into(),
-                x25519_pub.0.into(),
-                None,
-                nonce.0,
-                cipher.0.into(),
+        let (con_url, con_url_versioned) = if use_tls.is_some() {
+            (
+                format!("wss://{endpoint}/tx5-ws/{x25519_pub}"),
+                format!("wss://{endpoint}/tx5-ws/{PROTO_VER}/{x25519_pub}"),
             )
-            .await?;
-
-        socket
-            .send(Message::binary(
-                wire::Wire::AuthResV1 {
-                    con_key: Id::from_slice(&con_key)?,
-                    req_addr: true,
-                }
-                .encode()?,
-            ))
-            .await
-            .map_err(Error::err)?;
+        } else {
+            (
+                format!("ws://{endpoint}/tx5-ws/{x25519_pub}"),
+                format!("ws://{endpoint}/tx5-ws/{PROTO_VER}/{x25519_pub}"),
+            )
+        };
 
         let url = url::Url::parse(&con_url).map_err(Error::err)?;
-
         tracing::debug!(%url);
 
         let (write_send, write_recv) = tokio::sync::mpsc::channel(1);
 
-        let hnd = tokio::task::spawn(con_task(
-            socket,
+        let mut hnd = Vec::with_capacity(2);
+
+        let ice = Arc::new(Mutex::new(Arc::new(serde_json::json!({
+            "iceServers": [],
+        }))));
+
+        let (init_send, init_recv) = tokio::sync::oneshot::channel();
+
+        hnd.push(tokio::task::spawn(con_task(
+            use_tls,
+            host.to_string(),
+            con_url_versioned,
+            endpoint,
+            ice.clone(),
             recv_cb,
             x25519_pub,
             lair_client.clone(),
+            write_send.clone(),
             write_recv,
-        ));
+            init_send,
+        )));
+
+        let keep_alive = write_send.clone();
+        hnd.push(tokio::task::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                let (s, r) = tokio::sync::oneshot::channel();
+                if keep_alive
+                    .send((Message::Ping(Vec::new()), s))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                match r.await {
+                    Ok(Err(_)) | Err(_) => break,
+                    Ok(Ok(_)) => (),
+                }
+            }
+        }));
+
+        let _ = init_recv.await;
 
         Ok(Self {
             addr: url,
@@ -465,103 +584,310 @@ impl Cli {
             ice,
             write_send,
             seq: Seq::new(),
+            _lair_keystore: lair_keystore,
             lair_client,
             x25519_pub,
         })
     }
-
-    async fn priv_con(
-        use_tls: bool,
-        tls: &Option<crate::tls::TlsConfig>,
-        host: &str,
-        con_url: &str,
-        addr: std::net::SocketAddr,
-    ) -> Result<Socket> {
-        tracing::debug!(?addr, "try connect");
-
-        let socket = match tokio::net::TcpStream::connect(addr).await {
-            Ok(socket) => socket,
-            Err(err) => return Err(err),
-        };
-
-        let socket = match tcp_configure(socket) {
-            Ok(socket) => socket,
-            Err(err) => return Err(err),
-        };
-
-        let socket: tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream> =
-            if use_tls {
-                let name = host
-                    .try_into()
-                    .unwrap_or_else(|_| "tx5-signal".try_into().unwrap());
-
-                let socket = match tokio_rustls::TlsConnector::from(
-                    tls.as_ref().unwrap().cli.clone(),
-                )
-                .connect(name, socket)
-                .await
-                {
-                    Ok(socket) => socket,
-                    Err(err) => return Err(err),
-                };
-
-                tokio_tungstenite::MaybeTlsStream::Rustls(socket)
-            } else {
-                tokio_tungstenite::MaybeTlsStream::Plain(socket)
-            };
-
-        let (socket, _rsp) = match tokio_tungstenite::client_async_with_config(
-            con_url,
-            socket,
-            Some(WS_CONFIG),
-        )
-        .await
-        .map_err(Error::err)
-        {
-            Ok(r) => r,
-            Err(err) => return Err(err),
-        };
-
-        Ok(socket)
-    }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn con_task(
-    socket: Socket,
+    use_tls: Option<Arc<rustls::ClientConfig>>,
+    host: String,
+    con_url: String,
+    endpoint: String,
+    ice: Arc<Mutex<Arc<serde_json::Value>>>,
     recv_cb: RecvCb,
     x25519_pub: Id,
     lair_client: LairClient,
+    write_send: WriteSend,
     write_recv: WriteRecv,
+    init: tokio::sync::oneshot::Sender<()>,
 ) {
-    if let Err(err) =
-        con_task_err(socket, recv_cb, x25519_pub, lair_client, write_recv).await
-    {
-        tracing::error!(?err);
+    let mut init = Some(init);
+    let mut recv_cb = Some(recv_cb);
+    let mut write_recv = Some(write_recv);
+    loop {
+        if let Some(socket) = con_open_connection(
+            &use_tls,
+            &host,
+            &con_url,
+            &endpoint,
+            x25519_pub,
+            &ice,
+            &lair_client,
+        )
+        .await
+        {
+            // once we've run open_connection once, proceed with init
+            if let Some(init) = init.take() {
+                let _ = init.send(());
+            }
+
+            let (a_recv_cb, a_write_recv) = con_manage_connection(
+                socket,
+                recv_cb.take().unwrap(),
+                x25519_pub,
+                &lair_client,
+                write_send.clone(),
+                write_recv.take().unwrap(),
+            )
+            .await;
+            recv_cb = Some(a_recv_cb);
+            write_recv = Some(a_write_recv);
+        }
+
+        // once we've run open_connection once, proceed with init
+        if let Some(init) = init.take() {
+            let _ = init.send(());
+        }
+
+        let s = rand::Rng::gen_range(&mut rand::thread_rng(), 4.0..8.0);
+        let s = std::time::Duration::from_secs_f64(s);
+        tokio::time::sleep(s).await;
     }
 }
 
-async fn con_task_err(
-    socket: Socket,
-    mut recv_cb: RecvCb,
+async fn con_stack(
+    use_tls: &Option<Arc<rustls::ClientConfig>>,
+    host: &str,
+    con_url: &str,
+    addr: std::net::SocketAddr,
+) -> Option<Socket> {
+    tracing::debug!(?addr, "try connect");
+
+    let socket = match tokio::net::TcpStream::connect(addr).await {
+        Ok(socket) => socket,
+        Err(err) => {
+            tracing::debug!(?err);
+            return None;
+        }
+    };
+
+    let socket = match tcp_configure(socket) {
+        Ok(socket) => socket,
+        Err(err) => {
+            tracing::debug!(?err);
+            return None;
+        }
+    };
+
+    let socket: tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream> =
+        if let Some(tls) = use_tls {
+            let name = host
+                .try_into()
+                .unwrap_or_else(|_| "tx5-signal".try_into().unwrap());
+
+            let socket = match tokio_rustls::TlsConnector::from(tls.clone())
+                .connect(name, socket)
+                .await
+            {
+                Ok(socket) => socket,
+                Err(err) => {
+                    tracing::debug!(?err);
+                    return None;
+                }
+            };
+
+            tokio_tungstenite::MaybeTlsStream::Rustls(socket)
+        } else {
+            tokio_tungstenite::MaybeTlsStream::Plain(socket)
+        };
+
+    let (socket, _rsp) = match tokio_tungstenite::client_async_with_config(
+        con_url,
+        socket,
+        Some(WS_CONFIG),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(err) => {
+            tracing::debug!(?err);
+            return None;
+        }
+    };
+
+    Some(socket)
+}
+
+async fn con_open_connection(
+    use_tls: &Option<Arc<rustls::ClientConfig>>,
+    host: &str,
+    con_url: &str,
+    endpoint: &str,
     x25519_pub: Id,
-    lair_client: LairClient,
-    mut write_recv: WriteRecv,
-) -> Result<()> {
+    ice: &Mutex<Arc<serde_json::Value>>,
+    lair_client: &LairClient,
+) -> Option<Socket> {
+    let mut result_socket = None;
+
+    let addr_list = match tokio::net::lookup_host(&endpoint).await {
+        Ok(addr_list) => addr_list,
+        Err(err) => {
+            tracing::debug!(?err);
+            return None;
+        }
+    };
+
+    for addr in addr_list {
+        if let Some(con) = con_stack(use_tls, host, con_url, addr).await {
+            result_socket = Some(con);
+            break;
+        }
+    }
+
+    let mut socket = match result_socket {
+        Some(socket) => socket,
+        None => {
+            tracing::debug!("failed all sig dns addr connects");
+            return None;
+        }
+    };
+
+    let auth_req = match socket.next().await {
+        Some(Ok(auth_req)) => auth_req.into_data(),
+        Some(Err(err)) => {
+            tracing::debug!(?err);
+            return None;
+        }
+        None => {
+            tracing::debug!("InvalidServerAuthReq");
+            return None;
+        }
+    };
+
+    let decode = match wire::Wire::decode(&auth_req) {
+        Ok(decode) => decode,
+        Err(err) => {
+            tracing::debug!(?err);
+            return None;
+        }
+    };
+
+    let (srv_pub, nonce, cipher, got_ice) = match decode {
+        wire::Wire::AuthReqV1 {
+            srv_pub,
+            nonce,
+            cipher,
+            ice,
+        } => (srv_pub, nonce, cipher, ice),
+        _ => {
+            tracing::debug!("InvalidServerAuthReq");
+            return None;
+        }
+    };
+
+    let con_key = match lair_client
+        .crypto_box_xsalsa_open_by_pub_key(
+            srv_pub.0.into(),
+            x25519_pub.0.into(),
+            None,
+            nonce.0,
+            cipher.0.into(),
+        )
+        .await
+    {
+        Ok(con_key) => con_key,
+        Err(err) => {
+            tracing::debug!(?err);
+            return None;
+        }
+    };
+
+    if let Err(err) = socket
+        .send(Message::binary(
+            match (wire::Wire::AuthResV1 {
+                con_key: match Id::from_slice(&con_key) {
+                    Ok(con_key) => con_key,
+                    Err(err) => {
+                        tracing::debug!(?err);
+                        return None;
+                    }
+                },
+                req_addr: true,
+            })
+            .encode()
+            {
+                Ok(binary) => binary,
+                Err(err) => {
+                    tracing::debug!(?err);
+                    return None;
+                }
+            },
+        ))
+        .await
+    {
+        tracing::debug!(?err);
+        return None;
+    }
+
+    tracing::info!(%got_ice, "signal connection established");
+    *ice.lock() = Arc::new(got_ice);
+
+    Some(socket)
+}
+
+async fn con_manage_connection(
+    socket: Socket,
+    recv_cb: RecvCb,
+    x25519_pub: Id,
+    lair_client: &LairClient,
+    write_send: WriteSend,
+    write_recv: WriteRecv,
+) -> (RecvCb, WriteRecv) {
+    let recv_cb = Arc::new(tokio::sync::Mutex::new(recv_cb));
+    let write_recv = Arc::new(tokio::sync::Mutex::new(write_recv));
+
+    let recv_cb2 = recv_cb.clone();
+    let write_recv2 = write_recv.clone();
+
+    macro_rules! dbg_err {
+        ($e:expr) => {
+            match $e {
+                Err(err) => {
+                    tracing::debug!(?err);
+                    return;
+                }
+                Ok(r) => r,
+            }
+        };
+    }
+
     let (mut write, mut read) = socket.split();
+    let mut seq_track = SeqTrack::new();
 
     tokio::select! {
-        r = async move {
+        _ = async move {
+            let mut recv_cb = recv_cb2.lock().await;
             while let Some(msg) = read.next().await {
-                let msg = msg.map_err(Error::err)?.into_data();
-                match wire::Wire::decode(&msg)? {
+                let msg = dbg_err!(msg);
+                if let Message::Pong(_) = &msg {
+                    tracing::debug!("ws-pong");
+                    continue;
+                }
+                if let Message::Ping(v) = &msg {
+                    tracing::debug!("ws-ping");
+                    let (s, r) = tokio::sync::oneshot::channel();
+                    let _ = write_send.send((Message::Pong(v.clone()), s)).await;
+                    if let Err(err) = r.await {
+                        tracing::debug!(?err);
+                        return;
+                    }
+                    continue;
+                }
+                let msg = msg.into_data();
+                match dbg_err!(wire::Wire::decode(&msg)) {
                     wire::Wire::DemoV1 { rem_pub } => {
                         recv_cb(SignalMsg::Demo { rem_pub });
                     }
                     wire::Wire::FwdV1 { rem_pub, nonce, cipher } => {
                         if let Err(err) = decode_fwd(
                             &mut recv_cb,
+                            &mut seq_track,
                             &x25519_pub,
-                            &lair_client,
+                            lair_client,
                             rem_pub,
                             nonce,
                             cipher,
@@ -571,29 +897,42 @@ async fn con_task_err(
                             // MAYBE - should we squelch rem_pub?
                         }
                     }
-                    _ => return Err(Error::id("InvalidClientMsg")),
+                    _ => {
+                        tracing::debug!("InvalidClientMsg");
+                        return;
+                    }
                 }
             }
+        } => (),
 
-            Ok(())
-        } => r,
-
-        r = async move {
+        _ = async move {
+            let mut write_recv = write_recv2.lock().await;
             while let Some((msg, resp)) = write_recv.recv().await {
-                if let Err(err) = write.send(Message::binary(msg)).await.map_err(Error::err) {
+                if let Err(err) = write.send(msg).await.map_err(Error::err) {
                     let _ = resp.send(Err(err.err_clone()));
-                    return Err(err);
+                    tracing::debug!(?err);
+                    return;
                 }
                 let _ = resp.send(Ok(()));
             }
+        } => (),
+    };
 
-            Ok(())
-        } => r,
-    }
+    (
+        Arc::try_unwrap(recv_cb)
+            .map_err(|_| ())
+            .unwrap()
+            .into_inner(),
+        Arc::try_unwrap(write_recv)
+            .map_err(|_| ())
+            .unwrap()
+            .into_inner(),
+    )
 }
 
 async fn decode_fwd(
     recv_cb: &mut RecvCb,
+    seq_track: &mut SeqTrack,
     x25519_pub: &Id,
     lair_client: &LairClient,
     rem_pub: Id,
@@ -612,7 +951,11 @@ async fn decode_fwd(
 
     let msg = wire::FwdInnerV1::decode(&msg)?;
 
-    // TODO - validate / track seq per rem_pub
+    let seq = msg.get_seq();
+
+    if !seq_track.check(rem_pub, seq) {
+        return Ok(());
+    }
 
     match msg {
         wire::FwdInnerV1::Offer { offer, .. } => {

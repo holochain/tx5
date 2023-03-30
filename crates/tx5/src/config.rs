@@ -34,7 +34,7 @@ pub trait Config: 'static + Send + Sync {
     /// A request to open a new peer connection.
     fn on_new_conn(
         &self,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
         seed: state::ConnStateSeed,
     );
 }
@@ -72,7 +72,7 @@ struct DefConfigBuilt {
         dyn Fn(DynConfig, Tx5Url, state::SigStateSeed) + 'static + Send + Sync,
     >,
     on_new_conn_cb: Arc<
-        dyn Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+        dyn Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,
@@ -116,7 +116,7 @@ impl Config for DefConfigBuilt {
 
     fn on_new_conn(
         &self,
-        ice_servers: serde_json::Value,
+        ice_servers: Arc<serde_json::Value>,
         seed: state::ConnStateSeed,
     ) {
         if let Some(this) = self.this.upgrade() {
@@ -146,7 +146,7 @@ pub struct DefConfig {
     >,
     on_new_conn_cb: Option<
         Arc<
-            dyn Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+            dyn Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
                 + 'static
                 + Send
                 + Sync,
@@ -161,10 +161,10 @@ impl IntoConfig for DefConfig {
                 self.max_send_bytes.unwrap_or(16 * 1024 * 1024);
             let max_recv_bytes =
                 self.max_recv_bytes.unwrap_or(16 * 1024 * 1024);
-            let max_conn_count = self.max_conn_count.unwrap_or(40);
+            let max_conn_count = self.max_conn_count.unwrap_or(255);
             let max_conn_init = self
                 .max_conn_init
-                .unwrap_or(std::time::Duration::from_secs(20));
+                .unwrap_or(std::time::Duration::from_secs(60));
             let metrics = self
                 .metrics
                 .unwrap_or_else(|| prometheus::default_registry().clone());
@@ -271,7 +271,7 @@ impl DefConfig {
     }
 
     /// Set the max concurrent connection count.
-    /// The default is `40`.
+    /// The default is `255`.
     pub fn set_max_conn_count(&mut self, max_conn_count: u32) {
         self.max_conn_count = Some(max_conn_count);
     }
@@ -283,7 +283,7 @@ impl DefConfig {
     }
 
     /// Set the max connection init (connect) time.
-    /// The default is `20` seconds.
+    /// The default is `60` seconds.
     pub fn set_max_conn_init(&mut self, max_conn_init: std::time::Duration) {
         self.max_conn_init = Some(max_conn_init);
     }
@@ -356,7 +356,7 @@ impl DefConfig {
     /// on the feature flipper chosen at compile time.
     pub fn set_new_conn_cb<Cb>(&mut self, cb: Cb)
     where
-        Cb: Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+        Cb: Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,
@@ -367,7 +367,7 @@ impl DefConfig {
     /// See `set_new_conn_cb()`, this is the builder version.
     pub fn with_new_conn_cb<Cb>(mut self, cb: Cb) -> Self
     where
-        Cb: Fn(DynConfig, serde_json::Value, state::ConnStateSeed)
+        Cb: Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
             + 'static
             + Send
             + Sync,

@@ -1,6 +1,6 @@
 [package]
 name = "tx5-go-pion-sys"
-version = "0.0.1-alpha.5"
+version = "0.0.1-alpha.8"
 edition = "2021"
 description = "Low level rust bindings to the go pion webrtc library"
 license = "MIT OR Apache-2.0"
@@ -17,11 +17,14 @@ exclude = [
 links = "go-pion-webrtc"
 
 [dependencies]
+base64 = { workspace = true }
+dirs = { workspace = true }
+dunce = { workspace = true }
 libc = { workspace = true }
 libloading = { workspace = true }
 once_cell = { workspace = true }
 ouroboros = { workspace = true }
-tempfile = { workspace = true }
+sha2 = { workspace = true }
 tracing = { workspace = true }
 tx5-core = { workspace = true }
 
@@ -29,5 +32,7 @@ tx5-core = { workspace = true }
 parking_lot = { workspace = true }
 
 [build-dependencies]
+base64 = { workspace = true }
 Inflector = { workspace = true }
+sha2 = { workspace = true }
 zip = { workspace = true }

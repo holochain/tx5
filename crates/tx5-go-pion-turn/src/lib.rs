@@ -1,17 +1,10 @@
 #![deny(missing_docs)]
 #![deny(warnings)]
 #![deny(unsafe_code)]
-
+#![doc = tx5_core::__doc_header!()]
+//! # tx5-go-pion-turn
+//!
 //! Rust process wrapper around tx5-go-pion-turn executable.
-//!
-//! - :warning: This code is new and should not yet be considered secure for production use!
-//!
-//! [![Project](https://img.shields.io/badge/project-holochain-blue.svg?style=flat-square)](http://holochain.org/)
-//! [![Forum](https://img.shields.io/badge/chat-forum%2eholochain%2enet-blue.svg?style=flat-square)](https://forum.holochain.org)
-//! [![Chat](https://img.shields.io/badge/chat-chat%2eholochain%2enet-blue.svg?style=flat-square)](https://chat.holochain.org)
-//!
-//! [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-//! [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
 /// Re-exported dependencies.
 pub mod deps {
@@ -30,51 +23,83 @@ use once_cell::sync::Lazy;
 
 // keep the file handle open to mitigate replacements on some oses
 static EXE: Lazy<(std::path::PathBuf, std::fs::File)> = Lazy::new(|| {
-    let mut path =
+    let mut path_1 =
         dirs::data_local_dir().expect("failed to determine data dir");
+    let mut path_2 =
+        dunce::canonicalize(".").expect("failed to canonicalize current dir");
 
     #[cfg(windows)]
     let ext = ".exe";
     #[cfg(not(windows))]
     let ext = "";
 
-    path.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
+    path_1.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
+    path_2.push(format!("tx5-go-pion-turn-{EXE_HASH}{ext}"));
 
-    let mut opts = std::fs::OpenOptions::new();
+    for path in [&path_1, &path_2] {
+        tracing::trace!("check exec file: {path:?}");
 
-    opts.write(true);
-    opts.create_new(true);
+        let mut opts = std::fs::OpenOptions::new();
 
-    #[cfg(not(windows))]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o700);
+        opts.write(true);
+        opts.create_new(true);
 
-    if let Ok(mut file) = opts.open(&path) {
-        use std::io::Write;
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o700);
 
-        file.write_all(EXE_BYTES)
-            .expect("failed to write executable bytes");
-        file.flush().expect("failed to flush executable bytes");
+        if let Ok(mut file) = opts.open(path) {
+            use std::io::Write;
+
+            file.write_all(EXE_BYTES)
+                .expect("failed to write executable bytes");
+            file.flush().expect("failed to flush executable bytes");
+
+            let mut perms = file
+                .metadata()
+                .expect("failed to get executable metadata")
+                .permissions();
+
+            perms.set_readonly(true);
+            #[cfg(unix)]
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+
+            file.set_permissions(perms)
+                .expect("failed to set exe permissions");
+
+            tracing::trace!("wrote exec file: {path:?}");
+        }
+
+        if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(path)
+        {
+            use std::io::Read;
+
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)
+                .expect("failed to read executable");
+
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(data);
+            let hash = base64::encode_config(
+                hasher.finalize(),
+                base64::URL_SAFE_NO_PAD,
+            );
+
+            assert_eq!(EXE_HASH, hash);
+
+            let perms = file
+                .metadata()
+                .expect("failed to get executable metadata")
+                .permissions();
+
+            assert!(perms.readonly());
+
+            tracing::trace!("success correct exec file: {path:?}");
+
+            return (path.clone(), file);
+        }
     }
-
-    if let Ok(mut file) = std::fs::OpenOptions::new().read(true).open(&path) {
-        use std::io::Read;
-
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)
-            .expect("failed to read executable");
-
-        use sha2::Digest;
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(data);
-        let hash =
-            base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
-
-        assert_eq!(EXE_HASH, hash);
-
-        (path, file)
-    } else {
-        panic!("invalid executable");
-    }
+    panic!("invalid executable paths: {path_1:?} {path_2:?}");
 });
 
 /// Rust process wrapper around tx5-go-pion-turn executable.
@@ -190,8 +215,21 @@ pub async fn test_turn_server() -> Result<(String, Tx5TurnServer)> {
 mod tests {
     use super::*;
 
+    fn init_tracing() {
+        let subscriber = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(
+                tracing_subscriber::filter::EnvFilter::from_default_env(),
+            )
+            .with_file(true)
+            .with_line_number(true)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn sanity() {
+        init_tracing();
+
         let (ice, srv) = test_turn_server().await.unwrap();
 
         println!("{}", ice);

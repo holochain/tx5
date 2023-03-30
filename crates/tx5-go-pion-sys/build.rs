@@ -12,36 +12,40 @@ fn main() {
     println!("cargo:rerun-if-changed=main.go");
     println!("cargo:rerun-if-changed=vendor.zip");
 
-    let mut lib_path = std::path::PathBuf::from(
-        std::env::var("OUT_DIR").expect("failed to read env OUT_DIR"),
-    );
-    #[cfg(target_os = "macos")]
-    lib_path.push("go-pion-webrtc.dylib");
-    #[cfg(target_os = "windows")]
-    lib_path.push("go-pion-webrtc.dll");
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    lib_path.push("go-pion-webrtc.so");
-
     go_check_version();
     go_unzip_vendor();
-    go_build(&lib_path);
+    go_build();
     gen_rust_const();
 }
 
 fn go_check_version() {
     //println!("cargo:warning=NOTE:checking go version");
 
+    const VER_MAJ: u32 = 1;
+
+    #[cfg(not(windows))]
+    const VER_MIN: u32 = 18;
+    #[cfg(windows)]
+    const VER_MIN: u32 = 20;
+
     let go_version = Command::new("go")
         .arg("version")
         .output()
         .expect("error checking go version");
     assert_eq!(b"go version go", &go_version.stdout[0..13]);
-    let ver: f64 = String::from_utf8_lossy(&go_version.stdout[13..17])
+    let ver_maj: u32 = String::from_utf8_lossy(&go_version.stdout[13..14])
+        .parse()
+        .expect("error parsing go version");
+    let ver_min: u32 = String::from_utf8_lossy(&go_version.stdout[15..17])
         .parse()
         .expect("error parsing go version");
     assert!(
-        ver >= 1.18,
-        "go executable version must be >= 1.18, got: {ver}",
+        ver_maj >= VER_MAJ,
+        "go executable version must be >= {VER_MAJ}.{VER_MIN}, got: {ver_maj}.{ver_min}",
+    );
+    assert!(
+        ver_min >= VER_MIN,
+        "go executable version must be >= {VER_MAJ}.{VER_MIN}, got: {ver_maj}.{ver_min}",
     );
 }
 
@@ -66,7 +70,7 @@ fn go_unzip_vendor() {
     .expect("failed to extract vendor zip file");
 }
 
-fn go_build(path: &std::path::Path) {
+fn go_build() {
     let out_dir = std::env::var("OUT_DIR")
         .map(std::path::PathBuf::from)
         .expect("error reading out dir");
@@ -77,6 +81,20 @@ fn go_build(path: &std::path::Path) {
     lib.push("libgo-pion-webrtc.a");
     #[cfg(windows)]
     lib.push("go-pion-webrtc.lib");
+
+    let mut lib_path = out_dir.clone();
+
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
+    lib_path.push("go-pion-webrtc.dylib");
+    #[cfg(target_os = "windows")]
+    lib_path.push("go-pion-webrtc.dll");
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "windows"
+    )))]
+    lib_path.push("go-pion-webrtc.so");
 
     let mut cache = out_dir.clone();
     cache.push("go-build");
@@ -108,7 +126,7 @@ fn go_build(path: &std::path::Path) {
         .arg("-ldflags") // strip debug symbols
         .arg("-s -w") // strip debug symbols
         .arg("-o")
-        .arg(path)
+        .arg(lib_path.clone())
         .arg("-mod=vendor")
         .arg("-buildmode=c-shared");
 
@@ -150,6 +168,25 @@ fn go_build(path: &std::path::Path) {
         out_dir.to_string_lossy()
     );
     println!("cargo:rustc-link-lib=static=go-pion-webrtc");
+
+    use sha2::Digest;
+    let data = std::fs::read(lib_path).expect("failed to read generated lib");
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(data);
+    let hash =
+        base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
+
+    let mut exe_hash = out_dir;
+    exe_hash.push("lib_hash.rs");
+    std::fs::write(
+        exe_hash,
+        format!(
+            r#"
+        const LIB_HASH: &str = "{hash}";
+    "#,
+        ),
+    )
+    .expect("failed to write lib hash");
 }
 
 fn gen_rust_const() {

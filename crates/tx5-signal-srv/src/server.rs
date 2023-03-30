@@ -28,6 +28,12 @@ impl IntGaugeGuard {
 pub type ServerDriver =
     std::pin::Pin<Box<dyn Future<Output = ()> + 'static + Send>>;
 
+/// Protocol Version
+#[derive(Debug)]
+enum ProtoVer {
+    V1,
+}
+
 /// The main entrypoint tx5-signal-server logic task.
 pub fn exec_tx5_signal_srv(
     config: Config,
@@ -48,9 +54,15 @@ pub fn exec_tx5_signal_srv(
     use warp::Filter;
     use warp::Reply;
 
-    let tx5_ws = warp::path!("tx5-ws" / String)
+    let tx5_ws = warp::path!("tx5-ws" / String / String)
         .and(warp::ws())
-        .map(move |client_pub: String, ws: warp::ws::Ws| {
+        .map(move |ver: String, client_pub: String, ws: warp::ws::Ws| {
+            let ver = if ver == "v1" {
+                ProtoVer::V1
+            } else {
+                return reply_err(Error::id("InvalidVersion")).into_response();
+            };
+
             let active_ws_g =
                 IntGaugeGuard::new(CLIENT_ACTIVE_WS_COUNT.clone());
             CLIENT_WS_COUNT.inc();
@@ -64,11 +76,8 @@ pub fn exec_tx5_signal_srv(
                 .max_message_size(tx5_core::ws::MAX_MESSAGE_SIZE)
                 .max_frame_size(tx5_core::ws::MAX_FRAME_SIZE)
                 .on_upgrade(move |ws| async move {
-                    if let Err(err) =
-                        client_task(ws, client_pub, ice_servers, srv_hnd).await
-                    {
-                        tracing::debug!(?err);
-                    }
+                    client_task(ws, ver, client_pub, ice_servers, srv_hnd)
+                        .await;
                     drop(active_ws_g);
                 })
                 .into_response()
@@ -129,39 +138,52 @@ fn reply_err(err: std::io::Error) -> impl warp::reply::Reply {
 
 async fn client_task(
     mut ws: warp::ws::WebSocket,
+    ver: ProtoVer,
     client_pub: sodoken::BufReadSized<{ crypto_box::PUBLICKEYBYTES }>,
     ice_servers: Arc<serde_json::Value>,
     srv_hnd: Arc<SrvHnd>,
-) -> Result<()> {
-    let client_id = Id::from_slice(&client_pub.read_lock())?;
+) {
+    macro_rules! dbg_err {
+        ($e:expr) => {
+            match $e {
+                Err(err) => {
+                    tracing::debug!(?err);
+                    return;
+                }
+                Ok(r) => r,
+            }
+        };
+    }
 
-    authenticate(&mut ws, client_pub, ice_servers).await?;
+    let client_id = dbg_err!(Id::from_slice(&client_pub.read_lock()));
+
+    dbg_err!(authenticate(&mut ws, client_pub, ice_servers).await);
 
     let (mut tx, mut rx) = ws.split();
     let (out_send, mut out_recv) = tokio::sync::mpsc::unbounded_channel();
 
-    srv_hnd.register(client_id, out_send).await?;
+    dbg_err!(srv_hnd.register(client_id, out_send.clone()).await);
 
     CLIENT_AUTH_WS_COUNT.inc();
+
+    tracing::info!(?client_id, ?ver, "Accepted Incoming Connection");
 
     let srv_hnd_read = srv_hnd.clone();
     let client_id_read = client_id;
     tokio::select! {
         res = async move {
             while let Some((msg, resp)) = out_recv.recv().await {
-                let len = msg.len();
-                if let Err(err) = tx.send(warp::ws::Message::binary(msg)).await {
+                let len = msg.as_bytes().len();
+                if let Err(err) = tx.send(msg).await {
                     let err = Error::err(err);
                     tracing::debug!(?err);
                     let _ = resp.send(Err(err.err_clone()));
-                    return Err(err);
+                    return;
                 } else {
                     let _ = resp.send(Ok(()));
                 }
                 tracing::trace!("ws send {} bytes", len);
             }
-
-            Ok(())
         } => res,
 
         res = async move {
@@ -176,11 +198,25 @@ async fn client_task(
                     Ok(msg) => msg,
                 };
 
+                if msg.is_pong() {
+                    tracing::trace!("got pong");
+                    continue;
+                }
+
+                if msg.is_ping() {
+                    tracing::trace!("got ping");
+                    // warp handles responding with a pong automagically
+                    continue;
+                }
+
                 let msg = msg.into_bytes();
                 tracing::trace!("ws recv {} bytes", msg.len());
 
                 match wire::Wire::decode(&msg) {
-                    Err(err) => return Err(err),
+                    Err(err) => {
+                        tracing::debug!(?err);
+                        return;
+                    }
                     Ok(wire::Wire::DemoV1 {
                         rem_pub: _,
                     }) => {
@@ -190,11 +226,11 @@ async fn client_task(
                         REQ_DEMO_CNT.inc();
                     }
                     Ok(wire::Wire::FwdV1 { rem_pub, nonce, cipher }) => {
-                        let data = wire::Wire::FwdV1 {
+                        let data = dbg_err!(wire::Wire::FwdV1 {
                             rem_pub: client_id_read,
                             nonce,
                             cipher,
-                        }.encode()?;
+                        }.encode());
                         match srv_hnd_read.forward(rem_pub, data).await {
                             Ok(fut) => {
                                 match fut.await {
@@ -211,18 +247,17 @@ async fn client_task(
                         }
                         REQ_FWD_CNT.inc();
                     }
-                    _ => return Err(Error::id("InvalidClientMsg")),
+                    _ => {
+                        tracing::debug!("InvalidClientMsg");
+                        return;
+                    }
                 }
             }
-
-            Ok(())
         } => res,
-    }?;
+    };
 
     tracing::debug!("ConShutdown");
-    srv_hnd.unregister(client_id).await?;
-
-    Ok(())
+    dbg_err!(srv_hnd.unregister(client_id).await);
 }
 
 async fn authenticate(
@@ -287,8 +322,10 @@ async fn authenticate(
 type OneSend<T> = tokio::sync::oneshot::Sender<T>;
 type OneRecv<T> = tokio::sync::oneshot::Receiver<T>;
 
-type DataSend =
-    tokio::sync::mpsc::UnboundedSender<(Vec<u8>, OneSend<Result<()>>)>;
+type DataSend = tokio::sync::mpsc::UnboundedSender<(
+    warp::ws::Message,
+    OneSend<Result<()>>,
+)>;
 
 enum SrvCmd {
     Shutdown,
@@ -413,7 +450,10 @@ impl Srv {
     ) -> Result<OneRecv<Result<()>>> {
         if let Some(data_send) = self.cons.get(&id) {
             let (s, r) = tokio::sync::oneshot::channel();
-            if data_send.send((data, s)).is_err() {
+            if data_send
+                .send((warp::ws::Message::binary(data), s))
+                .is_err()
+            {
                 self.cons.remove(&id);
             } else {
                 return Ok(r);
@@ -426,7 +466,8 @@ impl Srv {
     fn broadcast(&mut self, data: Vec<u8>) {
         for (_, data_send) in self.cons.iter() {
             let (s, _) = tokio::sync::oneshot::channel();
-            let _ = data_send.send((data.clone(), s));
+            let _ =
+                data_send.send((warp::ws::Message::binary(data.clone()), s));
         }
     }
 }

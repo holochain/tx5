@@ -50,6 +50,7 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Cargo Test Linux/Mac
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         uses: actions-rs/cargo@v1
         env:
           RUST_BACKTRACE: 1
@@ -57,7 +58,8 @@ jobs:
           command: test
           args: -- --nocapture
 
-      - name: Cargo Test Linux/Mac
+      - name: Cargo Test Win
+        if: matrix.os == 'windows-latest'
         uses: actions-rs/cargo@v1
         env:
           RUST_BACKTRACE: 1

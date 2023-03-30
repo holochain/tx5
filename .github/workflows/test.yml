@@ -24,13 +24,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
 
-      - name: Go Toolchain 1.18
+      - name: Go Toolchain Linux/Mac 1.18
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         uses: actions/setup-go@v3
         with:
           go-version: '=1.18.0'
 
-      - name: Go Toolchain 1.20
+      - name: Go Toolchain Win 1.20
         if: matrix.os == 'windows-latest'
         uses: actions/setup-go@v3
         with:
@@ -49,10 +49,18 @@ jobs:
           target: x86_64-pc-windows-gnu
           toolchain: ${{ matrix.toolchain }}
 
-      - name: Cargo Test
+      - name: Cargo Test Linux/Mac
         uses: actions-rs/cargo@v1
         env:
           RUST_BACKTRACE: 1
         with:
           command: test
           args: -- --nocapture
+
+      - name: Cargo Test Linux/Mac
+        uses: actions-rs/cargo@v1
+        env:
+          RUST_BACKTRACE: 1
+        with:
+          command: test
+          args: --target x86_64-pc-windows-gnu -- --nocapture

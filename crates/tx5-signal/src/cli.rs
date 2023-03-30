@@ -182,6 +182,9 @@ impl Seq {
     }
 }
 
+// five minutes in milliseconds
+const FIVE_MIN_MS: f64 = 1000.0 * 60.0 * 5.0;
+
 type SeqMap = std::collections::HashMap<Id, f64>;
 struct SeqTrack(Arc<parking_lot::Mutex<SeqMap>>);
 
@@ -191,15 +194,18 @@ impl SeqTrack {
     }
 
     pub fn check(&self, rem_pub: Id, seq: f64) -> bool {
-        let now = std::time::SystemTime::UNIX_EPOCH
-            .elapsed()
-            .unwrap()
-            .as_secs_f64()
-            * 1000.0;
+        self.check_inner(
+            rem_pub,
+            seq,
+            std::time::SystemTime::UNIX_EPOCH
+                .elapsed()
+                .unwrap()
+                .as_secs_f64()
+                * 1000.0,
+        )
+    }
 
-        // five minutes in milliseconds
-        const FIVE_MIN_MS: f64 = 1000.0 * 60.0 * 5.0;
-
+    fn check_inner(&self, rem_pub: Id, seq: f64, now: f64) -> bool {
         if seq > (now + FIVE_MIN_MS) || seq < (now - FIVE_MIN_MS) {
             tracing::warn!(%now, %seq, "SeqOutOfWindow");
             return false;
@@ -208,7 +214,7 @@ impl SeqTrack {
         let mut map = self.0.lock();
 
         // first, prune
-        map.retain(|_, s| *s > (now + FIVE_MIN_MS));
+        map.retain(|_, s| *s > (now - FIVE_MIN_MS));
 
         use std::collections::hash_map::Entry;
         match map.entry(rem_pub) {
@@ -227,6 +233,43 @@ impl SeqTrack {
                 true
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn seq_track_after_window() {
+        let st = SeqTrack::new();
+        assert!(!st.check_inner([0; 32].into(), FIVE_MIN_MS * 2.0, 0.0));
+    }
+
+    #[test]
+    fn seq_track_before_window() {
+        let st = SeqTrack::new();
+        assert!(!st.check_inner([0; 32].into(), 0.0, FIVE_MIN_MS * 2.0));
+    }
+
+    #[test]
+    fn seq_track_out_of_order() {
+        let st = SeqTrack::new();
+        assert!(st.check_inner([0; 32].into(), 1.0, 2.0));
+        assert!(!st.check_inner([0; 32].into(), 0.0, 2.0));
+    }
+
+    #[test]
+    fn seq_track_expire_ok() {
+        // this test lacks a degree of correctness in order to test pruning
+        let st = SeqTrack::new();
+        assert!(st.check_inner([0; 32].into(), 1.0, 0.0));
+        assert!(st.check_inner(
+            [1; 32].into(),
+            FIVE_MIN_MS * 2.0,
+            FIVE_MIN_MS * 2.0
+        ));
+        assert!(st.check_inner([0; 32].into(), 0.0, 1.0));
     }
 }
 

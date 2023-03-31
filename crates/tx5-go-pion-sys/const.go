@@ -105,6 +105,12 @@ const (
 	// - call slot_b: config buffer id
 	TyPeerConCreateDataChan UintPtrT = 0x9008
 
+	// Request an existing peer con be closed and released.
+	// - allowed contexts: Call, Response
+	// - call slot_a: peer_con id
+	// - msg slot_a: stats buffer id
+	TyPeerConStats UintPtrT = 0x9009
+
 	// OnICECandidate event on an existing peer con.
 	// - allowed contexts: Event
 	// - msg slot_a: peer_con id

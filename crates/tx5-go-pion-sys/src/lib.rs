@@ -534,6 +534,14 @@ impl Api {
     }
 
     #[inline]
+    pub unsafe fn peer_con_stats(&self, id: PeerConId) -> Result<BufferId> {
+        self.call(TY_PEER_CON_STATS, id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
     pub unsafe fn peer_con_create_offer(
         &self,
         id: PeerConId,

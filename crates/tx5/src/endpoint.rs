@@ -163,6 +163,14 @@ impl Ep {
     pub fn demo(&self) -> Result<()> {
         self.state.snd_demo()
     }
+
+    /// Get stats.
+    pub fn get_stats(
+        &self,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value>> + 'static + Send
+    {
+        self.state.stats()
+    }
 }
 
 pub(crate) fn on_new_sig(
@@ -412,7 +420,6 @@ async fn new_conn_task(
                     Some(Ok(state::ConnStateEvt::CreateAnswer(mut resp))) => {
                         let peer = &mut peer;
                         resp.with(move || async move {
-
                             let mut buf = peer.create_answer(
                                 tx5_go_pion::AnswerConfig::default(),
                             ).await?;
@@ -454,6 +461,13 @@ async fn new_conn_task(
                                     Ok(state::BufState::Low)
                                 }
                             }
+                        }).await;
+                    }
+                    Some(Ok(state::ConnStateEvt::Stats(mut resp))) => {
+                        let peer = &mut peer;
+                        resp.with(move || async move {
+                            peer.stats().await
+                                .map(BackBuf::from_raw)
                         }).await;
                     }
                     Some(Err(_)) => break,

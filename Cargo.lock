@@ -3140,6 +3140,7 @@ dependencies = [
  "prometheus",
  "rand",
  "rand-utf8",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

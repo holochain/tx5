@@ -303,6 +303,7 @@ impl StateData {
                 )
                 .await
             }
+            StateCmd::Stats(resp) => self.stats(resp).await,
             StateCmd::Publish { evt } => self.publish(evt).await,
             StateCmd::SigConnected { cli_url } => {
                 self.sig_connected(cli_url).await
@@ -535,6 +536,29 @@ impl StateData {
             .await
     }
 
+    fn stats(
+        &mut self,
+        resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+    ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
+        let conn_list = self
+            .conn_map
+            .iter()
+            .map(|(id, (c, _))| (*id, c.clone()))
+            .collect::<Vec<_>>();
+        async move {
+            let mut map = serde_json::Map::new();
+            for (id, conn) in conn_list {
+                if let Some(conn) = conn.upgrade() {
+                    if let Ok(stats) = conn.stats().await {
+                        map.insert(id.to_string(), stats);
+                    }
+                }
+            }
+            let _ = resp.send(Ok(map.into()));
+            Ok(())
+        }
+    }
+
     async fn publish(&mut self, evt: StateEvt) -> Result<()> {
         let _ = self.evt.publish(evt);
         Ok(())
@@ -720,6 +744,7 @@ enum StateCmd {
         resp: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
     },
+    Stats(tokio::sync::oneshot::Sender<Result<serde_json::Value>>),
     Publish {
         evt: StateEvt,
     },
@@ -1061,6 +1086,18 @@ impl State {
     /// could result in a ban.
     pub fn snd_demo(&self) -> Result<()> {
         self.0.send(Ok(StateCmd::SndDemo))
+    }
+
+    /// Get stats.
+    pub fn stats(
+        &self,
+    ) -> impl Future<Output = Result<serde_json::Value>> + 'static + Send {
+        let this = self.clone();
+        async move {
+            let (s, r) = tokio::sync::oneshot::channel();
+            this.0.send(Ok(StateCmd::Stats(s)))?;
+            r.await.map_err(|_| Error::id("Shutdown"))?
+        }
     }
 
     // -- //

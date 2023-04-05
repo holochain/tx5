@@ -547,6 +547,14 @@ impl StateData {
             .collect::<Vec<_>>();
         async move {
             let mut map = serde_json::Map::new();
+
+            #[cfg(feature = "backend-go-pion")]
+            const BACKEND: &str = "go-pion";
+            #[cfg(feature = "backend-webrtc-rs")]
+            const BACKEND: &str = "webrtc-rs";
+
+            map.insert("backend".into(), BACKEND.into());
+
             for (id, conn) in conn_list {
                 if let Some(conn) = conn.upgrade() {
                     if let Ok(stats) = conn.stats().await {

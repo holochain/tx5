@@ -124,6 +124,15 @@ impl PeerConnection {
         .await?
     }
 
+    /// Get stats.
+    pub async fn stats(&mut self) -> Result<GoBuf> {
+        let peer_con = self.0;
+        tokio::task::spawn_blocking(move || unsafe {
+            API.peer_con_stats(peer_con).map(GoBuf)
+        })
+        .await?
+    }
+
     /// Create offer.
     pub async fn create_offer<'a, B>(&mut self, config: B) -> Result<GoBuf>
     where

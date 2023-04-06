@@ -8,6 +8,7 @@ import (
 	//"fmt"
 	"fmt"
 	"runtime/cgo"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -181,6 +182,46 @@ func CallPeerConFree(peer_con_id UintPtrT) {
 	hnd := cgo.Handle(peer_con_id)
 	peerCon := hnd.Value().(*PeerCon)
 	peerCon.Free()
+}
+
+func CallPeerConStats(
+	peer_con_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(peer_con_id)
+	peerCon := hnd.Value().(*PeerCon)
+	peerCon.mu.Lock()
+	defer peerCon.mu.Unlock()
+
+	if peerCon.closed {
+		panic("PeerConClosed")
+	}
+
+	stats := peerCon.con.GetStats()
+
+	for k, _ := range stats {
+		if strings.HasPrefix(k, "candidate") || strings.HasPrefix(k, "certificate") {
+			delete(stats, k)
+		}
+	}
+
+	json, err := json.Marshal(stats)
+	if err != nil {
+		panic(err)
+	}
+
+	bufOut := NewBuffer([]byte(json))
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyPeerConStats,
+		bufOut.handle,
+		0,
+		0,
+		0,
+	)
 }
 
 func CallPeerConCreateOffer(

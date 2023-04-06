@@ -61,6 +61,15 @@ async fn endpoint_sanity() {
         }
         oth => panic!("unexpected {:?}", oth),
     }
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&ep1.get_stats().await.unwrap()).unwrap()
+    );
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&ep2.get_stats().await.unwrap()).unwrap()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

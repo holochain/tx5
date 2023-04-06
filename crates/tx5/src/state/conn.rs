@@ -83,6 +83,9 @@ pub enum ConnStateEvt {
 
     /// Request to send a message on the data channel.
     SndData(BackBuf, OneSnd<BufState>),
+
+    /// Request a stats dump of this peer connection.
+    Stats(OneSnd<BackBuf>),
 }
 
 impl std::fmt::Debug for ConnStateEvt {
@@ -94,6 +97,7 @@ impl std::fmt::Debug for ConnStateEvt {
             ConnStateEvt::SetRem(_, _) => f.write_str("SetRem"),
             ConnStateEvt::SetIce(_, _) => f.write_str("SetIce"),
             ConnStateEvt::SndData(_, _) => f.write_str("SndData"),
+            ConnStateEvt::Stats(_) => f.write_str("Stats"),
         }
     }
 }
@@ -213,6 +217,17 @@ impl ConnStateEvtSnd {
             }
         });
         let _ = self.0.send(Ok(ConnStateEvt::SndData(data, s)));
+    }
+
+    pub async fn stats(&self) -> Result<serde_json::Value> {
+        let (s, r) = tokio::sync::oneshot::channel();
+        self.0
+            .send(Ok(ConnStateEvt::Stats(OneSnd::new(move |stats| {
+                let _ = s.send(stats);
+            }))))
+            .map_err(|_| Error::id("Shutdown"))?;
+        let mut buf = r.await.map_err(|_| Error::id("Shutdown"))??;
+        buf.to_json()
     }
 }
 
@@ -649,6 +664,7 @@ pub(crate) struct ConnStateMeta {
     pub(crate) conn_uniq: Uniq,
     pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
+    conn_snd: ConnStateEvtSnd,
     pub(crate) rcv_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) metric_bytes_snd: prometheus::IntCounter,
     pub(crate) metric_bytes_rcv: prometheus::IntCounter,
@@ -807,6 +823,11 @@ impl ConnState {
         todo!()
     }
 
+    /// Get stats.
+    pub async fn stats(&self) -> Result<serde_json::Value> {
+        self.1.conn_snd.stats().await
+    }
+
     // -- //
 
     #[allow(clippy::too_many_arguments)]
@@ -827,6 +848,7 @@ impl ConnState {
         maybe_offer: Option<BackBuf>,
     ) -> Result<ConnStateWeak> {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
+        let conn_snd = ConnStateEvtSnd(conn_snd);
 
         // TODO - creates too many time series, just aggregate the full counts
         let bad_uniq = bad_uniq();
@@ -871,6 +893,7 @@ impl ConnState {
             conn_uniq: conn_uniq.clone(),
             config: config.clone(),
             connected: Arc::new(atomic::AtomicBool::new(false)),
+            conn_snd: conn_snd.clone(),
             rcv_limit,
             metric_bytes_snd,
             metric_bytes_rcv,
@@ -902,7 +925,7 @@ impl ConnState {
                     this_id,
                     cli_url,
                     rem_id,
-                    ConnStateEvtSnd(conn_snd),
+                    conn_snd,
                     sig_state,
                     sig_ready,
                 )

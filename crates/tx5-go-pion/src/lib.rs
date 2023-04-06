@@ -71,6 +71,7 @@ mod tests {
         #[derive(Debug)]
         enum Cmd {
             Shutdown,
+            Stats(tokio::sync::oneshot::Sender<GoBuf>),
             ICE(GoBuf),
             Offer(GoBuf),
             Answer(GoBuf),
@@ -155,6 +156,9 @@ mod tests {
                             );
                             peer1.set_remote_description(answer).await.unwrap();
                         }
+                        Cmd::Stats(rsp) => {
+                            let _ = rsp.send(peer1.stats().await.unwrap());
+                        }
                         _ => break,
                     }
                 }
@@ -221,6 +225,9 @@ mod tests {
                                 .unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
                             println!("peer2 answer complete");
+                        }
+                        Cmd::Stats(rsp) => {
+                            let _ = rsp.send(peer2.stats().await.unwrap());
                         }
                         _ => break,
                     }
@@ -327,6 +334,21 @@ mod tests {
         for _ in 0..2 {
             r_data.recv().unwrap();
         }
+
+        // -- get stats -- //
+
+        let (s, r) = tokio::sync::oneshot::channel();
+        cmd_send_1.send(Cmd::Stats(s)).unwrap();
+        println!(
+            "peer_con_1: {}",
+            String::from_utf8_lossy(&r.await.unwrap().to_vec().unwrap())
+        );
+        let (s, r) = tokio::sync::oneshot::channel();
+        cmd_send_2.send(Cmd::Stats(s)).unwrap();
+        println!(
+            "peer_con_2: {}",
+            String::from_utf8_lossy(&r.await.unwrap().to_vec().unwrap())
+        );
 
         // -- cleanup -- //
 

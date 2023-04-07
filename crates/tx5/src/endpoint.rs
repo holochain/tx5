@@ -148,6 +148,13 @@ impl Ep {
         self.state.listener_sig(sig_url)
     }
 
+    /// Close down all connections to, fail all outgoing messages to,
+    /// and drop all incoming messages from, the given remote id,
+    /// for the specified ban time period.
+    pub fn ban(&self, rem_id: Id, span: std::time::Duration) {
+        self.state.ban(rem_id, span);
+    }
+
     /// Send data to a remote on this tx5 endpoint.
     pub fn send<B: bytes::Buf>(
         &self,

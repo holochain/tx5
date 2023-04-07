@@ -246,6 +246,7 @@ struct StateData {
     meta: StateMeta,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx5Url, SigStateWeak>,
+    ban_map: HashMap<Id, std::time::Instant>,
     conn_map: HashMap<Id, (ConnStateWeak, RmConn)>,
     send_map: HashMap<Id, VecDeque<SendData>>,
     ice_cache: HashMap<Id, VecDeque<IceData>>,
@@ -303,6 +304,7 @@ impl StateData {
                 )
                 .await
             }
+            StateCmd::Ban { rem_id, span } => self.ban(rem_id, span).await,
             StateCmd::Stats(resp) => self.stats(resp).await,
             StateCmd::Publish { evt } => self.publish(evt).await,
             StateCmd::SigConnected { cli_url } => {
@@ -461,6 +463,14 @@ impl StateData {
         Ok(())
     }
 
+    fn is_banned(&mut self, rem_id: Id) -> bool {
+        let now = std::time::Instant::now();
+        self.ban_map.retain(|_id, expires_at| {
+            *expires_at > now
+        });
+        self.ban_map.contains_key(&rem_id)
+    }
+
     async fn create_new_conn(
         &mut self,
         sig_url: Tx5Url,
@@ -468,6 +478,10 @@ impl StateData {
         maybe_offer: Option<BackBuf>,
         maybe_msg_uniq: Option<Uniq>,
     ) -> Result<()> {
+        if self.is_banned(rem_id) {
+            return Err(Error::id("Ban"));
+        }
+
         let (s, r) = tokio::sync::oneshot::channel();
         self.assert_listener_sig(sig_url.clone(), s).await?;
 
@@ -509,6 +523,10 @@ impl StateData {
         data_sent: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
     ) -> Result<()> {
+        if self.is_banned(rem_id) {
+            return Err(Error::id("Ban"));
+        }
+
         self.send_map
             .entry(rem_id)
             .or_default()
@@ -534,6 +552,19 @@ impl StateData {
         let sig_url = cli_url.to_server();
         self.create_new_conn(sig_url, rem_id, None, Some(msg_uniq))
             .await
+    }
+
+    async fn ban(&mut self, rem_id: Id, span: std::time::Duration) -> Result<()> {
+        let expires_at = std::time::Instant::now() + span;
+        self.ban_map.insert(rem_id, expires_at);
+        self.send_map.remove(&rem_id);
+        self.ice_cache.remove(&rem_id);
+        if let Some((conn, _)) = self.conn_map.remove(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.close(Error::id("Ban"));
+            }
+        }
+        Ok(())
     }
 
     fn stats(
@@ -752,6 +783,10 @@ enum StateCmd {
         resp: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
     },
+    Ban {
+        rem_id: Id,
+        span: std::time::Duration,
+    },
     Stats(tokio::sync::oneshot::Sender<Result<serde_json::Value>>),
     Publish {
         evt: StateEvt,
@@ -814,6 +849,7 @@ async fn state_task(
         meta,
         evt,
         signal_map: HashMap::new(),
+        ban_map: HashMap::new(),
         conn_map: HashMap::new(),
         send_map: HashMap::new(),
         ice_cache: HashMap::new(),
@@ -946,12 +982,12 @@ impl State {
         StateWeak(self.0.weak(), self.1.clone())
     }
 
-    /// Returns `true` if this SigState is closed.
+    /// Returns `true` if this State is closed.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
     }
 
-    /// Shutdown the signal client with an error.
+    /// Shutdown the state management with an error.
     pub fn close(&self, err: std::io::Error) {
         self.0.close(err);
     }
@@ -973,6 +1009,13 @@ impl State {
                 .send(Ok(StateCmd::AssertListenerSig { sig_url, resp: s }))?;
             r.await.map_err(|_| Error::id("Closed"))?
         }
+    }
+
+    /// Close down all connections to, fail all outgoing messages to,
+    /// and drop all incoming messages from, the given remote id,
+    /// for the specified ban time period.
+    pub fn ban(&self, rem_id: Id, span: std::time::Duration) {
+        let _ = self.0.send(Ok(StateCmd::Ban { rem_id, span }));
     }
 
     /// Schedule data to be sent out over a channel managed by the state system.

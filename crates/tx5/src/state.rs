@@ -465,9 +465,7 @@ impl StateData {
 
     fn is_banned(&mut self, rem_id: Id) -> bool {
         let now = std::time::Instant::now();
-        self.ban_map.retain(|_id, expires_at| {
-            *expires_at > now
-        });
+        self.ban_map.retain(|_id, expires_at| *expires_at > now);
         self.ban_map.contains_key(&rem_id)
     }
 
@@ -554,7 +552,11 @@ impl StateData {
             .await
     }
 
-    async fn ban(&mut self, rem_id: Id, span: std::time::Duration) -> Result<()> {
+    async fn ban(
+        &mut self,
+        rem_id: Id,
+        span: std::time::Duration,
+    ) -> Result<()> {
         let expires_at = std::time::Instant::now() + span;
         self.ban_map.insert(rem_id, expires_at);
         self.send_map.remove(&rem_id);

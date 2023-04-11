@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 fn init_tracing() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
@@ -70,6 +71,71 @@ async fn endpoint_sanity() {
         "{}",
         serde_json::to_string_pretty(&ep2.get_stats().await.unwrap()).unwrap()
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ban() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.demo = true;
+
+    let (addr, srv_driver) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    tokio::task::spawn(srv_driver);
+
+    let sig_port = addr.port();
+
+    // TODO remove
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+    println!("sig_url: {}", sig_url);
+
+    let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
+
+    let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
+
+    println!("cli_url1: {}", cli_url1);
+
+    let (ep2, _ep_rcv2) = Ep::new().await.unwrap();
+
+    let cli_url2 = ep2.listen(sig_url).await.unwrap();
+
+    println!("cli_url2: {}", cli_url2);
+
+    let msg_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let msg_sent2 = msg_sent.clone();
+
+    // *Send* the message, but it shouldn't be received
+    ep2.ban(cli_url1.id().unwrap(), std::time::Duration::from_secs(500));
+    let fut = ep1.send(cli_url2.clone(), &b"hello"[..]);
+    let task = tokio::task::spawn(async move {
+        if fut.await.is_err() {
+            // it's okay if this errors, that was the point
+            return;
+        }
+        // the future resolved successfully, that's bad, the ban didn't work.
+        msg_sent2.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    // allow some time for it to be sent
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // Now try banning the *sending* side. Should get an error sending.
+    ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_secs(500));
+    assert!(ep1.send(cli_url2, &b"hello"[..]).await.is_err());
+
+    // Allow some additional time for the first send to connect / etc
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // if the message sent, our ban didn't work
+    if msg_sent.load(std::sync::atomic::Ordering::SeqCst) {
+        panic!("message wast sent! ban failed");
+    }
+
+    task.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

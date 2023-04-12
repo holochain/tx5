@@ -239,7 +239,6 @@ struct ConnStateData {
     meta: ConnStateMeta,
     state: StateWeak,
     this_id: Id,
-    cli_url: Tx5Url,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
@@ -429,7 +428,7 @@ impl ConnStateData {
 
     async fn ready(&mut self) -> Result<()> {
         if let Some(state) = self.state.upgrade() {
-            state.conn_ready(self.cli_url.clone());
+            state.conn_ready(self.meta.cli_url.clone());
         }
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
         self.maybe_fetch_for_send().await
@@ -504,7 +503,7 @@ impl ConnStateData {
                             bl.push(data);
                         }
                         state.publish(StateEvt::RcvData(
-                            self.cli_url.clone(),
+                            self.meta.cli_url.clone(),
                             bl.into_dyn(),
                             vec![Permit(vec![permit])],
                         ));
@@ -526,7 +525,7 @@ impl ConnStateData {
                     }
                     if let Some(state) = self.state.upgrade() {
                         state.publish(StateEvt::RcvData(
-                            self.cli_url.clone(),
+                            self.meta.cli_url.clone(),
                             bl.into_dyn(),
                             vec![Permit(permit)],
                         ));
@@ -592,7 +591,6 @@ async fn conn_state_task(
     state: StateWeak,
     conn_uniq: Uniq,
     this_id: Id,
-    cli_url: Tx5Url,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
@@ -608,7 +606,6 @@ async fn conn_state_task(
         meta,
         state,
         this_id,
-        cli_url,
         rem_id,
         conn_evt,
         sig_state,
@@ -661,6 +658,7 @@ async fn conn_state_task(
 
 #[derive(Clone)]
 pub(crate) struct ConnStateMeta {
+    cli_url: Tx5Url,
     pub(crate) conn_uniq: Uniq,
     pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
@@ -741,6 +739,11 @@ impl ConnState {
     /// Shutdown the connection with an error.
     pub fn close(&self, err: std::io::Error) {
         self.0.close(err);
+    }
+
+    /// Get the remote url of this connection.
+    pub fn rem_url(&self) -> Tx5Url {
+        self.1.cli_url.clone()
     }
 
     /// The connection generated an ice candidate for the remote.
@@ -890,6 +893,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let meta = ConnStateMeta {
+            cli_url,
             conn_uniq: conn_uniq.clone(),
             config: config.clone(),
             connected: Arc::new(atomic::AtomicBool::new(false)),
@@ -923,7 +927,6 @@ impl ConnState {
                     state,
                     conn_uniq,
                     this_id,
-                    cli_url,
                     rem_id,
                     conn_snd,
                     sig_state,

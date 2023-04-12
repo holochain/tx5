@@ -283,6 +283,7 @@ impl StateData {
         match cmd {
             StateCmd::Tick1s => self.tick_1s().await,
             StateCmd::SndDemo => self.snd_demo().await,
+            StateCmd::ListConnected(resp) => self.list_connected(resp).await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
                 self.assert_listener_sig(sig_url, resp).await
             }
@@ -428,6 +429,19 @@ impl StateData {
         }
 
         Ok(())
+    }
+
+    async fn list_connected(
+        &mut self,
+        resp: tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>,
+    ) -> Result<()> {
+        let mut urls = Vec::new();
+        for (_, (con, _)) in self.conn_map.iter() {
+            if let Some(con) = con.upgrade() {
+                urls.push(con.rem_url());
+            }
+        }
+        resp.send(Ok(urls)).map_err(|_| Error::id("Closed"))
     }
 
     async fn assert_listener_sig(
@@ -773,6 +787,7 @@ impl StateData {
 enum StateCmd {
     Tick1s,
     SndDemo,
+    ListConnected(tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>),
     AssertListenerSig {
         sig_url: Tx5Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
@@ -992,6 +1007,18 @@ impl State {
     /// Shutdown the state management with an error.
     pub fn close(&self, err: std::io::Error) {
         self.0.close(err);
+    }
+
+    /// List the ids of current open connections.
+    pub fn list_connected(
+        &self,
+    ) -> impl Future<Output = Result<Vec<Tx5Url>>> + 'static + Send {
+        let this = self.clone();
+        async move {
+            let (s, r) = tokio::sync::oneshot::channel();
+            this.0.send(Ok(StateCmd::ListConnected(s)))?;
+            r.await.map_err(|_| Error::id("Closed"))?
+        }
     }
 
     /// Establish a new listening connection through given signal server.

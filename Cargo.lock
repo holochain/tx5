@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.0.1-alpha.9"
+version = "0.0.1-alpha.10"
 dependencies = [
  "bytes",
  "futures",
@@ -3166,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.0.1-alpha.9"
+version = "0.0.1-alpha.10"
 dependencies = [
  "clap",
  "crossterm",

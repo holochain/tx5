@@ -225,7 +225,7 @@ async fn broadcast() {
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
 
-    let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
+    let (ep1, mut ep_rcv1) = Ep::new().await.unwrap();
     let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
     println!("cli_url1: {}", cli_url1);
 
@@ -237,8 +237,18 @@ async fn broadcast() {
     let cli_url3 = ep3.listen(sig_url).await.unwrap();
     println!("cli_url3: {}", cli_url3);
 
-    ep1.send(cli_url2, &b"hello"[..]).await.unwrap();
+    ep1.send(cli_url2.clone(), &b"hello"[..]).await.unwrap();
     ep1.send(cli_url3, &b"hello"[..]).await.unwrap();
+
+    match ep_rcv1.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    match ep_rcv1.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
 
     match ep_rcv2.recv().await {
         Some(Ok(EpEvt::Connected { .. })) => (),
@@ -296,6 +306,20 @@ async fn broadcast() {
         })) => {
             assert_eq!(cli_url1, rem_cli_url);
             assert_eq!(b"bcast", data.to_vec().unwrap().as_slice());
+        }
+        oth => panic!("unexpected {:?}", oth),
+    }
+
+    ep2.broadcast(&b"bcast2"[..]).await.unwrap();
+
+    let recv = ep_rcv1.recv().await;
+
+    match recv {
+        Some(Ok(EpEvt::Data {
+            rem_cli_url, data, ..
+        })) => {
+            assert_eq!(cli_url2, rem_cli_url);
+            assert_eq!(b"bcast2", data.to_vec().unwrap().as_slice());
         }
         oth => panic!("unexpected {:?}", oth),
     }

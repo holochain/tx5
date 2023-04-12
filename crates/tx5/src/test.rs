@@ -204,3 +204,99 @@ async fn large_messages() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn broadcast() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.demo = true;
+
+    let (addr, srv_driver) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    tokio::task::spawn(srv_driver);
+
+    let sig_port = addr.port();
+
+    // TODO remove
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+    println!("sig_url: {}", sig_url);
+
+    let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
+    let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
+    println!("cli_url1: {}", cli_url1);
+
+    let (ep2, mut ep_rcv2) = Ep::new().await.unwrap();
+    let cli_url2 = ep2.listen(sig_url.clone()).await.unwrap();
+    println!("cli_url2: {}", cli_url2);
+
+    let (ep3, mut ep_rcv3) = Ep::new().await.unwrap();
+    let cli_url3 = ep3.listen(sig_url).await.unwrap();
+    println!("cli_url3: {}", cli_url3);
+
+    ep1.send(cli_url2, &b"hello"[..]).await.unwrap();
+    ep1.send(cli_url3, &b"hello"[..]).await.unwrap();
+
+    match ep_rcv2.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    let recv = ep_rcv2.recv().await;
+
+    match recv {
+        Some(Ok(EpEvt::Data {
+            rem_cli_url, data, ..
+        })) => {
+            assert_eq!(cli_url1, rem_cli_url);
+            assert_eq!(b"hello", data.to_vec().unwrap().as_slice());
+        }
+        oth => panic!("unexpected {:?}", oth),
+    }
+
+    match ep_rcv3.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    let recv = ep_rcv3.recv().await;
+
+    match recv {
+        Some(Ok(EpEvt::Data {
+            rem_cli_url, data, ..
+        })) => {
+            assert_eq!(cli_url1, rem_cli_url);
+            assert_eq!(b"hello", data.to_vec().unwrap().as_slice());
+        }
+        oth => panic!("unexpected {:?}", oth),
+    }
+
+    ep1.broadcast(&b"bcast"[..]).await.unwrap();
+
+    let recv = ep_rcv2.recv().await;
+
+    match recv {
+        Some(Ok(EpEvt::Data {
+            rem_cli_url, data, ..
+        })) => {
+            assert_eq!(cli_url1, rem_cli_url);
+            assert_eq!(b"bcast", data.to_vec().unwrap().as_slice());
+        }
+        oth => panic!("unexpected {:?}", oth),
+    }
+
+    let recv = ep_rcv3.recv().await;
+
+    match recv {
+        Some(Ok(EpEvt::Data {
+            rem_cli_url, data, ..
+        })) => {
+            assert_eq!(cli_url1, rem_cli_url);
+            assert_eq!(b"bcast", data.to_vec().unwrap().as_slice());
+        }
+        oth => panic!("unexpected {:?}", oth),
+    }
+}

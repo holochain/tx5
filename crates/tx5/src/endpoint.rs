@@ -156,12 +156,41 @@ impl Ep {
     }
 
     /// Send data to a remote on this tx5 endpoint.
+    /// The future returned from this method will resolve when
+    /// the data is handed off to our networking backend.
     pub fn send<B: bytes::Buf>(
         &self,
         rem_cli_url: Tx5Url,
         data: B,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
         self.state.snd_data(rem_cli_url, data)
+    }
+
+    /// Broadcast data to all connections that happen to be open.
+    /// If no connections are open, no data will be broadcast.
+    /// The future returned from this method will resolve when all
+    /// broadcast messages have been handed off to our networking backend.
+    ///
+    /// This method is currently not ideal. It naively gets a list
+    /// of open connection urls and adds the broadcast to all of their queues.
+    /// This could result in a connection being re-established just
+    /// for the broadcast to occur.
+    pub fn broadcast<B: bytes::Buf>(
+        &self,
+        mut data: B,
+    ) -> impl std::future::Future<Output = Result<Vec<Result<()>>>> + 'static + Send
+    {
+        let data = data.copy_to_bytes(data.remaining());
+        let state = self.state.clone();
+        async move {
+            let url_list = state.list_connected().await?;
+            Ok(futures::future::join_all(
+                url_list
+                    .into_iter()
+                    .map(|url| state.snd_data(url, data.clone())),
+            )
+            .await)
+        }
     }
 
     /// Send a demo broadcast to every connected signal server.

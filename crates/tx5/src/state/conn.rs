@@ -193,7 +193,7 @@ impl ConnStateEvtSnd {
         conn: ConnStateWeak,
         data: BackBuf,
         resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
-        send_permit: tokio::sync::OwnedSemaphorePermit,
+        send_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
         let s = OneSnd::new(move |result| {
             let _send_permit = send_permit;
@@ -245,6 +245,7 @@ struct ConnStateData {
     rcv_offer: bool,
     rcv_pending:
         HashMap<u64, (BytesList, Vec<tokio::sync::OwnedSemaphorePermit>)>,
+    wait_preflight: bool,
 }
 
 impl Drop for ConnStateData {
@@ -427,6 +428,18 @@ impl ConnStateData {
     }
 
     async fn ready(&mut self) -> Result<()> {
+        // first, check / send the preflight
+        let data = self
+            .meta
+            .config
+            .on_conn_preflight(self.meta.cli_url.clone())
+            .await?
+            .unwrap_or_else(bytes::Bytes::new);
+        for buf in divide_send(&*self.meta.config, &self.meta.snd_ident, data)?
+        {
+            self.conn_evt.snd_data(self.this.clone(), buf, None, None);
+        }
+
         if let Some(state) = self.state.upgrade() {
             state.conn_ready(self.meta.cli_url.clone());
         }
@@ -472,8 +485,12 @@ impl ConnStateData {
         self.meta.metric_last_active.reset();
         self.meta.metric_bytes_snd.inc_by(data.len()? as u64);
 
-        self.conn_evt
-            .snd_data(self.this.clone(), data, resp, send_permit);
+        self.conn_evt.snd_data(
+            self.this.clone(),
+            data,
+            resp,
+            Some(send_permit),
+        );
 
         Ok(())
     }
@@ -484,6 +501,8 @@ impl ConnStateData {
         data: bytes::Bytes,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<()> {
+        use bytes::Buf;
+
         let len = data.len();
         self.meta.metric_last_active.reset();
 
@@ -502,11 +521,29 @@ impl ConnStateData {
                         if !data.is_empty() {
                             bl.push(data);
                         }
-                        state.publish(StateEvt::RcvData(
-                            self.meta.cli_url.clone(),
-                            bl.into_dyn(),
-                            vec![Permit(vec![permit])],
-                        ));
+                        if self.wait_preflight {
+                            tracing::trace!(%ident, "hey??");
+                            let bytes = if bl.has_remaining() {
+                                Some(bl.copy_to_bytes(bl.remaining()))
+                            } else {
+                                None
+                            };
+                            self.meta
+                                .config
+                                .on_conn_validate(
+                                    self.meta.cli_url.clone(),
+                                    bytes,
+                                )
+                                .await?;
+                            self.wait_preflight = false;
+                        } else {
+                            tracing::trace!(%ident, "FOODLE");
+                            state.publish(StateEvt::RcvData(
+                                self.meta.cli_url.clone(),
+                                bl.into_dyn(),
+                                vec![Permit(vec![permit])],
+                            ));
+                        }
                     }
                 } else {
                     tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv new");
@@ -524,11 +561,27 @@ impl ConnStateData {
                         bl.push(data);
                     }
                     if let Some(state) = self.state.upgrade() {
-                        state.publish(StateEvt::RcvData(
-                            self.meta.cli_url.clone(),
-                            bl.into_dyn(),
-                            vec![Permit(permit)],
-                        ));
+                        if self.wait_preflight {
+                            let bytes = if bl.has_remaining() {
+                                Some(bl.copy_to_bytes(bl.remaining()))
+                            } else {
+                                None
+                            };
+                            self.meta
+                                .config
+                                .on_conn_validate(
+                                    self.meta.cli_url.clone(),
+                                    bytes,
+                                )
+                                .await?;
+                            self.wait_preflight = false;
+                        } else {
+                            state.publish(StateEvt::RcvData(
+                                self.meta.cli_url.clone(),
+                                bl.into_dyn(),
+                                vec![Permit(permit)],
+                            ));
+                        }
                     }
                 } else {
                     tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv next");
@@ -611,6 +664,7 @@ async fn conn_state_task(
         sig_state,
         rcv_offer: false,
         rcv_pending: HashMap::new(),
+        wait_preflight: true,
     };
 
     let mut permit = None;
@@ -668,6 +722,7 @@ pub(crate) struct ConnStateMeta {
     pub(crate) metric_bytes_rcv: prometheus::IntCounter,
     pub(crate) metric_age: MetricTimestamp,
     pub(crate) metric_last_active: MetricTimestamp,
+    snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Weak version on ConnState.
@@ -849,6 +904,7 @@ impl ConnState {
         rcv_limit: Arc<tokio::sync::Semaphore>,
         sig_ready: tokio::sync::oneshot::Receiver<Result<Tx5Url>>,
         maybe_offer: Option<BackBuf>,
+        snd_ident: Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<ConnStateWeak> {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
         let conn_snd = ConnStateEvtSnd(conn_snd);
@@ -903,6 +959,7 @@ impl ConnState {
             metric_bytes_rcv,
             metric_age,
             metric_last_active,
+            snd_ident,
         };
 
         let actor = {

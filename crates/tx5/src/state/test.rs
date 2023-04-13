@@ -248,6 +248,15 @@ async fn extended_outgoing() {
 
     println!("ready");
 
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            // blank message for preflight data
+            assert_eq!(8, data.to_vec().unwrap().len());
+            resp.send(Ok(BufState::Low));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
@@ -269,12 +278,14 @@ async fn extended_outgoing() {
 
     println!("about to rcv");
 
+    // first, we have to receive the empty preflight
     conn_state
-        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\0world").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\x80").unwrap())
         .unwrap();
 
+    // now, receive the actual message
     conn_state
-        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\0").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\x2a\0\0\0\0\0\0\x80world").unwrap())
         .unwrap();
 
     match test.state_evt.recv().await {
@@ -482,6 +493,15 @@ async fn polite_in_offer() {
 
     println!("ready");
 
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            // blank message for preflight data
+            assert_eq!(8, data.to_vec().unwrap().len());
+            resp.send(Ok(BufState::Low));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
@@ -586,6 +606,15 @@ async fn impolite_in_offer() {
     conn_state.ready().unwrap();
 
     println!("ready");
+
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            // blank message for preflight data
+            assert_eq!(8, data.to_vec().unwrap().len());
+            resp.send(Ok(BufState::Low));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
 
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),

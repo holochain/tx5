@@ -427,6 +427,22 @@ impl ConnStateData {
         Ok(())
     }
 
+    // if we have both sent OUR preflight, AND received the REMOTE preflight
+    // notify that this connection is ready to go.
+    fn check_ready(&self) {
+        if !self.meta.connected.load(atomic::Ordering::SeqCst) {
+            return;
+        }
+
+        if self.wait_preflight {
+            return;
+        }
+
+        if let Some(state) = self.state.upgrade() {
+            state.conn_ready(self.meta.cli_url.clone());
+        }
+    }
+
     async fn ready(&mut self) -> Result<()> {
         // first, check / send the preflight
         let data = self
@@ -440,10 +456,8 @@ impl ConnStateData {
             self.conn_evt.snd_data(self.this.clone(), buf, None, None);
         }
 
-        if let Some(state) = self.state.upgrade() {
-            state.conn_ready(self.meta.cli_url.clone());
-        }
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
+        self.check_ready();
         self.maybe_fetch_for_send().await
     }
 
@@ -522,7 +536,6 @@ impl ConnStateData {
                             bl.push(data);
                         }
                         if self.wait_preflight {
-                            tracing::trace!(%ident, "hey??");
                             let bytes = if bl.has_remaining() {
                                 Some(bl.copy_to_bytes(bl.remaining()))
                             } else {
@@ -536,8 +549,8 @@ impl ConnStateData {
                                 )
                                 .await?;
                             self.wait_preflight = false;
+                            self.check_ready();
                         } else {
-                            tracing::trace!(%ident, "FOODLE");
                             state.publish(StateEvt::RcvData(
                                 self.meta.cli_url.clone(),
                                 bl.into_dyn(),
@@ -575,6 +588,7 @@ impl ConnStateData {
                                 )
                                 .await?;
                             self.wait_preflight = false;
+                            self.check_ready();
                         } else {
                             state.publish(StateEvt::RcvData(
                                 self.meta.cli_url.clone(),

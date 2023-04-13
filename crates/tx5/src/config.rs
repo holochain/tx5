@@ -77,6 +77,12 @@ pub trait IntoConfig: 'static + Send + Sync {
     fn into_config(self) -> BoxFut<'static, Result<DynConfig>>;
 }
 
+impl IntoConfig for DynConfig {
+    fn into_config(self) -> BoxFut<'static, Result<DynConfig>> {
+        Box::pin(async move { Ok(self) })
+    }
+}
+
 struct DefConfigBuilt {
     this: Weak<Self>,
     max_send_bytes: u32,

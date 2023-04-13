@@ -257,6 +257,11 @@ async fn extended_outgoing() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
+    // receive the empty preflight
+    conn_state
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .unwrap();
+
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
@@ -277,11 +282,6 @@ async fn extended_outgoing() {
     // -- recv data from the remote -- //
 
     println!("about to rcv");
-
-    // first, we have to receive the empty preflight
-    conn_state
-        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\x80").unwrap())
-        .unwrap();
 
     // now, receive the actual message
     conn_state
@@ -502,6 +502,11 @@ async fn polite_in_offer() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
+    // receive the empty preflight
+    conn_state
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .unwrap();
+
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
@@ -615,6 +620,11 @@ async fn impolite_in_offer() {
         }
         oth => panic!("unexpected: {:?}", oth),
     };
+
+    // receive the empty preflight
+    conn_state
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .unwrap();
 
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),

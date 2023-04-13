@@ -519,6 +519,7 @@ impl StateData {
             self.recv_limit.clone(),
             r,
             maybe_offer,
+            self.meta.snd_ident.clone(),
         )?;
         self.conn_map
             .insert(rem_id, (conn, RmConn(self.evt.clone(), cli_url)));
@@ -1053,55 +1054,17 @@ impl State {
     pub fn snd_data<B: bytes::Buf>(
         &self,
         cli_url: Tx5Url,
-        mut data: B,
+        data: B,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
-        use std::io::Write;
-
-        let max_send_bytes = self.1.config.max_send_bytes();
-        let meta = self.1.clone();
-
-        let buf_list = if bytes::Buf::remaining(&data) > max_send_bytes as usize
-        {
-            Err(Error::id("DataTooLarge"))
-        } else if !cli_url.is_client() {
+        let buf_list = if !cli_url.is_client() {
             Err(Error::err(
                 "Invalid tx5 signal server url, expect client url",
             ))
         } else {
-            (|| {
-                let ident = meta
-                    .snd_ident
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                let mut buf_list = Vec::new();
-
-                const MAX_MSG: usize = (16 * 1024) - 8;
-                while data.has_remaining() {
-                    let loc_len = std::cmp::min(data.remaining(), MAX_MSG);
-                    let ident = if data.remaining() <= loc_len {
-                        ident.set_finish()
-                    } else {
-                        ident.unset_finish()
-                    };
-
-                    tracing::trace!(ident=%ident.unset_finish(), is_finish=%ident.is_finish(), %loc_len, "prepare send");
-
-                    let mut tmp =
-                        bytes::Buf::reader(bytes::Buf::take(data, loc_len));
-
-                    // TODO - reserve the bytes before writing
-                    let mut buf = BackBuf::from_writer()?;
-                    buf.write_all(&ident.to_le_bytes())?;
-                    std::io::copy(&mut tmp, &mut buf)?;
-
-                    buf_list.push(buf.finish());
-
-                    data = tmp.into_inner().into_inner();
-                }
-
-                Ok(buf_list)
-            })()
+            divide_send(&*self.1.config, &self.1.snd_ident, data)
         };
+
+        let meta = self.1.clone();
 
         let this = self.clone();
         async move {

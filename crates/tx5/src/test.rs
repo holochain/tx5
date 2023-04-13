@@ -74,6 +74,142 @@ async fn endpoint_sanity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn preflight_small() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.demo = true;
+
+    let (addr, srv_driver) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    tokio::task::spawn(srv_driver);
+
+    let sig_port = addr.port();
+
+    // TODO remove
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+    println!("sig_url: {}", sig_url);
+
+    let valid_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    const SMALL_DATA: &[u8] = &[42; 16];
+
+    fn make_config(
+        valid_count: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> DefConfig {
+        DefConfig::default()
+            .with_conn_preflight(|_, _| {
+                println!("PREFLIGHT");
+                Box::pin(async move {
+                    Ok(Some(bytes::Bytes::from_static(SMALL_DATA)))
+                })
+            })
+            .with_conn_validate(move |_, _, data| {
+                println!("VALIDATE");
+                assert_eq!(SMALL_DATA, data.unwrap());
+                valid_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async move { Ok(()) })
+            })
+    }
+
+    let (ep1, mut ep_rcv1) = Ep::with_config(make_config(valid_count.clone()))
+        .await
+        .unwrap();
+    let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
+    println!("cli_url1: {}", cli_url1);
+
+    let (ep2, mut ep_rcv2) = Ep::with_config(make_config(valid_count.clone()))
+        .await
+        .unwrap();
+    let cli_url2 = ep2.listen(sig_url).await.unwrap();
+    println!("cli_url2: {}", cli_url2);
+
+    ep1.send(cli_url2, &b"hello"[..]).await.unwrap();
+
+    match ep_rcv1.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    match ep_rcv2.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    assert_eq!(2, valid_count.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preflight_huge() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.demo = true;
+
+    let (addr, srv_driver) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    tokio::task::spawn(srv_driver);
+
+    let sig_port = addr.port();
+
+    // TODO remove
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+    println!("sig_url: {}", sig_url);
+
+    let valid_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    const HUGE_DATA: &[u8] = &[42; 16 * 1024 * 512];
+
+    fn make_config(
+        valid_count: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> DefConfig {
+        DefConfig::default()
+            .with_conn_preflight(|_, _| {
+                println!("PREFLIGHT");
+                Box::pin(async move {
+                    Ok(Some(bytes::Bytes::from_static(HUGE_DATA)))
+                })
+            })
+            .with_conn_validate(move |_, _, data| {
+                println!("VALIDATE");
+                assert_eq!(HUGE_DATA, data.unwrap());
+                valid_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async move { Ok(()) })
+            })
+    }
+
+    let (ep1, mut ep_rcv1) = Ep::with_config(make_config(valid_count.clone()))
+        .await
+        .unwrap();
+    let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
+    println!("cli_url1: {}", cli_url1);
+
+    let (ep2, mut ep_rcv2) = Ep::with_config(make_config(valid_count.clone()))
+        .await
+        .unwrap();
+    let cli_url2 = ep2.listen(sig_url).await.unwrap();
+    println!("cli_url2: {}", cli_url2);
+
+    ep1.send(cli_url2, &b"hello"[..]).await.unwrap();
+
+    match ep_rcv1.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    match ep_rcv2.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    assert_eq!(2, valid_count.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ban() {
     init_tracing();
 

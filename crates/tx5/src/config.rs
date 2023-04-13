@@ -37,6 +37,25 @@ pub trait Config: 'static + Send + Sync {
         ice_servers: Arc<serde_json::Value>,
         seed: state::ConnStateSeed,
     );
+
+    /// Provide a chance to send preflight handshake data to be received
+    /// in the `on_conn_validate` hook on the remote side.
+    /// You may also return any `Err(_)` to cancel the connection even
+    /// before sending preflight data.
+    fn on_conn_preflight(
+        &self,
+        rem_url: Tx5Url,
+    ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>;
+
+    /// Provide as async chance to validate/accept/reject a connection before
+    /// any events related to that connection are published.
+    /// This hook is triggered for both outgoing and incoming connections.
+    /// Return `Ok(())` to accept the connection, or any `Err(_)` to reject.
+    fn on_conn_validate(
+        &self,
+        rem_url: Tx5Url,
+        preflight_data: Option<bytes::Bytes>,
+    ) -> BoxFut<'static, Result<()>>;
 }
 
 /// Dynamic config type alias.
@@ -58,6 +77,12 @@ pub trait IntoConfig: 'static + Send + Sync {
     fn into_config(self) -> BoxFut<'static, Result<DynConfig>>;
 }
 
+impl IntoConfig for DynConfig {
+    fn into_config(self) -> BoxFut<'static, Result<DynConfig>> {
+        Box::pin(async move { Ok(self) })
+    }
+}
+
 struct DefConfigBuilt {
     this: Weak<Self>,
     max_send_bytes: u32,
@@ -73,6 +98,27 @@ struct DefConfigBuilt {
     >,
     on_new_conn_cb: Arc<
         dyn Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
+            + 'static
+            + Send
+            + Sync,
+    >,
+    #[allow(clippy::type_complexity)]
+    on_conn_preflight_cb: Arc<
+        dyn Fn(
+                DynConfig,
+                Tx5Url,
+            ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+            + 'static
+            + Send
+            + Sync,
+    >,
+    #[allow(clippy::type_complexity)]
+    on_conn_validate_cb: Arc<
+        dyn Fn(
+                DynConfig,
+                Tx5Url,
+                Option<bytes::Bytes>,
+            ) -> BoxFut<'static, Result<()>>
             + 'static
             + Send
             + Sync,
@@ -123,6 +169,29 @@ impl Config for DefConfigBuilt {
             (self.on_new_conn_cb)(this, ice_servers, seed);
         }
     }
+
+    fn on_conn_preflight(
+        &self,
+        rem_url: Tx5Url,
+    ) -> BoxFut<'static, Result<Option<bytes::Bytes>>> {
+        if let Some(this) = self.this.upgrade() {
+            (self.on_conn_preflight_cb)(this, rem_url)
+        } else {
+            Box::pin(async move { Ok(None) })
+        }
+    }
+
+    fn on_conn_validate(
+        &self,
+        rem_url: Tx5Url,
+        preflight_data: Option<bytes::Bytes>,
+    ) -> BoxFut<'static, Result<()>> {
+        if let Some(this) = self.this.upgrade() {
+            (self.on_conn_validate_cb)(this, rem_url, preflight_data)
+        } else {
+            Box::pin(async move { Ok(()) })
+        }
+    }
 }
 
 /// Builder type for constructing a DefConfig for a Tx5 endpoint.
@@ -147,6 +216,30 @@ pub struct DefConfig {
     on_new_conn_cb: Option<
         Arc<
             dyn Fn(DynConfig, Arc<serde_json::Value>, state::ConnStateSeed)
+                + 'static
+                + Send
+                + Sync,
+        >,
+    >,
+    on_conn_preflight_cb: Option<
+        Arc<
+            dyn Fn(
+                    DynConfig,
+                    Tx5Url,
+                )
+                    -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+                + 'static
+                + Send
+                + Sync,
+        >,
+    >,
+    on_conn_validate_cb: Option<
+        Arc<
+            dyn Fn(
+                    DynConfig,
+                    Tx5Url,
+                    Option<bytes::Bytes>,
+                ) -> BoxFut<'static, Result<()>>
                 + 'static
                 + Send
                 + Sync,
@@ -226,6 +319,16 @@ impl IntoConfig for DefConfig {
                 .on_new_conn_cb
                 .unwrap_or_else(|| Arc::new(endpoint::on_new_conn));
 
+            let on_conn_preflight_cb =
+                self.on_conn_preflight_cb.unwrap_or_else(|| {
+                    Arc::new(|_, _| Box::pin(async move { Ok(None) }))
+                });
+
+            let on_conn_validate_cb =
+                self.on_conn_validate_cb.unwrap_or_else(|| {
+                    Arc::new(|_, _, _| Box::pin(async move { Ok(()) }))
+                });
+
             let out: DynConfig = Arc::new_cyclic(|this| DefConfigBuilt {
                 this: this.clone(),
                 max_send_bytes,
@@ -238,6 +341,8 @@ impl IntoConfig for DefConfig {
                 lair_tag,
                 on_new_sig_cb,
                 on_new_conn_cb,
+                on_conn_preflight_cb,
+                on_conn_validate_cb,
             });
 
             Ok(out)
@@ -373,6 +478,66 @@ impl DefConfig {
             + Sync,
     {
         self.set_new_conn_cb(cb);
+        self
+    }
+
+    /// Override the default no-op conn preflight hook.
+    pub fn set_conn_preflight<Cb>(&mut self, cb: Cb)
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+            ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.on_conn_preflight_cb = Some(Arc::new(cb));
+    }
+
+    /// See `set_conn_preflight()`, this is the builder version.
+    pub fn with_conn_preflight<Cb>(mut self, cb: Cb) -> Self
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+            ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.set_conn_preflight(cb);
+        self
+    }
+
+    /// Override the default no-op conn validate hook.
+    pub fn set_conn_validate<Cb>(&mut self, cb: Cb)
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+                Option<bytes::Bytes>,
+            ) -> BoxFut<'static, Result<()>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.on_conn_validate_cb = Some(Arc::new(cb));
+    }
+
+    /// See `set_conn_validate()`, this is the builder version.
+    pub fn with_conn_validate<Cb>(mut self, cb: Cb) -> Self
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+                Option<bytes::Bytes>,
+            ) -> BoxFut<'static, Result<()>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.set_conn_validate(cb);
         self
     }
 }

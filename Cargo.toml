@@ -15,38 +15,38 @@ members = [
 [workspace.dependencies]
 base64 = "0.13.0"
 bytes = "1.4.0"
-clap = { version = "4.0.18", features = [ "derive", "wrap_help" ] }
-dirs = "4.0.0"
+clap = { version = "4.2.2", features = [ "derive", "wrap_help" ] }
+dirs = "5.0.0"
 dunce = "1.0.3"
-futures = "0.3.24"
-get_if_addrs = "0.5.3"
+futures = "0.3.28"
+if-addrs = "0.10.1"
 Inflector = "0.11.4"
 lair_keystore_api = "0.2.3"
-libc = "0.2.126"
-libloading = "0.7.3"
-once_cell = "1.15.0"
-ouroboros = "0.15.0"
+libc = "0.2.141"
+libloading = "0.8.0"
+once_cell = "1.17.1"
+ouroboros = "0.15.6"
 parking_lot = "0.12.1"
-prometheus = "0.13.2"
+prometheus = "0.13.3"
 rand = "0.8.5"
 rand-utf8 = "0.0.1"
-rcgen = { version = "0.9.3", features = [ "pem" ] }
+rcgen = { version = "0.10.0", features = [ "pem" ] }
 ring = "0.16.20"
-rustls = { version = "0.20.4", features = [ "dangerous_configuration" ] }
+rustls = { version = "0.20.0", features = [ "dangerous_configuration" ] }
 rustls-native-certs = "0.6.2"
-rustls-pemfile = "1.0.0"
-serde = { version = "1.0.145", features = [ "derive", "rc" ] }
-serde_json = { version = "1.0.85", features = [ "preserve_order" ] }
-sha2 = "0.10.2"
+rustls-pemfile = "1.0.2"
+serde = { version = "1.0.160", features = [ "derive", "rc" ] }
+serde_json = { version = "1.0.96", features = [ "preserve_order" ] }
+sha2 = "0.10.6"
 socket2 = { version = "0.5.2", features = [ "all" ] }
-sodoken = "0.0.7"
-tempfile = "3.3.0"
-tokio = { version = "1.21.2" }
-tokio-rustls = "0.23.3"
-tokio-tungstenite = { version = "0.17.1", features = [ "rustls-tls-native-roots" ] }
-tracing = "0.1.36"
+sodoken = "0.0.8"
+tempfile = "3.5.0"
+tokio = { version = "1.27.0" }
+tokio-rustls = "0.23.4"
+tokio-tungstenite = { version = "0.18.0", features = [ "rustls-tls-native-roots" ] }
+tracing = "0.1.37"
 tracing-appender = "0.2.2"
-tracing-subscriber = { version = "0.3.15", features = [ "env-filter" ] }
+tracing-subscriber = { version = "0.3.16", features = [ "env-filter" ] }
 trust-dns-resolver = "0.22.0"
 tx5-core = { version = "0.0.1-alpha.4", path = "crates/tx5-core" }
 tx5-go-pion-turn = { version = "0.0.1-alpha.4", path = "crates/tx5-go-pion-turn" }
@@ -56,6 +56,6 @@ tx5-signal-srv = { version = "0.0.1-alpha.5", path = "crates/tx5-signal-srv" }
 tx5-signal = { version = "0.0.1-alpha.5", path = "crates/tx5-signal" }
 tx5 = { version = "0.0.1-alpha.11", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
-warp = { version = "0.3.2", features = [ "websocket" ] }
-webrtc = { version = "0.5.0" }
-zip = { version = "0.6.2", default-features = false, features = [ "deflate" ] }
+warp = { version = "0.3.4", features = [ "websocket" ] }
+webrtc = { version = "0.7.1" }
+zip = { version = "0.6.4", default-features = false, features = [ "deflate" ] }

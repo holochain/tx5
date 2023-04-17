@@ -50,7 +50,7 @@ async fn main_err() -> Result<()> {
 
     let port = addr.port();
 
-    for iface in get_if_addrs::get_if_addrs()? {
+    for iface in if_addrs::get_if_addrs()? {
         let ip = if iface.ip().is_ipv6() {
             // TODO - re-enable ipv6 when we're binding to v6 ifaces
             //format!("[{}]", iface.ip())

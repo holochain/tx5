@@ -20,7 +20,7 @@ exclude = [
 base64 = { workspace = true }
 dirs = { workspace = true }
 dunce = { workspace = true }
-get_if_addrs = { workspace = true }
+if-addrs = { workspace = true }
 once_cell = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = [ "process", "io-util" ] }

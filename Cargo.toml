@@ -1,14 +1,15 @@
 [workspace]
 members = [
-  "crates/tx5",
   "crates/tx5-core",
   "crates/tx5-online",
+  "crates/tx5-discover",
+  "crates/tx5-go-pion-turn",
   "crates/tx5-go-pion-sys",
   "crates/tx5-go-pion",
-  "crates/tx5-signal",
   "crates/tx5-signal-srv",
+  "crates/tx5-signal",
+  "crates/tx5",
   "crates/tx5-demo",
-  "crates/tx5-go-pion-turn",
 ]
 
 [workspace.dependencies]
@@ -37,7 +38,7 @@ rustls-pemfile = "1.0.0"
 serde = { version = "1.0.145", features = [ "derive", "rc" ] }
 serde_json = { version = "1.0.85", features = [ "preserve_order" ] }
 sha2 = "0.10.2"
-socket2 = { version = "0.4.7", features = [ "all" ] }
+socket2 = { version = "0.5.2", features = [ "all" ] }
 sodoken = "0.0.7"
 tempfile = "3.3.0"
 tokio = { version = "1.21.2" }

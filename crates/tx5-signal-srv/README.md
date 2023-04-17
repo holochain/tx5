@@ -50,7 +50,7 @@ Options:
                                  already exist. Exclusive with "init" option
   -c, --config <CONFIG>          Configuration file to use for running the tx5-signal-srv. Defaults
                                  to `$user_config_dir_path$/tx5-signal-srv.json`
-  -h, --help                     Print help information
-  -V, --version                  Print version information
+  -h, --help                     Print help
+  -V, --version                  Print version
 
 ```

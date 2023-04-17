@@ -183,7 +183,7 @@ impl Tx5TurnServer {
 pub async fn test_turn_server() -> Result<(String, Tx5TurnServer)> {
     let mut addr = None;
 
-    for iface in get_if_addrs::get_if_addrs()? {
+    for iface in if_addrs::get_if_addrs()? {
         if iface.is_loopback() {
             continue;
         }

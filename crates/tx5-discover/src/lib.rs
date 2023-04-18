@@ -106,9 +106,11 @@ impl Socket {
         s.set_nonblocking(true)?;
 
         if let Some(mcast) = mcast {
+            s.set_only_v6(true)?;
+            assert!(mcast.is_multicast());
             s.join_multicast_v6(&mcast, 0)?;
             s.set_multicast_loop_v6(true)?;
-            s.set_multicast_hops_v6(1)?;
+            //s.set_multicast_hops_v6(1)?;
         }
 
         let bind_addr = std::net::SocketAddrV6::new(iface, port, 0, 0);

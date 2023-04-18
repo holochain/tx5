@@ -1,14 +1,29 @@
 use super::*;
 
+fn init_tracing() {
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(
+            tracing_subscriber::filter::EnvFilter::from_default_env(),
+        )
+        .with_file(true)
+        .with_line_number(true)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn sanity() {
+    const THIS_TEST_PORT: u16 = 13132;
+
+    init_tracing();
+
     let (recv_s, mut recv_r) = tokio::sync::mpsc::unbounded_channel();
 
     let sg = Shotgun::new(
         Arc::new(move |res| {
             let _ = recv_s.send(res);
         }),
-        PORT,
+        THIS_TEST_PORT,
         MULTICAST_V4,
         MULTICAST_V6,
     )
@@ -42,7 +57,7 @@ async fn sanity() {
         _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => (),
         _ = async move {
             while let Some(res) = recv_r.recv().await {
-                let (data, addr) = res.unwrap();
+                let (_, data, addr) = res.unwrap();
                 assert_eq!(b"hello", data.as_slice());
                 println!("{addr:?}");
                 if addr.is_ipv4() {

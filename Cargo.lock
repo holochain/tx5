@@ -3168,11 +3168,13 @@ dependencies = [
 name = "tx5-discover"
 version = "0.0.1-alpha.1"
 dependencies = [
+ "base64 0.13.1",
  "if-addrs",
  "once_cell",
  "parking_lot",
  "rand",
  "socket2 0.5.2",
+ "sodoken 0.0.8",
  "tokio",
  "tracing",
  "tracing-subscriber",

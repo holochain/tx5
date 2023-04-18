@@ -15,7 +15,7 @@ async fn main() {
 
     let sg = Shotgun::new(
         Arc::new(move |res| {
-            let (data, addr) = res.unwrap();
+            let (_, data, addr) = res.unwrap();
             let s = String::from_utf8_lossy(&data);
             println!("{addr:?}: {s}");
         }),

@@ -11,11 +11,13 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
+base64 = { workspace = true }
 if-addrs = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
 socket2 = { workspace = true }
+sodoken = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing = { workspace = true }
 tx5-core = { workspace = true }

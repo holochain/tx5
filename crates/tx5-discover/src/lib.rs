@@ -23,6 +23,10 @@ pub const PORT: u16 = 13131;
 pub const MULTICAST_V4: std::net::Ipv4Addr =
     std::net::Ipv4Addr::new(233, 252, 252, 252);
 
+/// The default tx5-discover ipv6 multicast address.
+pub const MULTICAST_V6: std::net::Ipv6Addr =
+    std::net::Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xacac);
+
 /// Raw callback type for receiving from a udp socket.
 pub type RawRecv = Arc<
     dyn Fn(Result<(Vec<u8>, std::net::SocketAddr)>) + 'static + Send + Sync,
@@ -58,13 +62,56 @@ impl Socket {
         s.set_nonblocking(true)?;
 
         if let Some(mcast) = mcast {
-            //s.join_multicast_v4(&mcast, &iface)?;
             s.join_multicast_v4(&mcast, &std::net::Ipv4Addr::UNSPECIFIED)?;
             s.set_multicast_loop_v4(true)?;
             s.set_ttl(32)?; // site
         }
 
         let bind_addr = std::net::SocketAddrV4::new(iface, port);
+        s.bind(&bind_addr.into())?;
+
+        let socket = Arc::new(tokio::net::UdpSocket::from_std(s.into())?);
+
+        let recv_sock = socket.clone();
+        let recv_task = tokio::task::spawn(async move {
+            let mut buf = [0; 4096];
+            loop {
+                match recv_sock.recv_from(&mut buf).await {
+                    Ok((len, addr)) => {
+                        let data = buf[..len].to_vec();
+                        raw_recv(Ok((data, addr)));
+                    }
+                    Err(err) => raw_recv(Err(err)),
+                }
+            }
+        });
+
+        Ok(Arc::new(Self { socket, recv_task }))
+    }
+
+    /// Bind a new ipv6 udp socket.
+    pub async fn with_v6(
+        iface: std::net::Ipv6Addr,
+        mcast: Option<std::net::Ipv6Addr>,
+        port: u16,
+        raw_recv: RawRecv,
+    ) -> Result<Arc<Self>> {
+        let s = socket2::Socket::new(
+            socket2::Domain::IPV6,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )?;
+
+        s.set_reuse_address(true)?;
+        s.set_nonblocking(true)?;
+
+        if let Some(mcast) = mcast {
+            s.join_multicast_v6(&mcast, 0)?;
+            s.set_multicast_loop_v6(true)?;
+            s.set_multicast_hops_v6(1)?;
+        }
+
+        let bind_addr = std::net::SocketAddrV6::new(iface, port, 0, 0);
         s.bind(&bind_addr.into())?;
 
         let socket = Arc::new(tokio::net::UdpSocket::from_std(s.into())?);

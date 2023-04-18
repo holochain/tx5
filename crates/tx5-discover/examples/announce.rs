@@ -13,7 +13,7 @@ async fn main() {
     );
     println!("my_name: {my_name}");
 
-    let _l = Socket::with_v4(
+    let _l4 = Socket::with_v4(
         std::net::Ipv4Addr::UNSPECIFIED,
         Some(MULTICAST_V4),
         PORT,
@@ -26,7 +26,20 @@ async fn main() {
     .await
     .unwrap();
 
-    let c = Socket::with_v4(
+    let _l6 = Socket::with_v6(
+        std::net::Ipv6Addr::UNSPECIFIED,
+        Some(MULTICAST_V6),
+        PORT,
+        Arc::new(move |res| {
+            let (data, addr) = res.unwrap();
+            let s = String::from_utf8_lossy(&data);
+            println!("{addr:?}: {s}");
+        }),
+    )
+    .await
+    .unwrap();
+
+    let c4 = Socket::with_v4(
         std::net::Ipv4Addr::UNSPECIFIED,
         None,
         0,
@@ -35,8 +48,20 @@ async fn main() {
     .await
     .unwrap();
 
+    let c6 = Socket::with_v6(
+        std::net::Ipv6Addr::UNSPECIFIED,
+        None,
+        0,
+        Arc::new(|_| ()),
+    )
+    .await
+    .unwrap();
+
     loop {
-        c.send(my_name.as_bytes().to_vec(), (MULTICAST_V4, PORT).into())
+        c4.send(my_name.as_bytes().to_vec(), (MULTICAST_V4, PORT).into())
+            .await
+            .unwrap();
+        c6.send(my_name.as_bytes().to_vec(), (MULTICAST_V6, PORT).into())
             .await
             .unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;

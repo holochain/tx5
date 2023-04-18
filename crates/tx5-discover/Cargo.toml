@@ -11,6 +11,7 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
+if-addrs = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }

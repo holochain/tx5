@@ -6,8 +6,102 @@
 //!
 //! Holochain WebRTC p2p communication ecosystem lan discovery.
 
+use std::future::Future;
+use std::sync::Arc;
+
+/// Re-exported dependencies.
+pub mod deps {
+    pub use tx5_core::deps::*;
+}
+
+pub use tx5_core::{Error, ErrorExt, Id, Result};
+
+/// The default tx5-discover announcement port.
+pub const PORT: u16 = 13131;
+
+/// The default tx5-discover ipv4 multicast address.
+pub const MULTICAST_V4: std::net::Ipv4Addr =
+    std::net::Ipv4Addr::new(233, 252, 252, 252);
+
+/// Raw callback type for receiving from a udp socket.
+pub type RawRecv = Arc<
+    dyn Fn(Result<(Vec<u8>, std::net::SocketAddr)>) + 'static + Send + Sync,
+>;
+
+/// Raw udp socket wrapper.
+pub struct Socket {
+    socket: Arc<tokio::net::UdpSocket>,
+    recv_task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Socket {
+    fn drop(&mut self) {
+        self.recv_task.abort();
+    }
+}
+
+impl Socket {
+    /// Bind a new ipv4 udp socket.
+    pub async fn with_v4(
+        iface: std::net::Ipv4Addr,
+        mcast: Option<std::net::Ipv4Addr>,
+        port: u16,
+        raw_recv: RawRecv,
+    ) -> Result<Arc<Self>> {
+        let s = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )?;
+
+        s.set_reuse_address(true)?;
+        s.set_nonblocking(true)?;
+
+        if let Some(mcast) = mcast {
+            //s.join_multicast_v4(&mcast, &iface)?;
+            s.join_multicast_v4(&mcast, &std::net::Ipv4Addr::UNSPECIFIED)?;
+            s.set_multicast_loop_v4(true)?;
+            s.set_ttl(32)?; // site
+        }
+
+        let bind_addr = std::net::SocketAddrV4::new(iface, port);
+        s.bind(&bind_addr.into())?;
+
+        let socket = Arc::new(tokio::net::UdpSocket::from_std(s.into())?);
+
+        let recv_sock = socket.clone();
+        let recv_task = tokio::task::spawn(async move {
+            let mut buf = [0; 4096];
+            loop {
+                match recv_sock.recv_from(&mut buf).await {
+                    Ok((len, addr)) => {
+                        let data = buf[..len].to_vec();
+                        raw_recv(Ok((data, addr)));
+                    }
+                    Err(err) => raw_recv(Err(err)),
+                }
+            }
+        });
+
+        Ok(Arc::new(Self { socket, recv_task }))
+    }
+
+    /// Send data from our bound udp socket.
+    pub fn send(
+        &self,
+        data: Vec<u8>,
+        addr: std::net::SocketAddr,
+    ) -> impl Future<Output = Result<()>> + 'static + Send {
+        let socket = self.socket.clone();
+        async move { socket.send_to(&data, addr).await.map(|_| ()) }
+    }
+}
+
+/*
 use parking_lot::Mutex;
 use std::sync::{Arc, Weak};
+//use std::future::Future;
+use std::collections::HashMap;
 
 /// Re-exported dependencies.
 pub mod deps {
@@ -43,15 +137,64 @@ impl Default for Tx5DiscoverConfig {
     }
 }
 
+struct Socket {
+    rcv_task: tokio::task::JoinHandle<()>,
+    socket: Arc<tokio::net::UdpSocket>,
+}
+
+impl Drop for Socket {
+    fn drop(&mut self) {
+        self.rcv_task.abort();
+    }
+}
+
+impl Socket {
+    async fn with_v4(
+        iface: std::net::Ipv4Addr,
+        mcast: std::net::Ipv4Addr,
+        port: u16,
+    ) -> Result<Arc<Self>> {
+        let socket = Arc::new(tokio::task::spawn_blocking(move || {
+            let s = socket2::Socket::new(
+                socket2::Domain::IPV4,
+                socket2::Type::DGRAM,
+                Some(socket2::Protocol::UDP),
+            )?;
+            s.join_multicast_v4(&mcast, &iface)?;
+            s.set_multicast_loop_v4(true)?;
+            s.set_nonblocking(true)?;
+            s.set_reuse_address(true)?;
+            s.set_ttl(32)?; // site
+
+            let bind_addr = std::net::SocketAddrV4::new(iface, port);
+            s.bind(&bind_addr.into())?;
+
+            tokio::net::UdpSocket::from_std(s.into())
+        })
+        .await??);
+
+        let rcv_task = tokio::task::spawn(rcv_task(socket.clone()));
+
+        Ok(Arc::new(Self {
+            rcv_task,
+            socket,
+        }))
+    }
+}
+
+type SocketMap = HashMap<std::net::IpAddr, Arc<Socket>>;
+
 struct Tx5DiscoverInner {
-    v4_task: tokio::task::JoinHandle<()>,
+    iface_task: tokio::task::JoinHandle<()>,
+    announce_task: tokio::task::JoinHandle<()>,
     config: Tx5DiscoverConfig,
-    v4_announce: Mutex<Option<Arc<tokio::net::UdpSocket>>>,
+    sockets: Mutex<SocketMap>,
 }
 
 impl Drop for Tx5DiscoverInner {
     fn drop(&mut self) {
-        self.v4_task.abort();
+        self.iface_task.abort();
+        self.announce_task.abort();
     }
 }
 
@@ -62,18 +205,139 @@ pub struct Tx5Discover(Arc<Tx5DiscoverInner>);
 impl Tx5Discover {
     /// Create a new tx5-discovery instance.
     pub fn new(config: Tx5DiscoverConfig) -> Self {
-        let (s, r) = tokio::sync::oneshot::channel();
-        let v4_task = tokio::task::spawn(v4_task(r));
+        let (iface_s, iface_r) = tokio::sync::oneshot::channel();
+        let iface_task = tokio::task::spawn(iface_task(iface_r));
+
+        let (announce_s, announce_r) = tokio::sync::oneshot::channel();
+        let announce_task = tokio::task::spawn(announce_task(announce_r));
+
         let inner = Arc::new(Tx5DiscoverInner {
-            v4_task,
+            iface_task,
+            announce_task,
             config,
-            v4_announce: Mutex::new(None),
+            sockets: Mutex::new(HashMap::new()),
         });
-        let _ = s.send(Arc::downgrade(&inner));
+
+        let _ = iface_s.send(Arc::downgrade(&inner));
+        let _ = announce_s.send(Arc::downgrade(&inner));
+
         Self(inner)
     }
 }
 
+async fn iface_task(r: tokio::sync::oneshot::Receiver<Weak<Tx5DiscoverInner>>) {
+    let weak = match r.await {
+        Err(err) => {
+            tracing::error!(?err);
+            return;
+        }
+        Ok(weak) => weak,
+    };
+
+    loop {
+        let inner = match weak.upgrade() {
+            None => return,
+            Some(inner) => inner,
+        };
+
+        let mut addrs = Vec::new();
+        if let Ok(iface_list) = if_addrs::get_if_addrs() {
+            for iface in iface_list {
+                let ip = iface.ip();
+
+                if ip.is_unspecified() {
+                    continue;
+                }
+
+                if ip.is_loopback() {
+                    continue;
+                }
+
+                addrs.push(ip);
+            }
+        }
+
+        for addr in addrs {
+            if inner.sockets.lock().contains_key(&addr) {
+                continue;
+            }
+
+            match addr {
+                std::net::IpAddr::V4(addr) => {
+                    let socket = match Socket::with_v4(
+                        addr,
+                        inner.config.multi_v4_addr,
+                        inner.config.port,
+                    ).await {
+                        Err(err) => {
+                            tracing::warn!(?err);
+                            continue;
+                        }
+                        Ok(socket) => socket,
+                    };
+                    inner.sockets.lock().insert(addr.into(), socket);
+                    tracing::info!("bound {addr:?}");
+                }
+                std::net::IpAddr::V6(_addr) => {
+                }
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+    }
+}
+
+async fn announce_task(r: tokio::sync::oneshot::Receiver<Weak<Tx5DiscoverInner>>) {
+    let weak = match r.await {
+        Err(err) => {
+            tracing::error!(?err);
+            return;
+        }
+        Ok(weak) => weak,
+    };
+
+    loop {
+        let s = 5; // todo - randomize
+        tokio::time::sleep(std::time::Duration::from_secs(s)).await;
+
+        let inner = match weak.upgrade() {
+            None => return,
+            Some(inner) => inner,
+        };
+
+        let addr = std::net::SocketAddr::new(inner.config.multi_v4_addr.into(), inner.config.port);
+
+        let socket_list = inner.sockets.lock().values().cloned().collect::<Vec<_>>();
+        for socket in socket_list {
+            if let Err(err) = socket.socket.send_to(b"test-announce", addr).await {
+                tracing::warn!(?err);
+            } else {
+                tracing::trace!("sent");
+            }
+        }
+    }
+}
+
+async fn rcv_task(socket: Arc<tokio::net::UdpSocket>) {
+    let mut data = [0; BUF_SIZE];
+
+    loop {
+        let (len, addr) = match socket.recv_from(&mut data).await {
+            Err(err) => {
+                tracing::warn!(?err);
+                if true {
+                    todo!("remove it from socket map");
+                }
+                break;
+            }
+            Ok(r) => r,
+        };
+        let s = String::from_utf8_lossy(&data[..len]);
+        tracing::info!(%s, ?addr, "got");
+    }
+}
+
+/*
 async fn v4_task(r: tokio::sync::oneshot::Receiver<Weak<Tx5DiscoverInner>>) {
     let weak = match r.await {
         Err(err) => {
@@ -158,6 +422,7 @@ async fn bind_v4_announce(
         .await??,
     ))
 }
+*/
 
 #[cfg(test)]
 mod test {
@@ -180,6 +445,10 @@ mod test {
 
         let _d = Tx5Discover::new(Default::default());
 
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     }
 }
+*/
+
+#[cfg(test)]
+mod test;

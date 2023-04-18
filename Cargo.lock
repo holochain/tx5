@@ -3168,6 +3168,7 @@ dependencies = [
 name = "tx5-discover"
 version = "0.0.1-alpha.1"
 dependencies = [
+ "if-addrs",
  "once_cell",
  "parking_lot",
  "rand",

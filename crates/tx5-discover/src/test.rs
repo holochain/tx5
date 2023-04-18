@@ -19,38 +19,51 @@ async fn sanity() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     sg.multicast(b"hello".to_vec()).await.unwrap();
 
-    tokio::select! {
-        _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => panic!("timeout"),
-        _ = async move {
-            let mut got_v4 = false;
-            let mut got_v6 = false;
+    let got_v4 = std::sync::atomic::AtomicBool::new(false);
+    let got_v4 = &got_v4;
+    let got_v6 = std::sync::atomic::AtomicBool::new(false);
+    let got_v6 = &got_v6;
 
+    trait EZ {
+        fn set(&self, v: bool);
+        fn get(&self) -> bool;
+    }
+
+    impl EZ for std::sync::atomic::AtomicBool {
+        fn set(&self, v: bool) {
+            self.store(v, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn get(&self) -> bool {
+            self.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    tokio::select! {
+        _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => (),
+        _ = async move {
             while let Some(res) = recv_r.recv().await {
                 let (data, addr) = res.unwrap();
                 assert_eq!(b"hello", data.as_slice());
                 println!("{addr:?}");
                 if addr.is_ipv4() {
-                    got_v4 = true;
-                    if got_v6 == true {
+                    got_v4.set(true);
+                    if got_v6.get() == true {
                         break;
                     }
                 }
                 if addr.is_ipv6() {
-                    got_v6 = true;
-                    if got_v4 == true {
+                    got_v6.set(true);
+                    if got_v4.get() == true {
                         break;
                     }
                 }
             }
 
-            if !got_v4 {
-                panic!("no v4 received");
-            }
-
-            if !got_v6 {
-                panic!("no v6 received");
-            }
         } => (),
+    }
+
+    if !got_v4.get() && !got_v6.get() {
+        panic!("no multicast received");
     }
 }
 

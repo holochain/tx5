@@ -240,6 +240,8 @@ impl Shotgun {
 
                 let index = iface.index.unwrap_or_default();
 
+                println!("BINDING TO ip: {ip:?} index: {index}");
+
                 match ip {
                     std::net::IpAddr::V4(ip) => bind_v4!(ip),
                     std::net::IpAddr::V6(ip) => bind_v6!(ip, index),

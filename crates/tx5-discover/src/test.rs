@@ -12,7 +12,7 @@ fn init_tracing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sanity() {
+async fn shotgun_can_receive_announce() {
     const THIS_TEST_PORT: u16 = 13132;
 
     init_tracing();
@@ -23,6 +23,7 @@ async fn sanity() {
         Arc::new(move |res| {
             let _ = recv_s.send(res);
         }),
+        Arc::new(|_| ()),
         THIS_TEST_PORT,
         MULTICAST_V4,
         MULTICAST_V6,
@@ -82,80 +83,27 @@ async fn sanity() {
     }
 }
 
-/*
 #[tokio::test(flavor = "multi_thread")]
-async fn sanity_v4() {
-    let (recv_s, mut recv_r) = tokio::sync::mpsc::unbounded_channel();
+async fn discover_sanity() {
+    const THIS_TEST_PORT: u16 = 13133;
 
-    let _l = Socket::with_v4(
-        std::net::Ipv4Addr::UNSPECIFIED,
-        Some(MULTICAST_V4),
-        PORT,
-        Arc::new(move |res| {
-            let _ = recv_s.send(res);
-        }),
-    )
-    .await
-    .unwrap();
+    init_tracing();
 
-    let c = Socket::with_v4(
-        std::net::Ipv4Addr::UNSPECIFIED,
-        None,
-        0,
-        Arc::new(|_| ()),
-    )
-    .await
-    .unwrap();
+    let config = Arc::new(
+        Tx5DiscoverConfig::default()
+            .with_port(THIS_TEST_PORT)
+            .with_recv_cb(|evt| {
+                println!("{evt:?}");
+            }),
+    );
 
-    c.send(b"hello".to_vec(), (MULTICAST_V4, PORT).into())
-        .await
-        .unwrap();
+    let d1 = Tx5Discover::new(config.clone(), vec![b"hello".to_vec()]).await.unwrap();
+    let d2 = Tx5Discover::new(config, vec![b"world".to_vec()]).await.unwrap();
 
-    let (data, addr) =
-        tokio::time::timeout(std::time::Duration::from_secs(10), recv_r.recv())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-    println!("{:?}", addr);
-    assert_eq!(b"hello", data.as_slice());
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    d1.update_discovery_data(vec![b"foo".to_vec()]).unwrap();
+    d2.update_discovery_data(vec![b"bar".to_vec()]).unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn sanity_v6() {
-    let (recv_s, mut recv_r) = tokio::sync::mpsc::unbounded_channel();
-
-    let _l = Socket::with_v6(
-        std::net::Ipv6Addr::UNSPECIFIED,
-        Some(MULTICAST_V6),
-        PORT,
-        Arc::new(move |res| {
-            let _ = recv_s.send(res);
-        }),
-    )
-    .await
-    .unwrap();
-
-    let c = Socket::with_v6(
-        std::net::Ipv6Addr::UNSPECIFIED,
-        None,
-        0,
-        Arc::new(|_| ()),
-    )
-    .await
-    .unwrap();
-
-    c.send(b"hello".to_vec(), (MULTICAST_V6, PORT).into())
-        .await
-        .unwrap();
-
-    let (data, addr) =
-        tokio::time::timeout(std::time::Duration::from_secs(10), recv_r.recv())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-    println!("{:?}", addr);
-    assert_eq!(b"hello", data.as_slice());
-}
-*/

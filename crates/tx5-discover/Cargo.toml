@@ -12,6 +12,7 @@ categories = ["network-programming"]
 
 [dependencies]
 base64 = { workspace = true }
+flate2 = { workspace = true }
 if-addrs = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }

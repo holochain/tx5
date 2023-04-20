@@ -19,6 +19,7 @@ async fn main() {
             let s = String::from_utf8_lossy(&data);
             println!("{addr:?}: {s}");
         }),
+        Arc::new(|_| ()),
         PORT,
         MULTICAST_V4,
         MULTICAST_V6,

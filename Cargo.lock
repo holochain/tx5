@@ -3169,6 +3169,7 @@ name = "tx5-discover"
 version = "0.0.1-alpha.1"
 dependencies = [
  "base64 0.13.1",
+ "flate2",
  "if-addrs",
  "once_cell",
  "parking_lot",

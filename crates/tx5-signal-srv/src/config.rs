@@ -30,7 +30,11 @@ pub struct Opt {
 #[doc(hidden)]
 macro_rules! jsdoc {
     ($n:ident {$(
-        [($($rne:tt)*), $rn:ident, $rt:ty, ($rd:expr), $dn:ident, $jn:literal, $d:literal,],
+        [
+            $rn:ident, $rt:ty, ($rd:expr),
+            $vi:ident, $vl:literal,
+            $dn:ident, $jn:literal, $d:literal,
+        ],
     )*}) => {
         /// Tx5-signal-srv config.
         #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -40,11 +44,17 @@ macro_rules! jsdoc {
             #[serde(default, skip_deserializing)]
             #[serde(rename = $jn)]
             $dn: &'static str,
-            #[allow(missing_docs)]
+            #[doc = $d]
+            #[serde(default = $vl)]
             pub $rn: $rt,
         )*}
 
         $(
+            #[doc(hidden)]
+            fn $vi() -> $rt {
+                $rd
+            }
+
             #[allow(non_upper_case_globals)]
             #[doc(hidden)]
             const $dn: &'static str = $d;
@@ -63,30 +73,35 @@ macro_rules! jsdoc {
 
 jsdoc! { Config {
     [
-        (), port,
-        u16, (8443),
+        interfaces, String, ("::".to_string()),
+        interfaces_def, "interfaces_def",
+        hc0, "#interfaces", "comma separated interface list",
+    ],
+    [
+        port, u16, (8443),
+        port_def, "port_def",
         hc1, "#port", "port to bind",
     ],
     /*
     [
-        (), tls_cert_pem,
-        tls::Pem, (tls::Pem(Default::default())),
+        tls_cert_pem, tls::Pem, (tls::Pem(Default::default())),
+        tls_cert_pem_def, "tls_cert_pem_def",
         hc2, "#tlsCertPem", "PEM encoded TLS certificate",
     ],
     [
-        (), tls_cert_priv_pem,
-        tls::Pem, (tls::Pem(Default::default())),
+        tls_cert_priv_pem, tls::Pem, (tls::Pem(Default::default())),
+        tls_cert_priv_pem_def, "tls_cert_priv_pem_def",
         hc3, "#tlsCertPrivPem", "PEM encoded TLS certificate private key",
     ],
     */
     [
-        (), ice_servers,
-        serde_json::Value, (serde_json::from_str("{\"iceServers\":[]}").unwrap()),
+        ice_servers, serde_json::Value, (serde_json::from_str("{\"iceServers\":[]}").unwrap()),
+        ice_servers_def, "ice_servers_def",
         hc4, "#iceServers", "webrtc configuration to broadcast",
     ],
     [
-        (), demo,
-        bool, (true),
+        demo, bool, (true),
+        demo_def, "demo_def",
         hc5, "#demo", "enable demo broadcasting as a stand-in for bootstrapping",
     ],
 }}

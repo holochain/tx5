@@ -20,11 +20,11 @@ async fn endpoint_sanity() {
     srv_config.port = 0;
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
     tokio::task::spawn(srv_driver);
 
-    let sig_port = addr.port();
+    let sig_port = addr_list.get(0).unwrap().port();
 
     // TODO remove
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -81,11 +81,11 @@ async fn preflight_small() {
     srv_config.port = 0;
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
     tokio::task::spawn(srv_driver);
 
-    let sig_port = addr.port();
+    let sig_port = addr_list.get(0).unwrap().port();
 
     // TODO remove
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -149,11 +149,11 @@ async fn preflight_huge() {
     srv_config.port = 0;
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
     tokio::task::spawn(srv_driver);
 
-    let sig_port = addr.port();
+    let sig_port = addr_list.get(0).unwrap().port();
 
     // TODO remove
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -217,11 +217,11 @@ async fn ban() {
     srv_config.port = 0;
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
     tokio::task::spawn(srv_driver);
 
-    let sig_port = addr.port();
+    let sig_port = addr_list.get(0).unwrap().port();
 
     // TODO remove
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -282,11 +282,11 @@ async fn large_messages() {
     srv_config.port = 0;
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
     tokio::task::spawn(srv_driver);
 
-    let sig_port = addr.port();
+    let sig_port = addr_list.get(0).unwrap().port();
 
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
@@ -349,11 +349,11 @@ async fn broadcast() {
     srv_config.port = 0;
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
     tokio::task::spawn(srv_driver);
 
-    let sig_port = addr.port();
+    let sig_port = addr_list.get(0).unwrap().port();
 
     // TODO remove
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;

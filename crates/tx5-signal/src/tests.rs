@@ -73,7 +73,6 @@ async fn wrong_version() {
     init_tracing();
 
     let mut srv_config = tx5_signal_srv::Config::default();
-    srv_config.interfaces = "127.0.0.1".into();
     srv_config.port = 0;
     srv_config.ice_servers = serde_json::json!([]);
     srv_config.demo = true;

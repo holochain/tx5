@@ -73,7 +73,7 @@ macro_rules! jsdoc {
 
 jsdoc! { Config {
     [
-        interfaces, String, ("::".to_string()),
+        interfaces, String, ("0.0.0.0".to_string()),
         interfaces_def, "interfaces_def",
         hc0, "#interfaces", "comma separated interface list",
     ],

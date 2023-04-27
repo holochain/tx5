@@ -588,6 +588,8 @@ impl StateData {
         &mut self,
         resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
+        let this_id =
+            self.this_id.map(|id| id.to_string()).unwrap_or("".into());
         let conn_list = self
             .conn_map
             .iter()
@@ -602,6 +604,7 @@ impl StateData {
             const BACKEND: &str = "webrtc-rs";
 
             map.insert("backend".into(), BACKEND.into());
+            map.insert("thisId".into(), this_id.into());
 
             for (id, conn) in conn_list {
                 if let Some(conn) = conn.upgrade() {
@@ -1056,6 +1059,8 @@ impl State {
         cli_url: Tx5Url,
         data: B,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
+        let byte_count = data.remaining();
+
         let buf_list = if !cli_url.is_client() {
             Err(Error::err(
                 "Invalid tx5 signal server url, expect client url",
@@ -1073,10 +1078,24 @@ impl State {
 
             let buf_list = buf_list?;
 
+            let start = std::time::Instant::now();
+
+            tracing::info!(
+                target: "NDBG",
+                msg_uniq = %msg_uniq,
+                %byte_count,
+                chunks = %buf_list.len(),
+                "send data",
+            );
+
             for (idx, mut buf) in buf_list.into_iter().enumerate() {
                 let len = buf.len()?;
 
                 tracing::trace!(%msg_uniq, %len, "snd_data");
+
+                if meta.snd_limit.available_permits() < len {
+                    tracing::warn!(%msg_uniq, %len, "send queue full, waiting for permits");
+                }
 
                 let send_permit = meta
                     .snd_limit
@@ -1119,6 +1138,14 @@ impl State {
                     }
                 }
             }
+
+            tracing::info!(
+                target: "NDBG",
+                msg_uniq = %msg_uniq,
+                %byte_count,
+                elapsed_s = %start.elapsed().as_secs_f64(),
+                "send data COMPLETE",
+            );
 
             Ok(())
         }

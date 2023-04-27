@@ -219,7 +219,10 @@ impl ConnStateEvtSnd {
         let _ = self.0.send(Ok(ConnStateEvt::SndData(data, s)));
     }
 
-    pub async fn stats(&self) -> Result<serde_json::Value> {
+    pub async fn stats(
+        &self,
+        created_at: std::time::Instant,
+    ) -> Result<serde_json::Value> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.0
             .send(Ok(ConnStateEvt::Stats(OneSnd::new(move |stats| {
@@ -227,7 +230,12 @@ impl ConnStateEvtSnd {
             }))))
             .map_err(|_| Error::id("Shutdown"))?;
         let mut buf = r.await.map_err(|_| Error::id("Shutdown"))??;
-        buf.to_json()
+        let mut stats: serde_json::Value = buf.to_json()?;
+        stats.as_object_mut().unwrap().insert(
+            "ageSeconds".into(),
+            created_at.elapsed().as_secs_f64().into(),
+        );
+        Ok(stats)
     }
 }
 
@@ -684,6 +692,10 @@ async fn conn_state_task(
     let mut permit = None;
 
     let err = match async {
+        if conn_limit.available_permits() < 1 {
+            tracing::warn!(conn_uniq = %data.conn_uniq, "max connections reached, waiting for permit");
+        }
+
         permit = Some(
             conn_limit
                 .acquire_owned()
@@ -726,6 +738,7 @@ async fn conn_state_task(
 
 #[derive(Clone)]
 pub(crate) struct ConnStateMeta {
+    created_at: std::time::Instant,
     cli_url: Tx5Url,
     pub(crate) conn_uniq: Uniq,
     pub(crate) config: DynConfig,
@@ -865,6 +878,10 @@ impl ConnState {
                 std::io::copy(&mut data, &mut buf)?;
                 let buf = buf.into_inner().freeze();
 
+                if self.1.rcv_limit.available_permits() < len {
+                    tracing::warn!(%len, "recv queue full, waiting for permits");
+                }
+
                 let permit = self
                     .1
                     .rcv_limit
@@ -897,7 +914,7 @@ impl ConnState {
 
     /// Get stats.
     pub async fn stats(&self) -> Result<serde_json::Value> {
-        self.1.conn_snd.stats().await
+        self.1.conn_snd.stats(self.1.created_at).await
     }
 
     // -- //
@@ -963,6 +980,7 @@ impl ConnState {
             .map_err(Error::err)?;
 
         let meta = ConnStateMeta {
+            created_at: std::time::Instant::now(),
             cli_url,
             conn_uniq: conn_uniq.clone(),
             config: config.clone(),

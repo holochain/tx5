@@ -1117,8 +1117,6 @@ impl State {
         cli_url: Tx5Url,
         data: B,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
-        let byte_count = data.remaining();
-
         let buf_list = if !cli_url.is_client() {
             Err(Error::err(
                 "Invalid tx5 signal server url, expect client url",
@@ -1135,16 +1133,6 @@ impl State {
             let msg_uniq = meta.state_uniq.sub();
 
             let buf_list = buf_list?;
-
-            let start = std::time::Instant::now();
-
-            tracing::info!(
-                target: "NDBG",
-                msg_uniq = %msg_uniq,
-                %byte_count,
-                chunks = %buf_list.len(),
-                "send data",
-            );
 
             for (idx, mut buf) in buf_list.into_iter().enumerate() {
                 let len = buf.len()?;
@@ -1196,14 +1184,6 @@ impl State {
                     }
                 }
             }
-
-            tracing::info!(
-                target: "NDBG",
-                msg_uniq = %msg_uniq,
-                %byte_count,
-                elapsed_s = %start.elapsed().as_secs_f64(),
-                "send data COMPLETE",
-            );
 
             Ok(())
         }

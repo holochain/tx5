@@ -282,6 +282,7 @@ impl StateData {
     async fn exec(&mut self, cmd: StateCmd) -> Result<()> {
         match cmd {
             StateCmd::Tick1s => self.tick_1s().await,
+            StateCmd::TrackSig { rem_id, ty, bytes } => self.track_sig(rem_id, ty, bytes).await,
             StateCmd::SndDemo => self.snd_demo().await,
             StateCmd::ListConnected(resp) => self.list_connected(resp).await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
@@ -418,6 +419,15 @@ impl StateData {
             true
         });
 
+        Ok(())
+    }
+
+    async fn track_sig(&mut self, rem_id: Id, ty: &'static str, bytes: usize) -> Result<()> {
+        if let Some((conn, _)) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.track_sig(ty, bytes);
+            }
+        }
         Ok(())
     }
 
@@ -595,6 +605,11 @@ impl StateData {
             .iter()
             .map(|(id, (c, _))| (*id, c.clone()))
             .collect::<Vec<_>>();
+        let now = std::time::Instant::now();
+        let mut ban_map = serde_json::Map::new();
+        for (id, until) in self.ban_map.iter() {
+            ban_map.insert(id.to_string(), (*until - now).as_secs_f64().into());
+        }
         async move {
             let mut map = serde_json::Map::new();
 
@@ -605,6 +620,7 @@ impl StateData {
 
             map.insert("backend".into(), BACKEND.into());
             map.insert("thisId".into(), this_id.into());
+            map.insert("banned".into(), ban_map.into());
 
             for (id, conn) in conn_list {
                 if let Some(conn) = conn.upgrade() {
@@ -613,7 +629,9 @@ impl StateData {
                     }
                 }
             }
+
             let _ = resp.send(Ok(map.into()));
+
             Ok(())
         }
     }
@@ -790,6 +808,11 @@ impl StateData {
 
 enum StateCmd {
     Tick1s,
+    TrackSig {
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize
+    },
     SndDemo,
     ListConnected(tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>),
     AssertListenerSig {
@@ -1174,6 +1197,15 @@ impl State {
 
     fn tick_1s(&self) -> Result<()> {
         self.0.send(Ok(StateCmd::Tick1s))
+    }
+
+    pub(crate) fn track_sig(
+        &self,
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize,
+    ) {
+        let _ = self.0.send(Ok(StateCmd::TrackSig { rem_id, ty, bytes }));
     }
 
     pub(crate) fn publish(&self, evt: StateEvt) {

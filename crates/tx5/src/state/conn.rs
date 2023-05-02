@@ -506,20 +506,6 @@ impl ConnStateData {
         Ok(())
     }
 
-    // if we have both sent OUR preflight, AND received the REMOTE preflight
-    // notify that this connection is ready to go.
-    async fn check_ready(&mut self) {
-        if !self.meta.connected.load(atomic::Ordering::SeqCst) {
-            return;
-        }
-
-        if self.wait_preflight {
-            return;
-        }
-
-        let _ = self.maybe_fetch_for_send().await;
-    }
-
     async fn ready(&mut self) -> Result<()> {
         // first, check / send the preflight
         let data = self
@@ -534,8 +520,7 @@ impl ConnStateData {
         }
 
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
-        self.check_ready().await;
-        Ok(())
+        self.maybe_fetch_for_send().await
     }
 
     async fn maybe_fetch_for_send(&mut self) -> Result<()> {
@@ -607,8 +592,6 @@ impl ConnStateData {
                 self.wait_preflight = false;
 
                 state.conn_ready(self.meta.cli_url.clone());
-
-                self.check_ready().await;
             } else {
                 state.publish(StateEvt::RcvData(
                     self.meta.cli_url.clone(),

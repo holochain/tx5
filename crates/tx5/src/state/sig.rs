@@ -89,7 +89,13 @@ impl SigStateEvtSnd {
         let _ = self.0.send(Err(err));
     }
 
-    pub fn snd_offer(&self, state: StateWeak, sig: SigStateWeak, rem_id: Id, mut offer: BackBuf) {
+    pub fn snd_offer(
+        &self,
+        state: StateWeak,
+        sig: SigStateWeak,
+        rem_id: Id,
+        mut offer: BackBuf,
+    ) {
         if let Some(state) = state.upgrade() {
             state.track_sig(rem_id, "offer_out", offer.len().unwrap());
         }
@@ -103,7 +109,13 @@ impl SigStateEvtSnd {
         let _ = self.0.send(Ok(SigStateEvt::SndOffer(rem_id, offer, s)));
     }
 
-    pub fn snd_answer(&self, state: StateWeak, sig: SigStateWeak, rem_id: Id, mut answer: BackBuf) {
+    pub fn snd_answer(
+        &self,
+        state: StateWeak,
+        sig: SigStateWeak,
+        rem_id: Id,
+        mut answer: BackBuf,
+    ) {
         if let Some(state) = state.upgrade() {
             state.track_sig(rem_id, "answer_out", answer.len().unwrap());
         }
@@ -117,7 +129,13 @@ impl SigStateEvtSnd {
         let _ = self.0.send(Ok(SigStateEvt::SndAnswer(rem_id, answer, s)));
     }
 
-    pub fn snd_ice(&self, state: StateWeak, sig: SigStateWeak, rem_id: Id, mut ice: BackBuf) {
+    pub fn snd_ice(
+        &self,
+        state: StateWeak,
+        sig: SigStateWeak,
+        rem_id: Id,
+        mut ice: BackBuf,
+    ) {
         if let Some(state) = state.upgrade() {
             state.track_sig(rem_id, "ice_out", ice.len().unwrap());
         }
@@ -297,7 +315,7 @@ impl SigStateData {
         if let Some(conn) = self.registered_conn_map.get(&rem_id) {
             if let Some(conn) = conn.upgrade() {
                 conn.in_ice(data, true);
-                return Ok(())
+                return Ok(());
             }
         }
         if let Some(state) = self.state.upgrade() {
@@ -314,17 +332,32 @@ impl SigStateData {
     }
 
     async fn snd_offer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
-        self.sig_evt.snd_offer(self.state.clone(), self.this.clone(), rem_id, data);
+        self.sig_evt.snd_offer(
+            self.state.clone(),
+            self.this.clone(),
+            rem_id,
+            data,
+        );
         Ok(())
     }
 
     async fn snd_answer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
-        self.sig_evt.snd_answer(self.state.clone(), self.this.clone(), rem_id, data);
+        self.sig_evt.snd_answer(
+            self.state.clone(),
+            self.this.clone(),
+            rem_id,
+            data,
+        );
         Ok(())
     }
 
     async fn snd_ice(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
-        self.sig_evt.snd_ice(self.state.clone(), self.this.clone(), rem_id, data);
+        self.sig_evt.snd_ice(
+            self.state.clone(),
+            self.this.clone(),
+            rem_id,
+            data,
+        );
         Ok(())
     }
 

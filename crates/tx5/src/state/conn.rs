@@ -224,8 +224,8 @@ impl ConnStateEvtSnd {
         additions: Vec<(String, serde_json::Value)>,
         rsp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) {
-        let _ = self.0
-            .send(Ok(ConnStateEvt::Stats(OneSnd::new(move |buf: Result<BackBuf>| {
+        let _ = self.0.send(Ok(ConnStateEvt::Stats(OneSnd::new(
+            move |buf: Result<BackBuf>| {
                 let _ = rsp.send((move || {
                     let mut stats: serde_json::Value = buf?.to_json()?;
                     for (key, value) in additions {
@@ -233,7 +233,8 @@ impl ConnStateEvtSnd {
                     }
                     Ok(stats)
                 })());
-            }))));
+            },
+        ))));
     }
 }
 
@@ -343,7 +344,10 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn stats(&mut self, rsp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>) -> Result<()> {
+    async fn stats(
+        &mut self,
+        rsp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+    ) -> Result<()> {
         let mut additions = Vec::new();
         additions.push((
             "ageSeconds".into(),
@@ -364,17 +368,18 @@ impl ConnStateData {
             "iceMessagesReceived": self.ice.2,
             "iceBytesReceived": self.ice.3,
         });
-        additions.push((
-            "signalingTransport".into(),
-            sig_stats,
-        ));
+        additions.push(("signalingTransport".into(), sig_stats));
 
         self.conn_evt.stats(additions, rsp);
 
         Ok(())
     }
 
-    async fn track_sig(&mut self, ty: &'static str, bytes: usize) -> Result<()> {
+    async fn track_sig(
+        &mut self,
+        ty: &'static str,
+        bytes: usize,
+    ) -> Result<()> {
         match ty {
             "offer_out" => {
                 self.offer.0 += 1;
@@ -1172,7 +1177,10 @@ impl ConnState {
 
     pub(crate) fn in_ice(&self, mut ice: BackBuf, cache: bool) {
         let bytes = ice.len().unwrap();
-        let _ = self.0.send(Ok(ConnCmd::TrackSig { ty: "ice_in", bytes }));
+        let _ = self.0.send(Ok(ConnCmd::TrackSig {
+            ty: "ice_in",
+            bytes,
+        }));
         let _ = self.0.send(Ok(ConnCmd::InIce { ice, cache }));
     }
 

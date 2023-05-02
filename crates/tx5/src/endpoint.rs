@@ -253,6 +253,8 @@ async fn new_sig_task(
 
     tracing::debug!(%cli_url, "signal connection established");
 
+    tracing::info!(target: "NDBG", cli_url = %cli_url, "signal connection established");
+
     let sig = &sig;
 
     let ice_servers = sig.ice_servers();
@@ -327,6 +329,8 @@ async fn new_sig_task(
             }
         };
     }
+
+    tracing::warn!(target: "NDBG", "signal connection CLOSED");
 }
 
 #[cfg(feature = "backend-go-pion")]
@@ -381,6 +385,8 @@ async fn new_conn_task(
     };
 
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
+
+    tracing::info!(target: "NDBG", "PEER CON OPEN");
 
     loop {
         tokio::select! {
@@ -486,12 +492,13 @@ async fn new_conn_task(
                             peer.add_ice_candidate(buf.imp.buf).await
                         }).await;
                     }
-                    Some(Ok(state::ConnStateEvt::SndData(buf, mut resp))) => {
+                    Some(Ok(state::ConnStateEvt::SndData(mut buf, mut resp))) => {
                         let data_chan = &mut data_chan;
                         resp.with(move || async move {
                             match data_chan {
                                 None => Err(Error::id("NoDataChannel")),
                                 Some(chan) => {
+                                    tracing::trace!(target: "NDBG", byte_count = %buf.len().unwrap(), "data chan send");
                                     chan.send(buf.imp.buf).await?;
                                     // TODO - actually report this
                                     Ok(state::BufState::Low)
@@ -512,4 +519,6 @@ async fn new_conn_task(
             }
         };
     }
+
+    tracing::info!(target: "NDBG", "PEER CON CLOSE");
 }

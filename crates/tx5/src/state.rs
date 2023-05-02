@@ -282,6 +282,7 @@ impl StateData {
     async fn exec(&mut self, cmd: StateCmd) -> Result<()> {
         match cmd {
             StateCmd::Tick1s => self.tick_1s().await,
+            StateCmd::TrackSig { rem_id, ty, bytes } => self.track_sig(rem_id, ty, bytes).await,
             StateCmd::SndDemo => self.snd_demo().await,
             StateCmd::ListConnected(resp) => self.list_connected(resp).await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
@@ -418,6 +419,15 @@ impl StateData {
             true
         });
 
+        Ok(())
+    }
+
+    async fn track_sig(&mut self, rem_id: Id, ty: &'static str, bytes: usize) -> Result<()> {
+        if let Some((conn, _)) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.track_sig(ty, bytes);
+            }
+        }
         Ok(())
     }
 
@@ -588,11 +598,18 @@ impl StateData {
         &mut self,
         resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
+        let this_id =
+            self.this_id.map(|id| id.to_string()).unwrap_or("".into());
         let conn_list = self
             .conn_map
             .iter()
             .map(|(id, (c, _))| (*id, c.clone()))
             .collect::<Vec<_>>();
+        let now = std::time::Instant::now();
+        let mut ban_map = serde_json::Map::new();
+        for (id, until) in self.ban_map.iter() {
+            ban_map.insert(id.to_string(), (*until - now).as_secs_f64().into());
+        }
         async move {
             let mut map = serde_json::Map::new();
 
@@ -602,6 +619,8 @@ impl StateData {
             const BACKEND: &str = "webrtc-rs";
 
             map.insert("backend".into(), BACKEND.into());
+            map.insert("thisId".into(), this_id.into());
+            map.insert("banned".into(), ban_map.into());
 
             for (id, conn) in conn_list {
                 if let Some(conn) = conn.upgrade() {
@@ -610,7 +629,9 @@ impl StateData {
                     }
                 }
             }
+
             let _ = resp.send(Ok(map.into()));
+
             Ok(())
         }
     }
@@ -787,6 +808,11 @@ impl StateData {
 
 enum StateCmd {
     Tick1s,
+    TrackSig {
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize
+    },
     SndDemo,
     ListConnected(tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>),
     AssertListenerSig {
@@ -1056,6 +1082,8 @@ impl State {
         cli_url: Tx5Url,
         data: B,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
+        let byte_count = data.remaining();
+
         let buf_list = if !cli_url.is_client() {
             Err(Error::err(
                 "Invalid tx5 signal server url, expect client url",
@@ -1073,10 +1101,24 @@ impl State {
 
             let buf_list = buf_list?;
 
+            let start = std::time::Instant::now();
+
+            tracing::info!(
+                target: "NDBG",
+                msg_uniq = %msg_uniq,
+                %byte_count,
+                chunks = %buf_list.len(),
+                "send data",
+            );
+
             for (idx, mut buf) in buf_list.into_iter().enumerate() {
                 let len = buf.len()?;
 
                 tracing::trace!(%msg_uniq, %len, "snd_data");
+
+                if meta.snd_limit.available_permits() < len {
+                    tracing::warn!(%msg_uniq, %len, "send queue full, waiting for permits");
+                }
 
                 let send_permit = meta
                     .snd_limit
@@ -1120,6 +1162,14 @@ impl State {
                 }
             }
 
+            tracing::info!(
+                target: "NDBG",
+                msg_uniq = %msg_uniq,
+                %byte_count,
+                elapsed_s = %start.elapsed().as_secs_f64(),
+                "send data COMPLETE",
+            );
+
             Ok(())
         }
     }
@@ -1147,6 +1197,15 @@ impl State {
 
     fn tick_1s(&self) -> Result<()> {
         self.0.send(Ok(StateCmd::Tick1s))
+    }
+
+    pub(crate) fn track_sig(
+        &self,
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize,
+    ) {
+        let _ = self.0.send(Ok(StateCmd::TrackSig { rem_id, ty, bytes }));
     }
 
     pub(crate) fn publish(&self, evt: StateEvt) {

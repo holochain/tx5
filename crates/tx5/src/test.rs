@@ -63,6 +63,9 @@ async fn endpoint_sanity() {
         oth => panic!("unexpected {:?}", oth),
     }
 
+    ep1.ban([42; 32].into(), std::time::Duration::from_secs(42));
+    ep2.ban([43; 32].into(), std::time::Duration::from_secs(43));
+
     println!(
         "{}",
         serde_json::to_string_pretty(&ep1.get_stats().await.unwrap()).unwrap()

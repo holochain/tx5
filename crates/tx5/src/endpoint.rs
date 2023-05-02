@@ -327,6 +327,8 @@ async fn new_sig_task(
             }
         };
     }
+
+    tracing::warn!("signal connection CLOSED");
 }
 
 #[cfg(feature = "backend-go-pion")]
@@ -381,6 +383,8 @@ async fn new_conn_task(
     };
 
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
+
+    tracing::debug!("PEER CON OPEN");
 
     loop {
         tokio::select! {
@@ -512,4 +516,6 @@ async fn new_conn_task(
             }
         };
     }
+
+    tracing::debug!("PEER CON CLOSE");
 }

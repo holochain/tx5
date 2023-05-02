@@ -75,14 +75,19 @@ fn go_build(path: &std::path::Path) {
     cp("go.mod");
 
     let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir.clone())
-        .env("GOCACHE", cache)
-        .arg("build")
-        .arg("-ldflags") // strip debug symbols
-        .arg("-s -w") // strip debug symbols
-        .arg("-o")
-        .arg(path)
-        .arg("-mod=vendor");
+
+    // grr, clippy, the debug symbols belong in one arg
+    #[allow(clippy::suspicious_command_arg_space)]
+    {
+        cmd.current_dir(out_dir.clone())
+            .env("GOCACHE", cache)
+            .arg("build")
+            .arg("-ldflags") // strip debug symbols
+            .arg("-s -w") // strip debug symbols
+            .arg("-o")
+            .arg(path)
+            .arg("-mod=vendor");
+    }
 
     println!("cargo:warning=NOTE:running go build: {cmd:?}");
 

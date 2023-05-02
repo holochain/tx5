@@ -280,8 +280,16 @@ impl StateData {
     }
 
     async fn exec(&mut self, cmd: StateCmd) -> Result<()> {
+        // TODO - any errors returned by these fn calls will shut down
+        //        the entire endpoint... probably not what we want.
+        //        Instead, maybe shutting down the whole endpoint should
+        //        require a special call, and otherwise errors can be
+        //        logged / ignored OR just not allow returning errors.
         match cmd {
             StateCmd::Tick1s => self.tick_1s().await,
+            StateCmd::TrackSig { rem_id, ty, bytes } => {
+                self.track_sig(rem_id, ty, bytes).await
+            }
             StateCmd::SndDemo => self.snd_demo().await,
             StateCmd::ListConnected(resp) => self.list_connected(resp).await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
@@ -421,6 +429,20 @@ impl StateData {
         Ok(())
     }
 
+    async fn track_sig(
+        &mut self,
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize,
+    ) -> Result<()> {
+        if let Some((conn, _)) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.track_sig(ty, bytes);
+            }
+        }
+        Ok(())
+    }
+
     async fn snd_demo(&mut self) -> Result<()> {
         for (_, sig) in self.signal_map.iter() {
             if let Some(sig) = sig.upgrade() {
@@ -491,11 +513,19 @@ impl StateData {
         maybe_msg_uniq: Option<Uniq>,
     ) -> Result<()> {
         if self.is_banned(rem_id) {
-            return Err(Error::id("Ban"));
+            tracing::warn!(
+                ?rem_id,
+                "Ignoring request to create con to banned remote"
+            );
+            return Ok(());
+            //return Err(Error::id("Ban"));
         }
 
         let (s, r) = tokio::sync::oneshot::channel();
-        self.assert_listener_sig(sig_url.clone(), s).await?;
+        if let Err(err) = self.assert_listener_sig(sig_url.clone(), s).await {
+            tracing::warn!(?err, "failed to assert signal listener");
+            return Ok(());
+        }
 
         let sig = self.signal_map.get(&sig_url).unwrap().clone();
 
@@ -504,7 +534,7 @@ impl StateData {
         tracing::trace!(?maybe_msg_uniq, %conn_uniq, "create_new_conn");
 
         let cli_url = sig_url.to_client(rem_id);
-        let conn = ConnState::new_and_publish(
+        let conn = match ConnState::new_and_publish(
             self.meta.config.clone(),
             self.meta.conn_limit.clone(),
             self.state_prefix.clone(),
@@ -520,7 +550,14 @@ impl StateData {
             r,
             maybe_offer,
             self.meta.snd_ident.clone(),
-        )?;
+        ) {
+            Err(err) => {
+                tracing::warn!(?err, "failed to create conn state");
+                return Ok(());
+            }
+            Ok(conn) => conn,
+        };
+
         self.conn_map
             .insert(rem_id, (conn, RmConn(self.evt.clone(), cli_url)));
 
@@ -537,7 +574,12 @@ impl StateData {
         cli_url: Tx5Url,
     ) -> Result<()> {
         if self.is_banned(rem_id) {
-            return Err(Error::id("Ban"));
+            tracing::warn!(
+                ?rem_id,
+                "Ignoring request to send data to banned remote"
+            );
+            return Ok(());
+            //return Err(Error::id("Ban"));
         }
 
         self.send_map
@@ -588,11 +630,18 @@ impl StateData {
         &mut self,
         resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
+        let this_id =
+            self.this_id.map(|id| id.to_string()).unwrap_or("".into());
         let conn_list = self
             .conn_map
             .iter()
             .map(|(id, (c, _))| (*id, c.clone()))
             .collect::<Vec<_>>();
+        let now = std::time::Instant::now();
+        let mut ban_map = serde_json::Map::new();
+        for (id, until) in self.ban_map.iter() {
+            ban_map.insert(id.to_string(), (*until - now).as_secs_f64().into());
+        }
         async move {
             let mut map = serde_json::Map::new();
 
@@ -602,6 +651,8 @@ impl StateData {
             const BACKEND: &str = "webrtc-rs";
 
             map.insert("backend".into(), BACKEND.into());
+            map.insert("thisId".into(), this_id.into());
+            map.insert("banned".into(), ban_map.into());
 
             for (id, conn) in conn_list {
                 if let Some(conn) = conn.upgrade() {
@@ -610,7 +661,9 @@ impl StateData {
                     }
                 }
             }
+
             let _ = resp.send(Ok(map.into()));
+
             Ok(())
         }
     }
@@ -698,7 +751,10 @@ impl StateData {
                         return Ok(());
                     }
                     std::cmp::Ordering::Equal => {
-                        return Err(Error::err("Invalid incoming webrtc offer with id matching our local id. Please don't share lair connections"));
+                        tracing::warn!("Invalid incoming webrtc offer with id matching our local id. Please don't share lair connections");
+                        self.conn_map.remove(&rem_id);
+                        return Ok(());
+                        //return Err(Error::err("Invalid incoming webrtc offer with id matching our local id. Please don't share lair connections"));
                     }
                 }
             } else {
@@ -787,6 +843,11 @@ impl StateData {
 
 enum StateCmd {
     Tick1s,
+    TrackSig {
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize,
+    },
     SndDemo,
     ListConnected(tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>),
     AssertListenerSig {
@@ -1078,6 +1139,10 @@ impl State {
 
                 tracing::trace!(%msg_uniq, %len, "snd_data");
 
+                if meta.snd_limit.available_permits() < len {
+                    tracing::warn!(%msg_uniq, %len, "send queue full, waiting for permits");
+                }
+
                 let send_permit = meta
                     .snd_limit
                     .clone()
@@ -1147,6 +1212,10 @@ impl State {
 
     fn tick_1s(&self) -> Result<()> {
         self.0.send(Ok(StateCmd::Tick1s))
+    }
+
+    pub(crate) fn track_sig(&self, rem_id: Id, ty: &'static str, bytes: usize) {
+        let _ = self.0.send(Ok(StateCmd::TrackSig { rem_id, ty, bytes }));
     }
 
     pub(crate) fn publish(&self, evt: StateEvt) {

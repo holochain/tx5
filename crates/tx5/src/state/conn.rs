@@ -508,7 +508,7 @@ impl ConnStateData {
 
     // if we have both sent OUR preflight, AND received the REMOTE preflight
     // notify that this connection is ready to go.
-    fn check_ready(&self) {
+    async fn check_ready(&mut self) {
         if !self.meta.connected.load(atomic::Ordering::SeqCst) {
             return;
         }
@@ -517,9 +517,7 @@ impl ConnStateData {
             return;
         }
 
-        if let Some(state) = self.state.upgrade() {
-            state.conn_ready(self.meta.cli_url.clone());
-        }
+        let _ = self.maybe_fetch_for_send().await;
     }
 
     async fn ready(&mut self) -> Result<()> {
@@ -536,8 +534,8 @@ impl ConnStateData {
         }
 
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
-        self.check_ready();
-        self.maybe_fetch_for_send().await
+        self.check_ready().await;
+        Ok(())
     }
 
     async fn maybe_fetch_for_send(&mut self) -> Result<()> {
@@ -588,14 +586,46 @@ impl ConnStateData {
         Ok(())
     }
 
+    async fn handle_recv_data(
+        &mut self,
+        mut bl: BytesList,
+        permit: Vec<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<()> {
+        use bytes::Buf;
+
+        if let Some(state) = self.state.upgrade() {
+            if self.wait_preflight {
+                let bytes = if bl.has_remaining() {
+                    Some(bl.copy_to_bytes(bl.remaining()))
+                } else {
+                    None
+                };
+                self.meta
+                    .config
+                    .on_conn_validate(self.meta.cli_url.clone(), bytes)
+                    .await?;
+                self.wait_preflight = false;
+
+                state.conn_ready(self.meta.cli_url.clone());
+
+                self.check_ready().await;
+            } else {
+                state.publish(StateEvt::RcvData(
+                    self.meta.cli_url.clone(),
+                    bl.into_dyn(),
+                    vec![Permit(permit)],
+                ));
+            }
+        }
+        Ok(())
+    }
+
     async fn recv(
         &mut self,
         ident: u64,
         data: bytes::Bytes,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<()> {
-        use bytes::Buf;
-
         let len = data.len();
         self.meta.metric_last_active.reset();
 
@@ -609,34 +639,11 @@ impl ConnStateData {
                 if data.is_empty() || is_finish {
                     tracing::trace!(%is_finish, %ident, "rcv already finished");
                     // special case for oneshot message
-                    if let Some(state) = self.state.upgrade() {
-                        let mut bl = BytesList::new();
-                        if !data.is_empty() {
-                            bl.push(data);
-                        }
-                        if self.wait_preflight {
-                            let bytes = if bl.has_remaining() {
-                                Some(bl.copy_to_bytes(bl.remaining()))
-                            } else {
-                                None
-                            };
-                            self.meta
-                                .config
-                                .on_conn_validate(
-                                    self.meta.cli_url.clone(),
-                                    bytes,
-                                )
-                                .await?;
-                            self.wait_preflight = false;
-                            self.check_ready();
-                        } else {
-                            state.publish(StateEvt::RcvData(
-                                self.meta.cli_url.clone(),
-                                bl.into_dyn(),
-                                vec![Permit(vec![permit])],
-                            ));
-                        }
+                    let mut bl = BytesList::new();
+                    if !data.is_empty() {
+                        bl.push(data);
                     }
+                    self.handle_recv_data(bl, vec![permit]).await?;
                 } else {
                     tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv new");
                     let mut bl = BytesList::new();
@@ -652,30 +659,7 @@ impl ConnStateData {
                     if !data.is_empty() {
                         bl.push(data);
                     }
-                    if let Some(state) = self.state.upgrade() {
-                        if self.wait_preflight {
-                            let bytes = if bl.has_remaining() {
-                                Some(bl.copy_to_bytes(bl.remaining()))
-                            } else {
-                                None
-                            };
-                            self.meta
-                                .config
-                                .on_conn_validate(
-                                    self.meta.cli_url.clone(),
-                                    bytes,
-                                )
-                                .await?;
-                            self.wait_preflight = false;
-                            self.check_ready();
-                        } else {
-                            state.publish(StateEvt::RcvData(
-                                self.meta.cli_url.clone(),
-                                bl.into_dyn(),
-                                vec![Permit(permit)],
-                            ));
-                        }
-                    }
+                    self.handle_recv_data(bl, permit).await?;
                 } else {
                     tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv next");
                     e.get_mut().0.push(data);

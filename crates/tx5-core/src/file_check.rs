@@ -71,6 +71,10 @@ pub fn file_check(
             tmp
         }
     } else {
+        // We could check again here to see if the perf_path is correct.
+        // Some other parallel process my have written it. Then delete
+        // our temp file, which would be a slightly better custodian
+        // of disk space.
         tmp
     };
 

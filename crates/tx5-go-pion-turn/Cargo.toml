@@ -25,7 +25,7 @@ once_cell = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = [ "process", "io-util" ] }
 tracing = { workspace = true }
-tx5-core = { workspace = true }
+tx5-core = { workspace = true, features = [ "file_check" ] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = [ "full" ] }

@@ -27,6 +27,9 @@ pub use uniq::*;
 mod url;
 pub use crate::url::*;
 
+#[cfg(feature = "file_check")]
+pub mod file_check;
+
 pub mod wire;
 
 /// Websocket configuration constants.

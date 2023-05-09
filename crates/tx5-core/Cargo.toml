@@ -16,4 +16,20 @@ once_cell = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = { workspace = true }
 url = { workspace = true }
+
+# file_check deps
+dirs = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = [ "full" ] }
+
+[features]
+default = [ "file_check" ]
+
+# A couple crates that depend on tx5-core need to be able to write/verify
+# files on system. Enable this `file_check` feature to provide that ability.
+file_check = [ "dirs", "sha2", "tempfile" ]

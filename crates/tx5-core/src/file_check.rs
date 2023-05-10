@@ -8,17 +8,9 @@ use crate::{Error, Result};
 pub struct FileCheck {
     path: std::path::PathBuf,
     _file: Option<std::fs::File>,
-    _tmp: Option<tempfile::NamedTempFile>,
 }
 
 impl FileCheck {
-    /// Close / Cleanup this FileCheck instance.
-    pub fn close(mut self) {
-        if let Some(tmp) = self._tmp.take() {
-            let _ = tmp.close();
-        }
-    }
-
     /// Get the path of the validated FileCheck file.
     pub fn path(&self) -> &std::path::Path {
         &self.path
@@ -42,51 +34,60 @@ pub fn file_check(
         return Ok(FileCheck {
             path: pref_path,
             _file: Some(file),
-            _tmp: None,
         });
     }
 
     let tmp = write(file_data)?;
 
-    let tmp = if std::fs::metadata(&pref_path).is_err() {
-        // NOTE: This is NOT atomic, the file may suddenly exist between system
-        //       calls. However, rust does not provide a rename that will not
-        //       overwrite the target, and since we're overwriting it with
-        //       theoretically valid data, let's just go with it for now.
-        if std::fs::rename(tmp.path(), &pref_path).is_ok() {
-            match validate(&pref_path, file_hash) {
-                Ok(file) => {
-                    return Ok(FileCheck {
-                        path: pref_path,
-                        _file: Some(file),
-                        _tmp: None,
-                    });
-                }
-                Err(_) => {
-                    // in the worst fallback, write another tmp file and use it
-                    write(file_data)?
-                }
-            }
-        } else {
-            tmp
+    // NOTE: This is NOT atomic, nor secure, but being able to validate the
+    //       file hash post-op mitigates this a bit. And we can let the os
+    //       clean up a dangling tmp file if it failed to unlink.
+    match tmp.persist_noclobber(&pref_path) {
+        Ok(mut file) => {
+            set_perms(&mut file)?;
+
+            drop(file);
+
+            let file = validate(&pref_path, file_hash)?;
+
+            Ok(FileCheck {
+                path: pref_path,
+                _file: Some(file),
+            })
         }
-    } else {
-        // We could check again here to see if the perf_path is correct.
-        // Some other parallel process my have written it. Then delete
-        // our temp file, which would be a slightly better custodian
-        // of disk space.
-        tmp
-    };
+        Err(err) => {
+            let tempfile::PersistError { file: tmp, .. } = err;
 
-    if let Ok(file) = validate(tmp.path(), file_hash) {
-        return Ok(FileCheck {
-            path: tmp.path().into(),
-            _file: Some(file),
-            _tmp: Some(tmp),
-        });
+            // First, check to see if a different process wrote correctly
+            if let Ok(file) = validate(&pref_path, file_hash) {
+                // we no longer need the tmp file, clean it up
+                let _ = tmp.close();
+
+                return Ok(FileCheck {
+                    path: pref_path,
+                    _file: Some(file),
+                });
+            }
+
+            // we're just going to use the tmp file, do what we need to
+            // do to make sure it isn't deleted when the handle drops.
+
+            let path = tmp.path().to_owned();
+            let tmp = tmp.into_temp_path();
+
+            // This seems wrong, but it is how tempfile internally goes
+            // about doing persist/keep, so we're using it already,
+            // and it's only once-ish per process...
+            std::mem::forget(tmp);
+
+            let file = validate(&path, file_hash)?;
+
+            Ok(FileCheck {
+                path,
+                _file: Some(file),
+            })
+        }
     }
-
-    Err(Error::id("CouldNotWriteValidFile"))
 }
 
 /// Validate a file.
@@ -131,15 +132,20 @@ fn write(file_data: &[u8]) -> Result<tempfile::NamedTempFile> {
     tmp.as_file_mut().write_all(file_data)?;
     tmp.as_file_mut().flush()?;
 
-    let mut perms = tmp.as_file().metadata()?.permissions();
+    set_perms(tmp.as_file_mut())?;
+
+    Ok(tmp)
+}
+
+/// Set file permissions.
+fn set_perms(file: &mut std::fs::File) -> Result<()> {
+    let mut perms = file.metadata()?.permissions();
 
     perms.set_readonly(true);
     #[cfg(unix)]
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
 
-    tmp.as_file_mut().set_permissions(perms)?;
-
-    Ok(tmp)
+    file.set_permissions(perms)
 }
 
 #[cfg(test)]
@@ -191,7 +197,7 @@ mod tests {
         // cleanup
         for tmp in tmp {
             let path = tmp.path().to_owned();
-            tmp.close();
+            drop(tmp);
             let _ = std::fs::remove_file(&path);
         }
     }

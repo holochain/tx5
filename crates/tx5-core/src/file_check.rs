@@ -43,8 +43,11 @@ pub fn file_check(
     //       file hash post-op mitigates this a bit. And we can let the os
     //       clean up a dangling tmp file if it failed to unlink.
     match tmp.persist_noclobber(&pref_path) {
-        Ok(file) => {
+        Ok(mut file) => {
+            set_perms(&mut file)?;
+
             drop(file);
+
             let file = validate(&pref_path, file_hash)?;
 
             Ok(FileCheck {
@@ -129,15 +132,20 @@ fn write(file_data: &[u8]) -> Result<tempfile::NamedTempFile> {
     tmp.as_file_mut().write_all(file_data)?;
     tmp.as_file_mut().flush()?;
 
-    let mut perms = tmp.as_file().metadata()?.permissions();
+    set_perms(tmp.as_file_mut())?;
+
+    Ok(tmp)
+}
+
+/// Set file permissions.
+fn set_perms(file: &mut std::fs::File) -> Result<()> {
+    let mut perms = file.metadata()?.permissions();
 
     perms.set_readonly(true);
     #[cfg(unix)]
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
 
-    tmp.as_file_mut().set_permissions(perms)?;
-
-    Ok(tmp)
+    file.set_permissions(perms)
 }
 
 #[cfg(test)]

@@ -237,6 +237,26 @@ impl Drop for RmConn {
     }
 }
 
+struct SigInfo {
+    created_at_us: i64,
+    close_if_no_connections: bool,
+    state: SigStateWeak,
+}
+
+impl SigInfo {
+    pub fn new(close_if_no_connections: bool, state: SigStateWeak) -> Self {
+        let created_at_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("failed to get system time")
+            .as_micros() as i64;
+        Self {
+            created_at_us,
+            close_if_no_connections,
+            state,
+        }
+    }
+}
+
 struct StateData {
     state_uniq: Uniq,
     this_id: Option<Id>,
@@ -245,7 +265,7 @@ struct StateData {
     metrics: prometheus::Registry,
     meta: StateMeta,
     evt: StateEvtSnd,
-    signal_map: HashMap<Tx5Url, SigStateWeak>,
+    signal_map: HashMap<Tx5Url, SigInfo>,
     ban_map: HashMap<Id, std::time::Instant>,
     conn_map: HashMap<Id, (ConnStateWeak, RmConn)>,
     send_map: HashMap<Id, VecDeque<SendData>>,
@@ -266,7 +286,7 @@ impl StateData {
             .metrics
             .unregister(Box::new(self.meta.metric_conn_count.clone()));
         for (_, sig) in self.signal_map.drain() {
-            if let Some(sig) = sig.upgrade() {
+            if let Some(sig) = sig.state.upgrade() {
                 sig.close(err.err_clone());
             }
         }
@@ -293,7 +313,7 @@ impl StateData {
             StateCmd::SndDemo => self.snd_demo().await,
             StateCmd::ListConnected(resp) => self.list_connected(resp).await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
-                self.assert_listener_sig(sig_url, resp).await
+                self.assert_listener_sig(false, sig_url, resp).await
             }
             StateCmd::SendData {
                 msg_uniq,
@@ -445,7 +465,7 @@ impl StateData {
 
     async fn snd_demo(&mut self) -> Result<()> {
         for (_, sig) in self.signal_map.iter() {
-            if let Some(sig) = sig.upgrade() {
+            if let Some(sig) = sig.state.upgrade() {
                 sig.snd_demo();
             }
         }
@@ -468,6 +488,7 @@ impl StateData {
 
     async fn assert_listener_sig(
         &mut self,
+        close_if_no_connections: bool,
         sig_url: Tx5Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
     ) -> Result<()> {
@@ -484,16 +505,21 @@ impl StateData {
             sig
         };
         match self.signal_map.entry(sig_url.clone()) {
-            hash_map::Entry::Occupied(mut e) => match e.get().upgrade() {
-                Some(sig) => sig.push_assert_respond(resp).await,
-                None => {
-                    let sig = new_sig(resp);
-                    e.insert(sig.weak());
+            hash_map::Entry::Occupied(mut e) => {
+                if !close_if_no_connections {
+                    e.get_mut().close_if_no_connections = false;
+                }
+                match e.get().state.upgrade() {
+                    Some(sig) => sig.push_assert_respond(resp).await,
+                    None => {
+                        let sig = new_sig(resp);
+                        e.insert(SigInfo::new(close_if_no_connections, sig.weak()));
+                    }
                 }
             },
             hash_map::Entry::Vacant(e) => {
                 let sig = new_sig(resp);
-                e.insert(sig.weak());
+                e.insert(SigInfo::new(close_if_no_connections, sig.weak()));
             }
         }
         Ok(())
@@ -522,12 +548,12 @@ impl StateData {
         }
 
         let (s, r) = tokio::sync::oneshot::channel();
-        if let Err(err) = self.assert_listener_sig(sig_url.clone(), s).await {
+        if let Err(err) = self.assert_listener_sig(true, sig_url.clone(), s).await {
             tracing::warn!(?err, "failed to assert signal listener");
             return Ok(());
         }
 
-        let sig = self.signal_map.get(&sig_url).unwrap().clone();
+        let sig = self.signal_map.get(&sig_url).unwrap().state.clone();
 
         let conn_uniq = self.state_uniq.sub();
 
@@ -642,9 +668,15 @@ impl StateData {
         for (id, until) in self.ban_map.iter() {
             ban_map.insert(id.to_string(), (*until - now).as_secs_f64().into());
         }
-        async move {
-            let mut map = serde_json::Map::new();
+        let mut map = serde_json::Map::new();
+        for (url, sig_info) in self.signal_map.iter() {
+            map.insert(format!("SignalConnection-{}", sig_info.created_at_us), serde_json::json!({
+                "url": url.to_string(),
+                "closeIfNoConnections": sig_info.close_if_no_connections,
+            }));
+        }
 
+        async move {
             #[cfg(feature = "backend-go-pion")]
             const BACKEND: &str = "go-pion";
             #[cfg(feature = "backend-webrtc-rs")]
@@ -805,7 +837,7 @@ impl StateData {
         err: std::io::Error,
     ) -> Result<()> {
         if let Some(cur_sig) = self.signal_map.remove(&sig_url) {
-            if cur_sig == sig {
+            if cur_sig.state == sig {
                 if let Some(sig) = sig.upgrade() {
                     sig.close(err);
                 }

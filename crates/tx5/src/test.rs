@@ -77,6 +77,76 @@ async fn endpoint_sanity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn multi_sig_out() {
+    init_tracing();
+
+    let mut srv1_config = tx5_signal_srv::Config::default();
+    srv1_config.port = 0;
+    srv1_config.demo = true;
+
+    let (srv1_driver, addr1_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv1_config).unwrap();
+    tokio::task::spawn(srv1_driver);
+
+    let sig1_port = addr1_list.get(0).unwrap().port();
+
+    let mut srv2_config = tx5_signal_srv::Config::default();
+    srv2_config.port = 0;
+    srv2_config.demo = true;
+
+    let (srv2_driver, addr2_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv2_config).unwrap();
+    tokio::task::spawn(srv2_driver);
+
+    let sig2_port = addr2_list.get(0).unwrap().port();
+
+    let sig1_url =
+        Tx5Url::new(format!("ws://localhost:{}", sig1_port)).unwrap();
+    println!("sig1_url: {}", sig1_url);
+
+    let sig2_url =
+        Tx5Url::new(format!("ws://localhost:{}", sig2_port)).unwrap();
+    println!("sig2_url: {}", sig2_url);
+
+    let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
+
+    let cli_url1 = ep1.listen(sig1_url.clone()).await.unwrap();
+
+    println!("cli_url1: {}", cli_url1);
+
+    let (ep2, mut ep_rcv2) = Ep::new().await.unwrap();
+
+    let cli_url2 = ep2.listen(sig2_url).await.unwrap();
+
+    println!("cli_url2: {}", cli_url2);
+
+    ep1.send(cli_url2.clone(), &b"hello"[..]).await.unwrap();
+
+    match ep_rcv2.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    let recv = ep_rcv2.recv().await;
+
+    match recv {
+        Some(Ok(EpEvt::Data { data, .. })) => {
+            assert_eq!(b"hello", data.to_vec().unwrap().as_slice());
+        }
+        oth => panic!("unexpected {:?}", oth),
+    }
+
+    //ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_secs(42));
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&ep1.get_stats().await.unwrap()).unwrap()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn preflight_small() {
     init_tracing();
 

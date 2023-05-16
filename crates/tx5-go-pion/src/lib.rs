@@ -98,6 +98,7 @@ mod tests {
             let res_send = res_send.clone();
             let cmd_send_2 = cmd_send_2.clone();
             let ice1 = ice1.clone();
+            let ice2 = ice2.clone();
             tokio::task::spawn(async move {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
@@ -112,7 +113,7 @@ mod tests {
                                     &candidate.to_vec().unwrap()
                                 )
                             );
-                            ice1.lock().push(candidate.mut_clone());
+                            ice1.lock().push(candidate.mut_clone().unwrap());
                             // ok if these are lost during test shutdown
                             let _ = cmd_send_2.send(Cmd::ICE(candidate));
                         }
@@ -155,6 +156,10 @@ mod tests {
                                 )
                             );
                             peer1.set_remote_description(answer).await.unwrap();
+                            let ice = ice2.lock().drain(..).collect::<Vec<_>>();
+                            for ice in ice {
+                                let _ = peer1.add_ice_candidate(ice).await;
+                            }
                         }
                         Cmd::Stats(rsp) => {
                             let _ = rsp.send(peer1.stats().await.unwrap());
@@ -171,6 +176,7 @@ mod tests {
             let config = config.clone();
             let res_send = res_send.clone();
             let cmd_send_1 = cmd_send_1.clone();
+            let ice1 = ice1.clone();
             let ice2 = ice2.clone();
             tokio::task::spawn(async move {
                 let mut peer2 = {
@@ -186,7 +192,7 @@ mod tests {
                                     &candidate.to_vec().unwrap()
                                 )
                             );
-                            ice2.lock().push(candidate.mut_clone());
+                            ice2.lock().push(candidate.mut_clone().unwrap());
                             // ok if these are lost during test shutdown
                             let _ = cmd_send_1.send(Cmd::ICE(candidate));
                         }
@@ -225,6 +231,10 @@ mod tests {
                                 .unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
                             println!("peer2 answer complete");
+                            let ice = ice1.lock().drain(..).collect::<Vec<_>>();
+                            for ice in ice {
+                                let _ = peer2.add_ice_candidate(ice).await;
+                            }
                         }
                         Cmd::Stats(rsp) => {
                             let _ = rsp.send(peer2.stats().await.unwrap());

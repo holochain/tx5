@@ -229,14 +229,6 @@ struct IceData {
     ice: BackBuf,
 }
 
-struct RmConn(StateEvtSnd, Tx5Url);
-
-impl Drop for RmConn {
-    fn drop(&mut self) {
-        let _ = self.0.publish(StateEvt::Disconnected(self.1.clone()));
-    }
-}
-
 struct SigInfo {
     created_at_us: i64,
     close_if_no_connections: bool,
@@ -257,6 +249,20 @@ impl SigInfo {
     }
 }
 
+struct ConnInfo {
+    state: ConnStateWeak,
+    evt_snd: StateEvtSnd,
+    cli_url: Tx5Url,
+}
+
+impl Drop for ConnInfo {
+    fn drop(&mut self) {
+        let _ = self
+            .evt_snd
+            .publish(StateEvt::Disconnected(self.cli_url.clone()));
+    }
+}
+
 struct StateData {
     state_uniq: Uniq,
     this_id: Option<Id>,
@@ -267,7 +273,7 @@ struct StateData {
     evt: StateEvtSnd,
     signal_map: HashMap<Tx5Url, SigInfo>,
     ban_map: HashMap<Id, std::time::Instant>,
-    conn_map: HashMap<Id, (ConnStateWeak, RmConn)>,
+    conn_map: HashMap<Id, ConnInfo>,
     send_map: HashMap<Id, VecDeque<SendData>>,
     ice_cache: HashMap<Id, VecDeque<IceData>>,
     recv_limit: Arc<tokio::sync::Semaphore>,
@@ -290,8 +296,8 @@ impl StateData {
                 sig.close(err.err_clone());
             }
         }
-        for (_, (conn, _)) in self.conn_map.drain() {
-            if let Some(conn) = conn.upgrade() {
+        for (_, conn) in self.conn_map.drain() {
+            if let Some(conn) = conn.state.upgrade() {
                 conn.close(err.err_clone());
             }
         }
@@ -397,8 +403,8 @@ impl StateData {
         let mut tot_age = 0.0;
         let mut age_cnt = 0.0;
 
-        for (_, (conn, _)) in self.conn_map.iter() {
-            let meta = conn.meta();
+        for (_, conn) in self.conn_map.iter() {
+            let meta = conn.state.meta();
             tot_snd_bytes += meta.metric_bytes_snd.get();
             tot_rcv_bytes += meta.metric_bytes_rcv.get();
             tot_age += meta.metric_age.elapsed().as_secs_f64();
@@ -411,8 +417,8 @@ impl StateData {
             0.0
         };
 
-        self.conn_map.retain(|_, (conn, _)| {
-            let meta = conn.meta();
+        self.conn_map.retain(|_, conn| {
+            let meta = conn.state.meta();
 
             let args = drop_consider::DropConsiderArgs {
                 conn_uniq: meta.conn_uniq.clone(),
@@ -437,13 +443,26 @@ impl StateData {
             if let drop_consider::DropConsiderResult::MustDrop =
                 drop_consider::drop_consider(&args)
             {
-                if let Some(conn) = conn.upgrade() {
+                if let Some(conn) = conn.state.upgrade() {
                     conn.close(Error::id("DropContention"));
                 }
                 return false;
             }
 
             true
+        });
+
+        self.signal_map.retain(|sig_url, sig_info| {
+            if !sig_info.close_if_no_connections {
+                return true;
+            }
+
+            for (_, conn_info) in self.conn_map.iter() {
+                if &conn_info.cli_url.to_server() == sig_url {
+                    return true;
+                }
+            }
+            false
         });
 
         Ok(())
@@ -455,8 +474,8 @@ impl StateData {
         ty: &'static str,
         bytes: usize,
     ) -> Result<()> {
-        if let Some((conn, _)) = self.conn_map.get(&rem_id) {
-            if let Some(conn) = conn.upgrade() {
+        if let Some(conn) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = conn.state.upgrade() {
                 conn.track_sig(ty, bytes);
             }
         }
@@ -478,9 +497,9 @@ impl StateData {
         resp: tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>,
     ) -> Result<()> {
         let mut urls = Vec::new();
-        for (_, (con, _)) in self.conn_map.iter() {
-            if let Some(con) = con.upgrade() {
-                urls.push(con.rem_url());
+        for (_, conn) in self.conn_map.iter() {
+            if let Some(conn) = conn.state.upgrade() {
+                urls.push(conn.rem_url());
             }
         }
         resp.send(Ok(urls)).map_err(|_| Error::id("Closed"))
@@ -513,10 +532,13 @@ impl StateData {
                     Some(sig) => sig.push_assert_respond(resp).await,
                     None => {
                         let sig = new_sig(resp);
-                        e.insert(SigInfo::new(close_if_no_connections, sig.weak()));
+                        e.insert(SigInfo::new(
+                            close_if_no_connections,
+                            sig.weak(),
+                        ));
                     }
                 }
-            },
+            }
             hash_map::Entry::Vacant(e) => {
                 let sig = new_sig(resp);
                 e.insert(SigInfo::new(close_if_no_connections, sig.weak()));
@@ -548,7 +570,9 @@ impl StateData {
         }
 
         let (s, r) = tokio::sync::oneshot::channel();
-        if let Err(err) = self.assert_listener_sig(true, sig_url.clone(), s).await {
+        if let Err(err) =
+            self.assert_listener_sig(true, sig_url.clone(), s).await
+        {
             tracing::warn!(?err, "failed to assert signal listener");
             return Ok(());
         }
@@ -584,8 +608,14 @@ impl StateData {
             Ok(conn) => conn,
         };
 
-        self.conn_map
-            .insert(rem_id, (conn, RmConn(self.evt.clone(), cli_url)));
+        self.conn_map.insert(
+            rem_id,
+            ConnInfo {
+                state: conn,
+                evt_snd: self.evt.clone(),
+                cli_url,
+            },
+        );
 
         Ok(())
     }
@@ -621,8 +651,8 @@ impl StateData {
 
         let rem_id = cli_url.id().unwrap();
 
-        if let Some((e, _)) = self.conn_map.get(&rem_id) {
-            if let Some(conn) = e.upgrade() {
+        if let Some(conn) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = conn.state.upgrade() {
                 conn.notify_send_waiting().await;
                 return Ok(());
             } else {
@@ -644,8 +674,8 @@ impl StateData {
         self.ban_map.insert(rem_id, expires_at);
         self.send_map.remove(&rem_id);
         self.ice_cache.remove(&rem_id);
-        if let Some((conn, _)) = self.conn_map.remove(&rem_id) {
-            if let Some(conn) = conn.upgrade() {
+        if let Some(conn) = self.conn_map.remove(&rem_id) {
+            if let Some(conn) = conn.state.upgrade() {
                 conn.close(Error::id("Ban"));
             }
         }
@@ -661,7 +691,7 @@ impl StateData {
         let conn_list = self
             .conn_map
             .iter()
-            .map(|(id, (c, _))| (*id, c.clone()))
+            .map(|(id, c)| (*id, c.state.clone()))
             .collect::<Vec<_>>();
         let now = std::time::Instant::now();
         let mut ban_map = serde_json::Map::new();
@@ -670,10 +700,13 @@ impl StateData {
         }
         let mut map = serde_json::Map::new();
         for (url, sig_info) in self.signal_map.iter() {
-            map.insert(format!("SignalConnection-{}", sig_info.created_at_us), serde_json::json!({
-                "url": url.to_string(),
-                "closeIfNoConnections": sig_info.close_if_no_connections,
-            }));
+            map.insert(
+                format!("SignalConnection-{}", sig_info.created_at_us),
+                serde_json::json!({
+                    "url": url.to_string(),
+                    "closeIfNoConnections": sig_info.close_if_no_connections,
+                }),
+            );
         }
 
         async move {
@@ -725,11 +758,11 @@ impl StateData {
     ) -> Result<()> {
         let conn = match self.conn_map.get(&rem_id) {
             None => return Ok(()),
-            Some((cur_conn, _)) => {
-                if cur_conn != &want_conn {
+            Some(cur_conn) => {
+                if cur_conn.state != want_conn {
                     return Ok(());
                 }
-                match cur_conn.upgrade() {
+                match cur_conn.state.upgrade() {
                     None => return Ok(()),
                     Some(conn) => conn,
                 }
@@ -752,8 +785,8 @@ impl StateData {
         rem_id: Id,
         offer: BackBuf,
     ) -> Result<()> {
-        if let Some((e, _)) = self.conn_map.get(&rem_id) {
-            if let Some(conn) = e.upgrade() {
+        if let Some(conn) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = conn.state.upgrade() {
                 // we seem to have a valid conn here... but
                 // we're receiving an incoming offer:
                 // activate PERFECT NEGOTIATION
@@ -818,8 +851,8 @@ impl StateData {
             ice_cache,
             ..
         } = self;
-        if let Some((conn, _)) = conn_map.get(&rem_id) {
-            if let Some(conn) = conn.upgrade() {
+        if let Some(conn) = conn_map.get(&rem_id) {
+            if let Some(conn) = conn.state.upgrade() {
                 if let Some(list) = ice_cache.get_mut(&rem_id) {
                     for ice_data in list.iter_mut() {
                         conn.in_ice(ice_data.ice.try_clone()?, false);
@@ -859,14 +892,14 @@ impl StateData {
         conn: ConnStateWeak,
         err: std::io::Error,
     ) -> Result<()> {
-        if let Some((cur_conn, rm)) = self.conn_map.remove(&rem_id) {
-            if cur_conn == conn {
+        if let Some(cur_conn) = self.conn_map.remove(&rem_id) {
+            if cur_conn.state == conn {
                 if let Some(conn) = conn.upgrade() {
                     conn.close(err);
                 }
             } else {
                 // Whoops!
-                self.conn_map.insert(rem_id, (cur_conn, rm));
+                self.conn_map.insert(rem_id, cur_conn);
             }
         }
         Ok(())

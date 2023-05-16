@@ -136,14 +136,27 @@ async fn multi_sig_out() {
         oth => panic!("unexpected {:?}", oth),
     }
 
-    //ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_secs(42));
+    async fn sig_count(ep: &Ep) -> usize {
+        let stats = ep.get_stats().await.unwrap();
+        let stats = stats.as_object().unwrap();
+        let mut count = 0;
+        for (k, _) in stats {
+            if k.starts_with("SignalConnection-") {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    assert_eq!(2, sig_count(&ep1).await);
+    assert_eq!(1, sig_count(&ep2).await);
+
+    ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_secs(42));
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&ep1.get_stats().await.unwrap()).unwrap()
-    );
+    assert_eq!(1, sig_count(&ep1).await);
+    assert_eq!(1, sig_count(&ep2).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]

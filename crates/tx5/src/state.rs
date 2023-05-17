@@ -265,7 +265,7 @@ impl Drop for ConnInfo {
 
 struct StateData {
     state_uniq: Uniq,
-    this_id: Option<Id>,
+    this_id: Id,
     this: StateWeak,
     state_prefix: Arc<str>,
     metrics: prometheus::Registry,
@@ -593,7 +593,7 @@ impl StateData {
             self.this.clone(),
             sig,
             conn_uniq,
-            self.this_id.unwrap(),
+            self.this_id,
             cli_url.clone(),
             rem_id,
             self.recv_limit.clone(),
@@ -686,8 +686,7 @@ impl StateData {
         &mut self,
         resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
-        let this_id =
-            self.this_id.map(|id| id.to_string()).unwrap_or("".into());
+        let this_id = self.this_id.to_string();
         let conn_list = self
             .conn_map
             .iter()
@@ -740,12 +739,8 @@ impl StateData {
 
     async fn sig_connected(&mut self, cli_url: Tx5Url) -> Result<()> {
         let loc_id = cli_url.id().unwrap();
-        if let Some(this_id) = &self.this_id {
-            if this_id != &loc_id {
-                return Err(Error::err("MISMATCH LOCAL ID, please use the same lair instance for every sig connection"));
-            }
-        } else {
-            self.this_id = Some(loc_id);
+        if loc_id != self.this_id {
+            return Err(Error::err("MISMATCH LOCAL ID, please use the same lair instance for every sig connection"));
         }
         let _ = self.evt.publish(StateEvt::Address(cli_url));
         Ok(())
@@ -792,11 +787,7 @@ impl StateData {
                 // activate PERFECT NEGOTIATION
                 // (https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation)
 
-                if self.this_id.is_none() {
-                    return Err(Error::err("Somehow we ended up receiving a webrtc offer before establishing a signal connection... this should be impossible"));
-                }
-
-                match self.this_id.as_ref().unwrap().cmp(&rem_id) {
+                match self.this_id.cmp(&rem_id) {
                     std::cmp::Ordering::Less => {
                         //println!("OFFER_CONFLICT:BEING_POLITE");
 
@@ -977,6 +968,7 @@ enum StateCmd {
 async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
     state_uniq: Uniq,
+    this_id: Id,
     this: StateWeak,
     state_prefix: Arc<str>,
     metrics: prometheus::Registry,
@@ -986,7 +978,7 @@ async fn state_task(
 ) -> Result<()> {
     let mut data = StateData {
         state_uniq,
-        this_id: None,
+        this_id,
         this,
         state_prefix,
         metrics,
@@ -1049,7 +1041,10 @@ impl Eq for State {}
 
 impl State {
     /// Construct a new state instance.
-    pub fn new(config: DynConfig) -> Result<(Self, ManyRcv<StateEvt>)> {
+    pub fn new(
+        config: DynConfig,
+        this_id: Id,
+    ) -> Result<(Self, ManyRcv<StateEvt>)> {
         let metrics = config.metrics().clone();
 
         let conn_limit = Arc::new(tokio::sync::Semaphore::new(
@@ -1093,6 +1088,7 @@ impl State {
                 state_task(
                     rcv,
                     state_uniq,
+                    this_id,
                     StateWeak(this, meta.clone()),
                     state_prefix,
                     metrics,

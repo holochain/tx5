@@ -93,7 +93,23 @@ impl Ep {
         let (ep_snd, ep_rcv) = tokio::sync::mpsc::unbounded_channel();
 
         let config = into_config.into_config().await?;
-        let (state, mut state_evt) = state::State::new(config.clone())?;
+
+        let this_id = match config
+            .lair_client()
+            .get_entry(config.lair_tag().clone())
+            .await
+        {
+            Ok(
+                crate::deps::lair_keystore_api::prelude::LairEntryInfo::Seed {
+                    tag: _,
+                    seed_info,
+                },
+            ) => Id::from_slice(&*seed_info.x25519_pub_key.0)?,
+            _ => return Err(Error::err("lair_tag invalid seed")),
+        };
+
+        let (state, mut state_evt) =
+            state::State::new(config.clone(), this_id)?;
         tokio::task::spawn(async move {
             while let Some(evt) = state_evt.recv().await {
                 match evt {

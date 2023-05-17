@@ -48,7 +48,11 @@ impl Test {
         let id_b = cli_b.id().unwrap();
 
         let config = DefConfig::default().into_config().await.unwrap();
-        let (state, mut state_evt) = State::new(config).unwrap();
+        let (state, mut state_evt) = if as_a {
+            State::new(config, id_a).unwrap()
+        } else {
+            State::new(config, id_b).unwrap()
+        };
 
         // -- register with a signal server -- //
 

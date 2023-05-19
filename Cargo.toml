@@ -56,5 +56,6 @@ tx5-signal = { version = "0.0.1-alpha.9", path = "crates/tx5-signal" }
 tx5 = { version = "0.0.1-alpha.16", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
 warp = { version = "0.3.4", features = [ "websocket" ] }
+webpki-roots = { version = "0.23.0" }
 webrtc = { version = "0.7.1" }
 zip = { version = "0.6.4", default-features = false, features = [ "deflate" ] }

@@ -13,7 +13,7 @@ type Socket = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
 
-const PROTO_VER: &str = "v1";
+const PROTO_VER: &str = "v2";
 
 /// Incoming signal message from a remote node.
 #[derive(Debug)]
@@ -153,11 +153,12 @@ type Respond = tokio::sync::oneshot::Sender<Result<()>>;
 type WriteSend = tokio::sync::mpsc::Sender<(Message, Respond)>;
 type WriteRecv = tokio::sync::mpsc::Receiver<(Message, Respond)>;
 
-struct Seq(atomic::AtomicU64);
+#[derive(Clone)]
+struct Seq(Arc<atomic::AtomicU64>);
 
 impl Seq {
-    pub const fn new() -> Self {
-        Self(atomic::AtomicU64::new(0))
+    pub fn new() -> Self {
+        Self(Arc::new(atomic::AtomicU64::new(0)))
     }
 
     pub fn get(&self) -> f64 {
@@ -273,6 +274,48 @@ mod test {
     }
 }
 
+struct PingReg(std::collections::HashMap<i64, Option<tokio::sync::oneshot::Sender<Result<i64>>>>);
+
+fn now() -> i64 {
+    std::time::SystemTime::UNIX_EPOCH.elapsed().unwrap().as_micros() as i64
+}
+
+impl PingReg {
+    pub fn new() -> Self {
+        Self(std::collections::HashMap::new())
+    }
+
+    pub fn prune(&mut self) {
+        let older_than = now() - (1000 * 1000 * 60);
+        self.0.retain(|k, v| {
+            if *k < older_than {
+                if let Some(v) = v.take() {
+                    let _ = v.send(Err(Error::id("Timeout")));
+                }
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    pub fn register(&mut self) -> (i64, tokio::sync::oneshot::Receiver<Result<i64>>) {
+        let mut ts = now();
+        while self.0.contains_key(&ts) {
+            ts += 1;
+        }
+        let (s, r) = tokio::sync::oneshot::channel();
+        self.0.insert(ts, Some(s));
+        (ts, r)
+    }
+
+    pub fn resolve(&mut self, pong: i64) {
+        if let Some(Some(v)) = self.0.remove(&pong) {
+            let _ = v.send(Ok(now() - pong));
+        }
+    }
+}
+
 /// Tx5-signal client connection type.
 pub struct Cli {
     addr: url::Url,
@@ -283,6 +326,7 @@ pub struct Cli {
     _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     x25519_pub: Id,
+    ping_reg: Arc<Mutex<PingReg>>,
 }
 
 impl Drop for Cli {
@@ -305,8 +349,8 @@ impl Cli {
     }
 
     /// Get the id (x25519 public key) that this local node is identified by.
-    pub fn local_id(&self) -> &Id {
-        &self.x25519_pub
+    pub fn local_id(&self) -> Id {
+        self.x25519_pub
     }
 
     /// Get the addr this cli can be reached at through the signal server.
@@ -364,6 +408,29 @@ impl Cli {
         )
     }
 
+    /// Send a ping to a remote node on the signal server.
+    pub fn ping(
+        &self,
+        rem_pub: Id,
+    ) -> impl Future<Output = Result<i64>> + 'static + Send {
+        let (usec, rcv) = {
+            let mut l = self.ping_reg.lock();
+            l.prune();
+            l.register()
+        };
+        let fut = self.priv_send(
+            rem_pub,
+            wire::FwdInnerV1::Ping {
+                seq: 0.0, // set in priv_send
+                usec,
+            },
+        );
+        async move {
+            fut.await?;
+            rcv.await.map_err(|_| Error::id("Closed"))?
+        }
+    }
+
     /// Send a demo broadcast to the signal server.
     /// Warning, if demo mode is not enabled on this server,
     /// this could result in a ban.
@@ -389,40 +456,16 @@ impl Cli {
     fn priv_send(
         &self,
         rem_pub: Id,
-        mut msg: wire::FwdInnerV1,
+        msg: wire::FwdInnerV1,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
-        msg.set_seq(self.seq.get());
-
-        let lair_client = self.lair_client.clone();
-        let x25519_pub = self.x25519_pub;
-        let write_send = self.write_send.clone();
-
-        async move {
-            let (nonce, cipher) = lair_client
-                .crypto_box_xsalsa_by_pub_key(
-                    x25519_pub.0.into(),
-                    rem_pub.0.into(),
-                    None,
-                    msg.encode()?.into(),
-                )
-                .await?;
-
-            let wire = wire::Wire::FwdV1 {
-                rem_pub,
-                nonce: nonce.into(),
-                cipher: cipher.to_vec().into_boxed_slice().into(),
-            }
-            .encode()?;
-
-            let (s, r) = tokio::sync::oneshot::channel();
-
-            write_send
-                .send((Message::binary(wire), s))
-                .await
-                .map_err(|_| Error::id("ClientClosed"))?;
-
-            r.await.map_err(|_| Error::id("ClientClosed"))?
-        }
+        priv_send(
+            &self.seq,
+            self.lair_client.clone(),
+            self.x25519_pub,
+            self.write_send.clone(),
+            rem_pub,
+            msg,
+        )
     }
 
     async fn priv_build(builder: CliBuilder) -> Result<Self> {
@@ -543,18 +586,23 @@ impl Cli {
 
         let (init_send, init_recv) = tokio::sync::oneshot::channel();
 
+        let seq = Seq::new();
+        let ping_reg = Arc::new(Mutex::new(PingReg::new()));
+
         hnd.push(tokio::task::spawn(con_task(
             use_tls,
             host.to_string(),
             con_url_versioned,
             endpoint,
             ice.clone(),
+            seq.clone(),
             recv_cb,
             x25519_pub,
             lair_client.clone(),
             write_send.clone(),
             write_recv,
             init_send,
+            ping_reg.clone(),
         )));
 
         let keep_alive = write_send.clone();
@@ -583,11 +631,50 @@ impl Cli {
             hnd,
             ice,
             write_send,
-            seq: Seq::new(),
+            seq,
             _lair_keystore: lair_keystore,
             lair_client,
             x25519_pub,
+            ping_reg,
         })
+    }
+}
+
+fn priv_send(
+    seq: &Seq,
+    lair_client: LairClient,
+    x25519_pub: Id,
+    write_send: WriteSend,
+    rem_pub: Id,
+    mut msg: wire::FwdInnerV1,
+) -> impl Future<Output = Result<()>> + 'static + Send {
+    msg.set_seq(seq.get());
+
+    async move {
+        let (nonce, cipher) = lair_client
+            .crypto_box_xsalsa_by_pub_key(
+                x25519_pub.0.into(),
+                rem_pub.0.into(),
+                None,
+                msg.encode()?.into(),
+            )
+            .await?;
+
+        let wire = wire::Wire::FwdV1 {
+            rem_pub,
+            nonce: nonce.into(),
+            cipher: cipher.to_vec().into_boxed_slice().into(),
+        }
+        .encode()?;
+
+        let (s, r) = tokio::sync::oneshot::channel();
+
+        write_send
+            .send((Message::binary(wire), s))
+            .await
+            .map_err(|_| Error::id("ClientClosed"))?;
+
+        r.await.map_err(|_| Error::id("ClientClosed"))?
     }
 }
 
@@ -598,12 +685,14 @@ async fn con_task(
     con_url: String,
     endpoint: String,
     ice: Arc<Mutex<Arc<serde_json::Value>>>,
+    seq: Seq,
     recv_cb: RecvCb,
     x25519_pub: Id,
     lair_client: LairClient,
     write_send: WriteSend,
     write_recv: WriteRecv,
     init: tokio::sync::oneshot::Sender<()>,
+    ping_reg: Arc<Mutex<PingReg>>,
 ) {
     let mut init = Some(init);
     let mut recv_cb = Some(recv_cb);
@@ -627,11 +716,13 @@ async fn con_task(
 
             let (a_recv_cb, a_write_recv) = con_manage_connection(
                 socket,
+                seq.clone(),
                 recv_cb.take().unwrap(),
                 x25519_pub,
                 &lair_client,
                 write_send.clone(),
                 write_recv.take().unwrap(),
+                ping_reg.clone(),
             )
             .await;
             recv_cb = Some(a_recv_cb);
@@ -831,11 +922,13 @@ async fn con_open_connection(
 
 async fn con_manage_connection(
     socket: Socket,
+    seq: Seq,
     recv_cb: RecvCb,
     x25519_pub: Id,
     lair_client: &LairClient,
     write_send: WriteSend,
     write_recv: WriteRecv,
+    ping_reg: Arc<Mutex<PingReg>>,
 ) -> (RecvCb, WriteRecv) {
     let recv_cb = Arc::new(tokio::sync::Mutex::new(recv_cb));
     let write_recv = Arc::new(tokio::sync::Mutex::new(write_recv));
@@ -884,6 +977,8 @@ async fn con_manage_connection(
                     }
                     wire::Wire::FwdV1 { rem_pub, nonce, cipher } => {
                         if let Err(err) = decode_fwd(
+                            &write_send,
+                            &seq,
                             &mut recv_cb,
                             &mut seq_track,
                             &x25519_pub,
@@ -891,6 +986,7 @@ async fn con_manage_connection(
                             rem_pub,
                             nonce,
                             cipher,
+                            &ping_reg,
                         ).await {
                             tracing::warn!(?err, "invalid incoming fwd");
 
@@ -931,6 +1027,8 @@ async fn con_manage_connection(
 }
 
 async fn decode_fwd(
+    write_send: &WriteSend,
+    seq: &Seq,
     recv_cb: &mut RecvCb,
     seq_track: &mut SeqTrack,
     x25519_pub: &Id,
@@ -938,6 +1036,7 @@ async fn decode_fwd(
     rem_pub: Id,
     nonce: wire::Nonce,
     cipher: wire::Cipher,
+    ping_reg: &Arc<Mutex<PingReg>>,
 ) -> Result<()> {
     let msg = lair_client
         .crypto_box_xsalsa_open_by_pub_key(
@@ -951,9 +1050,9 @@ async fn decode_fwd(
 
     let msg = wire::FwdInnerV1::decode(&msg)?;
 
-    let seq = msg.get_seq();
+    let rcv_seq = msg.get_seq();
 
-    if !seq_track.check(rem_pub, seq) {
+    if !seq_track.check(rem_pub, rcv_seq) {
         return Ok(());
     }
 
@@ -966,6 +1065,24 @@ async fn decode_fwd(
         }
         wire::FwdInnerV1::Ice { ice, .. } => {
             recv_cb(SignalMsg::Ice { rem_pub, ice });
+        }
+        wire::FwdInnerV1::Ping { usec, .. } => {
+            let _ = priv_send(
+                &seq,
+                lair_client.clone(),
+                *x25519_pub,
+                write_send.clone(),
+                rem_pub,
+                wire::FwdInnerV1::Pong {
+                    seq: 0.0, // set in priv_send
+                    usec,
+                },
+            ).await;
+        }
+        wire::FwdInnerV1::Pong { usec, .. } => {
+            let mut l = ping_reg.lock();
+            l.prune();
+            l.resolve(usec);
         }
     }
 

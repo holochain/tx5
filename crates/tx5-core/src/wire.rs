@@ -183,6 +183,26 @@ pub enum FwdInnerV1 {
         /// WebRTC ICE candidate.
         ice: serde_json::Value,
     },
+
+    /// Ping.
+    #[serde(rename_all = "camelCase")]
+    Ping {
+        /// Sequence.
+        seq: f64,
+
+        /// Unix epoch microseconds.
+        usec: i64,
+    },
+
+    /// Pong.
+    #[serde(rename_all = "camelCase")]
+    Pong {
+        /// Sequence.
+        seq: f64,
+
+        /// Unix epoch microseconds.
+        usec: i64,
+    },
 }
 
 impl FwdInnerV1 {
@@ -204,6 +224,8 @@ impl FwdInnerV1 {
             FwdInnerV1::Offer { seq, .. } => *seq = new_seq,
             FwdInnerV1::Answer { seq, .. } => *seq = new_seq,
             FwdInnerV1::Ice { seq, .. } => *seq = new_seq,
+            FwdInnerV1::Ping { seq, .. } => *seq = new_seq,
+            FwdInnerV1::Pong { seq, .. } => *seq = new_seq,
         }
     }
 
@@ -213,6 +235,8 @@ impl FwdInnerV1 {
             FwdInnerV1::Offer { seq, .. } => *seq,
             FwdInnerV1::Answer { seq, .. } => *seq,
             FwdInnerV1::Ice { seq, .. } => *seq,
+            FwdInnerV1::Ping { seq, .. } => *seq,
+            FwdInnerV1::Pong { seq, .. } => *seq,
         }
     }
 }

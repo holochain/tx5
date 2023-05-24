@@ -97,6 +97,56 @@ async fn wrong_version() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ping() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.ice_servers = serde_json::json!([]);
+    srv_config.demo = true;
+
+    let (srv_driver, addr_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+
+    let srv_port = addr_list.get(0).unwrap().port();
+
+    tokio::select! {
+        _ = srv_driver => (),
+        _ = async move {
+            // TODO remove
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+            ping_inner(srv_port).await;
+        } => (),
+    }
+}
+
+async fn ping_inner(srv_port: u16) {
+    let cli1 = cli::Cli::builder()
+        .with_recv_cb(|_| {})
+        .with_url(
+            url::Url::parse(&format!("ws://localhost:{}/tx5-ws", srv_port))
+                .unwrap(),
+        )
+        .build()
+        .await
+        .unwrap();
+
+    let cli2 = cli::Cli::builder()
+        .with_recv_cb(|_| {})
+        .with_url(
+            url::Url::parse(&format!("ws://localhost:{}/tx5-ws", srv_port))
+                .unwrap(),
+        )
+        .build()
+        .await
+        .unwrap();
+
+    println!("cli1, ping2: {}", cli1.ping(cli2.local_id()).await.unwrap());
+    println!("cli2, ping1: {}", cli2.ping(cli1.local_id()).await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sanity() {
     init_tracing();
 
@@ -140,7 +190,7 @@ async fn sanity_inner(srv_port: u16) {
         .await
     };
 
-    let cli1_pk = *cli1.cli.local_id();
+    let cli1_pk = cli1.cli.local_id();
     tracing::info!(%cli1_pk);
 
     let cli2 = Test::new(srv_port, move |msg| {
@@ -148,7 +198,7 @@ async fn sanity_inner(srv_port: u16) {
     })
     .await;
 
-    let cli2_pk = *cli2.cli.local_id();
+    let cli2_pk = cli2.cli.local_id();
     tracing::info!(%cli2_pk);
 
     cli1.cli

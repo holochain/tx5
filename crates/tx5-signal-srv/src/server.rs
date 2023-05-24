@@ -32,6 +32,7 @@ pub type ServerDriver =
 #[derive(Debug)]
 enum ProtoVer {
     V1,
+    V2,
 }
 
 /// The main entrypoint tx5-signal-server logic task.
@@ -59,6 +60,8 @@ pub fn exec_tx5_signal_srv(
         .map(move |ver: String, client_pub: String, ws: warp::ws::Ws| {
             let ver = if ver == "v1" {
                 ProtoVer::V1
+            } else if ver == "v2" {
+                ProtoVer::V2
             } else {
                 return reply_err(Error::id("InvalidVersion")).into_response();
             };

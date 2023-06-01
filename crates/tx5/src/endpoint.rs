@@ -331,13 +331,21 @@ async fn new_sig_task(
     tracing::warn!("signal connection CLOSED");
 }
 
-#[cfg(feature = "backend-go-pion")]
 pub(crate) fn on_new_conn(
     config: DynConfig,
     ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
     tokio::task::spawn(new_conn_task(config, ice_servers, seed));
+}
+
+#[cfg(feature = "backend-webrtc-rs")]
+async fn new_conn_task(
+    _config: DynConfig,
+    ice_servers: Arc<serde_json::Value>,
+    seed: state::ConnStateSeed,
+) {
+
 }
 
 #[cfg(feature = "backend-go-pion")]

@@ -3699,9 +3699,9 @@ dependencies = [
 
 [[package]]
 name = "webrtc"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0507dc2d9a79fe1aa892e8876d3bb9b3d939c654fa8222bbb29b6331baeb08cc"
+checksum = "072e218dd661ea9074ba20cf80be38b8346729337abe96940800fb4b3ed2692f"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3832,9 +3832,9 @@ dependencies = [
 
 [[package]]
 name = "webrtc-media"
-version = "0.5.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f72e1650a8ae006017d1a5280efb49e2610c19ccc3c0905b03b648aee9554991"
+checksum = "6136216b40e2e87ca977fbfdaa1cddfa067feef2d011341139e7aaea3d7215d4"
 dependencies = [
  "byteorder",
  "bytes",

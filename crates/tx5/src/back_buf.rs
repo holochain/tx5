@@ -8,10 +8,10 @@ pub(crate) mod imp {
     pub use imp_go_pion::*;
 }
 
-/// Tx5 buffer creation type via std::io::Write.
-pub struct BackBufWriter {
-    imp: imp::ImpWriter,
-    _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
+#[cfg(feature = "backend-webrtc-rs")]
+pub(crate) mod imp {
+    mod imp_webrtc_rs;
+    pub use imp_webrtc_rs::*;
 }
 
 impl BackBufWriter {

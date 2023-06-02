@@ -348,6 +348,7 @@ async fn new_conn_task(
 ) {
     use tx5_go_pion::DataChannelEvent as DataEvt;
     use tx5_go_pion::PeerConnectionEvent as PeerEvt;
+    use tx5_go_pion::PeerConnectionState as PeerState;
 
     enum MultiEvt {
         Peer(PeerEvt),
@@ -397,6 +398,21 @@ async fn new_conn_task(
                     Some(MultiEvt::Peer(PeerEvt::Error(err))) => {
                         conn_state.close(err);
                         break;
+                    }
+                    Some(MultiEvt::Peer(PeerEvt::State(peer_state))) => {
+                        match peer_state {
+                            PeerState::New
+                            | PeerState::Connecting
+                            | PeerState::Connected => {
+                                tracing::debug!(?peer_state);
+                            }
+                            PeerState::Disconnected
+                            | PeerState::Failed
+                            | PeerState::Closed => {
+                                conn_state.close(Error::err(format!("BackendState:{peer_state:?}")));
+                                break;
+                            }
+                        }
                     }
                     Some(MultiEvt::Peer(PeerEvt::ICECandidate(buf))) => {
                         let buf = BackBuf::from_raw(buf);

@@ -26,9 +26,6 @@ async fn endpoint_sanity() {
 
     let sig_port = addr_list.get(0).unwrap().port();
 
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
 
@@ -193,9 +190,6 @@ async fn preflight_small() {
 
     let sig_port = addr_list.get(0).unwrap().port();
 
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
 
@@ -261,9 +255,6 @@ async fn preflight_huge() {
 
     let sig_port = addr_list.get(0).unwrap().port();
 
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
 
@@ -328,9 +319,6 @@ async fn ban() {
     tokio::task::spawn(srv_driver);
 
     let sig_port = addr_list.get(0).unwrap().port();
-
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
@@ -460,9 +448,6 @@ async fn broadcast() {
     tokio::task::spawn(srv_driver);
 
     let sig_port = addr_list.get(0).unwrap().port();
-
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);

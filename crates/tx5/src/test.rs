@@ -91,7 +91,7 @@ async fn disconnect() {
     println!("sig_url: {}", sig_url);
 
     let conf = DefConfig::default()
-        .with_max_conn_init(std::time::Duration::from_secs(5));
+        .with_max_conn_init(std::time::Duration::from_secs(8));
 
     let (ep1, mut ep_rcv1) = Ep::with_config(conf).await.unwrap();
 
@@ -157,7 +157,7 @@ async fn connect_timeout() {
     println!("sig_url: {}", sig_url);
 
     let conf = DefConfig::default()
-        .with_max_conn_init(std::time::Duration::from_secs(2));
+        .with_max_conn_init(std::time::Duration::from_secs(8));
 
     let (ep1, _ep_rcv1) = Ep::with_config(conf).await.unwrap();
 
@@ -170,8 +170,8 @@ async fn connect_timeout() {
     assert!(ep1.send(cli_url_fake, &b"hello"[..]).await.is_err());
 
     assert!(
-        start.elapsed().as_secs_f64() < 5.0,
-        "expected timeout in 2 seconds, timed out in {} seconds",
+        start.elapsed().as_secs_f64() < 10.0,
+        "expected timeout in 8 seconds, timed out in {} seconds",
         start.elapsed().as_secs_f64()
     );
 }

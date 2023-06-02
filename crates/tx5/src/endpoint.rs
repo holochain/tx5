@@ -345,7 +345,116 @@ async fn new_conn_task(
     ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
+    use std::time::Duration;
+    use webrtc::{
+        api::APIBuilder,
+        data_channel::{
+            data_channel_message::DataChannelMessage, RTCDataChannel,
+        },
+        ice_transport::ice_server::RTCIceServer,
+        peer_connection::{
+            configuration::RTCConfiguration,
+            peer_connection_state::RTCPeerConnectionState,
+        },
+    };
 
+    // Create the API object
+
+    let api = APIBuilder::new().build();
+
+    // Prepare the configuration
+    let config = RTCConfiguration {
+        ice_servers: vec![RTCIceServer {
+            urls: ice_servers
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_owned())
+                .collect(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    // Create a new RTCPeerConnection
+    match api.new_peer_connection(config).await {
+        Ok(r) => {
+            let peer_connection = Arc::new(r);
+
+            let (conn_state, mut conn_evt) = match seed.result_ok() {
+                Err(_) => return,
+                Ok(r) => r,
+            };
+
+            // Set the handler for Peer connection state
+            // This will notify you when the peer has connected/disconnected
+            peer_connection.on_peer_connection_state_change(Box::new(
+                move |peer_connection_state: RTCPeerConnectionState| {
+                    println!("Peer Connection State has changed: {peer_connection_state}");
+                    match peer_connection_state {
+                        RTCPeerConnectionState::Closed => {}
+                        RTCPeerConnectionState::Connected => {}
+                        RTCPeerConnectionState::Disconnected => {}
+                        RTCPeerConnectionState::Failed => {}
+                        RTCPeerConnectionState::New => {}
+                        RTCPeerConnectionState::Connecting => {}
+                        RTCPeerConnectionState::Unspecified => {}
+                    }
+                    // if s == RTCPeerConnectionState::Failed {
+                    // Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
+                    // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
+                    // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
+                    // }
+                    Box::pin(async {})
+                },
+            ));
+
+            // Register data channel creation handling
+            peer_connection
+                .on_data_channel(Box::new(move |data_channel: Arc<RTCDataChannel>| {
+                    let data_channel_label = data_channel.label().to_owned();
+                    let data_channel_id = data_channel.id();
+                    println!("New DataChannel {data_channel_label} {data_channel_id}");
+
+                    // Register channel opening handling
+                    Box::pin(async move {
+                        // let d2 = Arc::clone(&d);
+                        let d_label2 = data_channel_label.clone();
+                        let data_channel_id2 = data_channel_id;
+                        data_channel.on_open(Box::new(move || {
+                            println!("Data channel '{d_label2}'-'{data_channel_id2}' open. Random messages will now be sent to any connected DataChannels every 5 seconds");
+
+                            Box::pin(async move {
+                                let result = Result::<usize>::Ok(0);
+                                while result.is_ok() {
+                                    let timeout = tokio::time::sleep(Duration::from_secs(5));
+                                    tokio::pin!(timeout);
+
+                                    tokio::select! {
+                                        _ = timeout.as_mut() =>{
+                                            // let message = math_rand_alpha(15);
+                                            // println!("Sending '{message}'");
+                                            // result = d2.send_text(message).await.map_err(Into::into);
+                                        }
+                                    };
+                                }
+                            })
+                        }));
+
+                        // Register text message handling
+                        data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
+                            let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
+                            println!("Message from DataChannel '{data_channel_label}': '{msg_str}'");
+                            Box::pin(async {})
+                        }));
+                    })
+                }));
+        }
+        Err(_err) => {
+            // seed.result_err(err);
+            return;
+        }
+    };
 }
 
 #[cfg(feature = "backend-go-pion")]

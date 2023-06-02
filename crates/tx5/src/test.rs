@@ -77,6 +77,43 @@ async fn endpoint_sanity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn connect_timeout() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.demo = true;
+
+    let (srv_driver, addr_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    tokio::task::spawn(srv_driver);
+
+    let sig_port = addr_list.get(0).unwrap().port();
+
+    let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+    println!("sig_url: {}", sig_url);
+
+    let conf = DefConfig::default()
+        .with_max_conn_init(std::time::Duration::from_secs(2));
+
+    let (ep1, _ep_rcv1) = Ep::with_config(conf).await.unwrap();
+
+    ep1.listen(sig_url.clone()).await.unwrap();
+
+    let cli_url_fake = sig_url.to_client([0xdb; 32].into());
+
+    let start = std::time::Instant::now();
+
+    assert!(ep1.send(cli_url_fake, &b"hello"[..]).await.is_err());
+
+    assert!(
+        start.elapsed().as_secs_f64() < 5.0,
+        "expected timeout in 2 seconds, timed out in {} seconds",
+        start.elapsed().as_secs_f64()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn preflight_small() {
     init_tracing();
 

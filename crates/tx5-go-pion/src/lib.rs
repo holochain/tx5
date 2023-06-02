@@ -105,6 +105,9 @@ mod tests {
                         PeerConnectionEvent::Error(err) => {
                             panic!("{:?}", err);
                         }
+                        PeerConnectionEvent::State(state) => {
+                            println!("peer1 state: {state:?}");
+                        }
                         PeerConnectionEvent::ICECandidate(mut candidate) => {
                             println!(
                                 "peer1 in-ice: {}",
@@ -178,6 +181,9 @@ mod tests {
                     PeerConnection::new(&config, move |evt| match evt {
                         PeerConnectionEvent::Error(err) => {
                             panic!("{:?}", err);
+                        }
+                        PeerConnectionEvent::State(state) => {
+                            println!("peer2 state: {state:?}");
                         }
                         PeerConnectionEvent::ICECandidate(mut candidate) => {
                             println!(

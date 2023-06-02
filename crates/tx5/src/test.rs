@@ -26,9 +26,6 @@ async fn endpoint_sanity() {
 
     let sig_port = addr_list.get(0).unwrap().port();
 
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
 
@@ -77,7 +74,7 @@ async fn endpoint_sanity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn preflight_small() {
+async fn disconnect() {
     init_tracing();
 
     let mut srv_config = tx5_signal_srv::Config::default();
@@ -90,8 +87,108 @@ async fn preflight_small() {
 
     let sig_port = addr_list.get(0).unwrap().port();
 
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+    println!("sig_url: {}", sig_url);
+
+    let conf = DefConfig::default()
+        .with_max_conn_init(std::time::Duration::from_secs(8));
+
+    let (ep1, mut ep_rcv1) = Ep::with_config(conf).await.unwrap();
+
+    let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
+
+    println!("cli_url1: {}", cli_url1);
+
+    let (ep2, mut ep_rcv2) = Ep::new().await.unwrap();
+
+    let cli_url2 = ep2.listen(sig_url).await.unwrap();
+
+    println!("cli_url2: {}", cli_url2);
+
+    ep1.send(cli_url2.clone(), &b"hello"[..]).await.unwrap();
+
+    match ep_rcv1.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    match ep_rcv2.recv().await {
+        Some(Ok(EpEvt::Connected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    let recv = ep_rcv2.recv().await;
+
+    match recv {
+        Some(Ok(EpEvt::Data {
+            rem_cli_url, data, ..
+        })) => {
+            assert_eq!(cli_url1, rem_cli_url);
+            assert_eq!(b"hello", data.to_vec().unwrap().as_slice());
+        }
+        oth => panic!("unexpected {:?}", oth),
+    }
+
+    ep2.ban(cli_url1.id().unwrap(), std::time::Duration::from_secs(43));
+
+    match ep_rcv1.recv().await {
+        Some(Ok(EpEvt::Disconnected { .. })) => (),
+        oth => panic!("unexpected: {:?}", oth),
+    }
+
+    assert!(ep1.send(cli_url2, &b"hello"[..]).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn connect_timeout() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.demo = true;
+
+    let (srv_driver, addr_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    tokio::task::spawn(srv_driver);
+
+    let sig_port = addr_list.get(0).unwrap().port();
+
+    let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
+    println!("sig_url: {}", sig_url);
+
+    let conf = DefConfig::default()
+        .with_max_conn_init(std::time::Duration::from_secs(8));
+
+    let (ep1, _ep_rcv1) = Ep::with_config(conf).await.unwrap();
+
+    ep1.listen(sig_url.clone()).await.unwrap();
+
+    let cli_url_fake = sig_url.to_client([0xdb; 32].into());
+
+    let start = std::time::Instant::now();
+
+    assert!(ep1.send(cli_url_fake, &b"hello"[..]).await.is_err());
+
+    assert!(
+        start.elapsed().as_secs_f64() < 10.0,
+        "expected timeout in 8 seconds, timed out in {} seconds",
+        start.elapsed().as_secs_f64()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preflight_small() {
+    init_tracing();
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = 0;
+    srv_config.demo = true;
+
+    let (srv_driver, addr_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    tokio::task::spawn(srv_driver);
+
+    let sig_port = addr_list.get(0).unwrap().port();
 
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
@@ -158,9 +255,6 @@ async fn preflight_huge() {
 
     let sig_port = addr_list.get(0).unwrap().port();
 
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
 
@@ -225,9 +319,6 @@ async fn ban() {
     tokio::task::spawn(srv_driver);
 
     let sig_port = addr_list.get(0).unwrap().port();
-
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
@@ -357,9 +448,6 @@ async fn broadcast() {
     tokio::task::spawn(srv_driver);
 
     let sig_port = addr_list.get(0).unwrap().port();
-
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);

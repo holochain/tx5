@@ -347,17 +347,16 @@ impl StateData {
     }
 
     async fn tick_1s(&mut self) -> Result<()> {
+        let timeout = self.meta.config.max_conn_init();
+
         self.ice_cache.retain(|_, list| {
-            list.retain_mut(|data| {
-                data.timestamp.elapsed() < std::time::Duration::from_secs(20)
-            });
+            list.retain_mut(|data| data.timestamp.elapsed() < timeout);
             !list.is_empty()
         });
 
         self.send_map.retain(|_, list| {
             list.retain_mut(|info| {
-                if info.timestamp.elapsed() < std::time::Duration::from_secs(20)
-                {
+                if info.timestamp.elapsed() < timeout {
                     true
                 } else {
                     tracing::trace!(msg_uniq = %info.msg_uniq, "dropping msg due to timeout");

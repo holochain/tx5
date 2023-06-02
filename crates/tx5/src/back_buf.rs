@@ -14,6 +14,13 @@ pub(crate) mod imp {
     pub use imp_webrtc_rs::*;
 }
 
+/// Tx5 buffer creation type via std::io::Write.
+pub struct BackBufWriter {
+    imp: imp::ImpWriter,
+    _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
+}
+
+
 impl BackBufWriter {
     /// Create a new Tx5 buffer writer.
     #[inline]
@@ -73,7 +80,7 @@ impl std::fmt::Debug for BackBuf {
 }
 
 impl BackBuf {
-    pub(crate) fn from_raw(buf: tx5_go_pion::GoBuf) -> Self {
+    pub(crate) fn from_raw(buf: imp::Raw) -> Self {
         Self {
             imp: imp::Imp::from_raw(buf),
             _not_sync: std::marker::PhantomData,

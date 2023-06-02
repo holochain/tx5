@@ -1,5 +1,7 @@
 use crate::*;
-use bytes::{Bytes, BytesMut, BufMut, Buf};
+use bytes::{Bytes, BytesMut, Buf};
+
+pub type Raw = Bytes;
 
 pub struct ImpWriter {
     buf: BytesMut,
@@ -15,15 +17,15 @@ impl ImpWriter {
 
     #[inline]
     pub fn finish(self) -> Imp {
-        Imp { buf: self.buf }
+        Imp { buf: self.buf.freeze() }
     }
 }
 
 impl std::io::Write for ImpWriter {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut writer = self.buf.writer();
-        writer.write(buf)
+        self.buf.extend_from_slice(buf);
+        Ok(buf.len())
     }
 
     #[inline]
@@ -31,25 +33,28 @@ impl std::io::Write for ImpWriter {
         &mut self,
         bufs: &[std::io::IoSlice<'_>],
     ) -> std::io::Result<usize> {
-        let mut writer = self.buf.writer();
-        writer.write_vectored(bufs)
+        let mut total_written = 0;
+        for buf in bufs {
+            self.write_all(buf)?;
+            total_written += buf.len();
+        }
+        Ok(total_written)
     }
 
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        let mut writer = self.buf.writer();
-        writer.write_all(buf)
+        self.buf.extend_from_slice(buf);
+        Ok(())
     }
 
     #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut writer = self.buf.writer();
-        writer.flush()
+        Ok(())
     }
 }
 
 pub struct Imp {
-    pub(crate) buf: BytesMut,
+    pub(crate) buf: Bytes,
 }
 
 impl std::fmt::Debug for Imp {
@@ -63,7 +68,7 @@ impl Imp {
         let slice = buf.as_ref();
         let mut bytes_mut = BytesMut::with_capacity(slice.len());
         bytes_mut.extend_from_slice(slice);
-        Self { buf: bytes_mut }
+        Self { buf: bytes_mut.freeze() }
     }
 
     #[inline]
@@ -71,7 +76,7 @@ impl Imp {
         let slicearr = slice.as_ref();
         let mut bytes_mut = BytesMut::with_capacity(slicearr.len());
         bytes_mut.extend_from_slice(slicearr);
-        Ok(Self { buf: bytes_mut })
+        Ok(Self { buf: bytes_mut.freeze() })
     }
 
     #[inline]
@@ -103,13 +108,15 @@ impl Imp {
     where
         D: serde::de::DeserializeOwned + Sized,
     {
-        self.buf.as_json()
+        let bytes = &self.buf;
+        serde_json::from_slice(bytes.as_ref()).map_err(Error::err)
     }
 }
 
 impl std::io::Read for Imp {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.buf.reader().read(buf)
+        let mut reader = self.buf.as_ref().reader();
+        reader.read(buf)
     }
 }

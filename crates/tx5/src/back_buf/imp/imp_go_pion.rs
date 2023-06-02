@@ -1,5 +1,7 @@
 use crate::*;
 
+pub type Raw = tx5_go_pion::GoBuf;
+
 pub struct ImpWriter {
     buf: tx5_go_pion::GoBuf,
     _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,

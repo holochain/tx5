@@ -390,21 +390,28 @@ async fn new_conn_task(
             // This will notify you when the peer has connected/disconnected
             peer_connection.on_peer_connection_state_change(Box::new(
                 move |peer_connection_state: RTCPeerConnectionState| {
-                    println!("Peer Connection State has changed: {peer_connection_state}");
                     match peer_connection_state {
-                        RTCPeerConnectionState::Closed => {}
-                        RTCPeerConnectionState::Connected => {}
-                        RTCPeerConnectionState::Disconnected => {}
-                        RTCPeerConnectionState::Failed => {}
-                        RTCPeerConnectionState::New => {}
-                        RTCPeerConnectionState::Connecting => {}
-                        RTCPeerConnectionState::Unspecified => {}
+                        // RTCPeerConnectionState::Closed => {}
+                        // RTCPeerConnectionState::Connected => {}
+                        // RTCPeerConnectionState::Disconnected => {}
+                        // RTCPeerConnectionState::Failed => {}
+                        // RTCPeerConnectionState::New => {}
+                        // RTCPeerConnectionState::Connecting => {}
+                        // RTCPeerConnectionState::Unspecified => {}
+                        RTCPeerConnectionState::New
+                        | RTCPeerConnectionState::Connecting
+                        | RTCPeerConnectionState::Connected
+                        | RTCPeerConnectionState::Unspecified => {
+                            tracing::debug!(?peer_connection_state);
+                        }
+                        RTCPeerConnectionState::Disconnected
+                        | RTCPeerConnectionState::Failed
+                        | RTCPeerConnectionState::Closed => {
+                            conn_state.close(Error::err(format!(
+                                "BackendState:{peer_connection_state:?}"
+                            )));
+                        }
                     }
-                    // if s == RTCPeerConnectionState::Failed {
-                    // Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-                    // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-                    // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-                    // }
                     Box::pin(async {})
                 },
             ));
@@ -415,29 +422,14 @@ async fn new_conn_task(
                     let data_channel_label = data_channel.label().to_owned();
                     let data_channel_id = data_channel.id();
                     println!("New DataChannel {data_channel_label} {data_channel_id}");
-
                     // Register channel opening handling
                     Box::pin(async move {
                         // let d2 = Arc::clone(&d);
-                        let d_label2 = data_channel_label.clone();
-                        let data_channel_id2 = data_channel_id;
+                        // let d_label2 = data_channel_label.clone();
+                        // let data_channel_id2 = data_channel_id;
                         data_channel.on_open(Box::new(move || {
-                            println!("Data channel '{d_label2}'-'{data_channel_id2}' open. Random messages will now be sent to any connected DataChannels every 5 seconds");
-
                             Box::pin(async move {
-                                let result = Result::<usize>::Ok(0);
-                                while result.is_ok() {
-                                    let timeout = tokio::time::sleep(Duration::from_secs(5));
-                                    tokio::pin!(timeout);
-
-                                    tokio::select! {
-                                        _ = timeout.as_mut() =>{
-                                            // let message = math_rand_alpha(15);
-                                            // println!("Sending '{message}'");
-                                            // result = d2.send_text(message).await.map_err(Into::into);
-                                        }
-                                    };
-                                }
+                              // result = d2.send_text(message).await.map_err(Into::into);   
                             })
                         }));
 

@@ -31,6 +31,9 @@ jobs:
           rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update
           rustup default ${{ matrix.toolchain }}
 
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Cargo Install Readme
         run: cargo install cargo-rdme
 

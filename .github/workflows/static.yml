@@ -28,7 +28,7 @@ jobs:
 
       - name: Rust Toolchain
         run: |
-          rustup toolchain install ${{ matrix.toolchain }} --profile milimal --no-self-update
+          rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update
           rustup default ${{ matrix.toolchain }}
 
       - name: Cargo Install Readme

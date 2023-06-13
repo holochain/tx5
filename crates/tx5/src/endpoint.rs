@@ -345,7 +345,6 @@ async fn new_conn_task(
     ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
-    use std::time::Duration;
     use webrtc::{
         api::APIBuilder,
         data_channel::{
@@ -358,8 +357,9 @@ async fn new_conn_task(
         },
     };
 
-    // Create the API object
+    let (peer_snd, peer_rcv) = tokio::sync::mpsc::unbounded_channel();
 
+    // Create the API object
     let api = APIBuilder::new().build();
 
     // Prepare the configuration
@@ -377,76 +377,115 @@ async fn new_conn_task(
     };
 
     // Create a new RTCPeerConnection
-    match api.new_peer_connection(config).await {
-        Ok(r) => {
-            let peer_connection = Arc::new(r);
+    let rtc_peer_connection = api.new_peer_connection(config).await.unwrap();
+    let peer_connection = Arc::new(rtc_peer_connection);
 
-            let (conn_state, mut conn_evt) = match seed.result_ok() {
-                Err(_) => return,
-                Ok(r) => r,
-            };
+    let (conn_state, mut conn_evt) = match seed.result_ok() {
+        Err(_) => return,
+        Ok(r) => r,
+    };
 
-            // Set the handler for Peer connection state
-            // This will notify you when the peer has connected/disconnected
-            peer_connection.on_peer_connection_state_change(Box::new(
-                move |peer_connection_state: RTCPeerConnectionState| {
-                    match peer_connection_state {
-                        // RTCPeerConnectionState::Closed => {}
-                        // RTCPeerConnectionState::Connected => {}
-                        // RTCPeerConnectionState::Disconnected => {}
-                        // RTCPeerConnectionState::Failed => {}
-                        // RTCPeerConnectionState::New => {}
-                        // RTCPeerConnectionState::Connecting => {}
-                        // RTCPeerConnectionState::Unspecified => {}
-                        RTCPeerConnectionState::New
-                        | RTCPeerConnectionState::Connecting
-                        | RTCPeerConnectionState::Connected
-                        | RTCPeerConnectionState::Unspecified => {
-                            tracing::debug!(?peer_connection_state);
-                        }
-                        RTCPeerConnectionState::Disconnected
-                        | RTCPeerConnectionState::Failed
-                        | RTCPeerConnectionState::Closed => {
-                            conn_state.close(Error::err(format!(
-                                "BackendState:{peer_connection_state:?}"
-                            )));
-                        }
-                    }
-                    Box::pin(async {})
-                },
-            ));
+    // Set the handler for Peer connection state
+    // This will notify you when the peer has connected/disconnected
+    let conn_state_2 = conn_state.clone();
+    peer_connection.on_peer_connection_state_change(Box::new(
+        move |peer_connection_state: RTCPeerConnectionState| {
+            match peer_connection_state {
+                // RTCPeerConnectionState::Closed => {}
+                // RTCPeerConnectionState::Connected => {}
+                // RTCPeerConnectionState::Disconnected => {}
+                // RTCPeerConnectionState::Failed => {}
+                // RTCPeerConnectionState::New => {}
+                // RTCPeerConnectionState::Connecting => {}
+                // RTCPeerConnectionState::Unspecified => {}
+                RTCPeerConnectionState::New
+                | RTCPeerConnectionState::Connecting
+                | RTCPeerConnectionState::Connected
+                | RTCPeerConnectionState::Unspecified => {
+                    tracing::debug!(?peer_connection_state);
+                }
+                RTCPeerConnectionState::Disconnected
+                | RTCPeerConnectionState::Failed
+                | RTCPeerConnectionState::Closed => {
+                    conn_state_2.close(Error::err(format!(
+                        "BackendState:{peer_connection_state:?}"
+                    )));
+                }
+            }
+            Box::pin(async {})
+        },
+    ));
 
-            // Register data channel creation handling
-            peer_connection
-                .on_data_channel(Box::new(move |data_channel: Arc<RTCDataChannel>| {
-                    let data_channel_label = data_channel.label().to_owned();
-                    let data_channel_id = data_channel.id();
-                    println!("New DataChannel {data_channel_label} {data_channel_id}");
-                    // Register channel opening handling
+    // let mut data_chan: Option<Arc<RTCDataChannel>> = None;
+
+    // Register data channel creation handling
+    peer_connection.on_data_channel(Box::new(
+        move |data_channel: Arc<RTCDataChannel>| {
+            // data_chan = Some(data_channel);
+
+            let data_channel_label = data_channel.label().to_owned();
+            let data_channel_id = data_channel.id();
+            println!("New DataChannel {data_channel_label} {data_channel_id}");
+            // Register channel opening handling
+            let conn_state_3 = conn_state.clone();
+            let conn_state_4 = conn_state.clone();
+            let conn_state_5 = conn_state.clone();
+            Box::pin(async move {
+                // let d2 = Arc::clone(&d);
+                // let d_label2 = data_channel_label.clone();
+                // let data_channel_id2 = data_channel_id;
+
+                data_channel.on_open(Box::new(move || {
+                    conn_state_3.ready().unwrap(); // TODO handle better
                     Box::pin(async move {
-                        // let d2 = Arc::clone(&d);
-                        // let d_label2 = data_channel_label.clone();
-                        // let data_channel_id2 = data_channel_id;
-                        data_channel.on_open(Box::new(move || {
-                            Box::pin(async move {
-                              // result = d2.send_text(message).await.map_err(Into::into);   
-                            })
-                        }));
-
-                        // Register text message handling
-                        data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
-                            let msg_str = String::from_utf8(msg.data.to_vec()).unwrap();
-                            println!("Message from DataChannel '{data_channel_label}': '{msg_str}'");
-                            Box::pin(async {})
-                        }));
+                        // result = d2.send_text(message).await.map_err(Into::into);
                     })
                 }));
+                // Register message handling
+                data_channel.on_message(Box::new(
+                    move |msg: DataChannelMessage| {
+                        conn_state_4
+                            .rcv_data(BackBuf::from_raw(msg.data))
+                            .unwrap(); // TODO handle better
+                        Box::pin(async {})
+                    },
+                ));
+                data_channel.on_close(Box::new(move || {
+                    conn_state_5.close(Error::id("DataChanClosed"));
+                    Box::pin(async {})
+                }));
+                data_channel.on_error(Box::new(move |err| Box::pin(async {})));
+            })
+        },
+    ));
+
+    loop {
+        tokio::select! {
+          msg = conn_evt.recv() => {
+            match msg {
+              Some(Ok(state::ConnStateEvt::SndData(buf, mut resp))) => {
+                resp.with(move || async move {
+                    let _ = peer_snd.send(&buf.imp.buf).await.unwrap(); // TODO handle better
+                    // TODO - actually report this
+                    Ok(state::BufState::Low)
+                }).await;
+            }
+            Some(Ok(state::ConnStateEvt::Stats(mut resp))) => {
+                // let peer = &mut peer;
+                let peer_connection_2 = peer_connection.clone();
+                resp.with(move || async move {
+                    let stats = peer_connection_2.get_stats().await;
+                    let json = serde_json::to_vec(&stats.reports).unwrap();
+                    Ok(BackBuf::from_raw(json.into()))
+                }).await;
+            }
+            Some(Ok(_)) => break,
+            Some(Err(_)) => break,
+            None => break,
+            }
+          }
         }
-        Err(_err) => {
-            // seed.result_err(err);
-            return;
-        }
-    };
+    }
 }
 
 #[cfg(feature = "backend-go-pion")]

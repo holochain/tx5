@@ -14,12 +14,14 @@ struct Args {
     /// Tracing logs will be written to the given file.
     /// Any existing file will be deleted first.
     /// You can use the environment variable `RUST_LOG` to control
-    /// and filter the output. Defaults to INFO level.
-    pub trace_file: std::path::PathBuf,
+    /// and filter the output. Defaults to INFO level if specified.
+    #[clap(short, long)]
+    pub trace_file: Option<std::path::PathBuf>,
 
     /// This node's address will be written to the given file.
     /// Any existing data will be truncated during write.
-    pub addr_file: std::path::PathBuf,
+    #[clap(short, long)]
+    pub addr_file: Option<std::path::PathBuf>,
 
     /// Signal server URL.
     pub sig_url: String,
@@ -263,36 +265,36 @@ async fn main_err() -> Result<()> {
         peer_urls,
     } = Args::parse();
 
-    let mut addr_file = AddrFile::new(&addr_file).await?;
+    if let Some(trace_file) = trace_file {
+        let _ = std::fs::remove_file(&trace_file);
 
-    let _ = std::fs::remove_file(&trace_file);
+        let trace_file = std::path::Path::new(&trace_file);
+        let app = tracing_appender::rolling::never(
+            trace_file
+                .parent()
+                .expect("failed to get dir from trace_file"),
+            trace_file
+                .file_name()
+                .expect("failed to get filename from trace_file"),
+        );
+        let (app, _app_guard) =
+            tracing_appender::non_blocking::NonBlockingBuilder::default()
+                .lossy(false)
+                .finish(app);
 
-    let trace_file = std::path::Path::new(&trace_file);
-    let app = tracing_appender::rolling::never(
-        trace_file
-            .parent()
-            .expect("failed to get dir from trace_file"),
-        trace_file
-            .file_name()
-            .expect("failed to get filename from trace_file"),
-    );
-    let (app, _app_guard) =
-        tracing_appender::non_blocking::NonBlockingBuilder::default()
-            .lossy(false)
-            .finish(app);
-
-    tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(
-            tracing_subscriber::filter::EnvFilter::builder()
-                .with_default_directive(
-                    tracing_subscriber::filter::LevelFilter::INFO.into(),
-                )
-                .from_env_lossy(),
-        )
-        .with_file(true)
-        .with_line_number(true)
-        .with_writer(app)
-        .init();
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(
+                tracing_subscriber::filter::EnvFilter::builder()
+                    .with_default_directive(
+                        tracing_subscriber::filter::LevelFilter::INFO.into(),
+                    )
+                    .from_env_lossy(),
+            )
+            .with_file(true)
+            .with_line_number(true)
+            .with_writer(app)
+            .init();
+    }
 
     let sig_url = Tx5Url::new(sig_url)?;
 
@@ -305,8 +307,11 @@ async fn main_err() -> Result<()> {
 
     node.broadcast_hello(&ep)?;
 
-    addr_file.write(&this_addr).await?;
-    drop(addr_file);
+    if let Some(addr_file) = addr_file {
+        let mut addr_file = AddrFile::new(&addr_file).await?;
+        addr_file.write(&this_addr).await?;
+        drop(addr_file);
+    }
 
     d!(info, "STARTED", "{this_addr} {node:?}");
 

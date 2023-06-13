@@ -100,6 +100,16 @@ fn go_build() {
 
     let mut cmd = Command::new("go");
 
+    // add some cross-compilation translators:
+    #[cfg(target_arch = "arm")]
+    cmd.env("GOARCH", "arm");
+    #[cfg(target_arch = "aarch64")]
+    cmd.env("GOARCH", "arm64");
+    #[cfg(target_arch = "x86_64")]
+    cmd.env("GOARCH", "amd64");
+    #[cfg(target_arch = "x86")]
+    cmd.env("GOARCH", "386");
+
     // grr, clippy, the debug symbols belong in one arg
     #[allow(clippy::suspicious_command_arg_space)]
     {

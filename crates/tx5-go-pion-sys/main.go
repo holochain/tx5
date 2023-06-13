@@ -41,6 +41,8 @@ import (
 	"sync"
 	"unsafe"
 
+	"runtime/debug"
+
 	"github.com/pion/logging"
 	"github.com/pion/webrtc/v3"
 )
@@ -236,7 +238,7 @@ func Call(
 				return
 			}
 
-			bytes := ([]byte)(fmt.Sprintf("%s", err))
+			bytes := ([]byte)(fmt.Sprintf("%s %s", err, string(debug.Stack())))
 			C.MessageCbInvoke(
 				response_cb,
 				response_usr,

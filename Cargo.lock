@@ -3187,7 +3187,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.0.1-alpha.17"
+version = "0.0.1-alpha.18"
 dependencies = [
  "bytes",
  "futures",
@@ -3227,7 +3227,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.0.1-alpha.17"
+version = "0.0.1-alpha.18"
 dependencies = [
  "base64 0.13.1",
  "bytes",
@@ -3245,7 +3245,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion"
-version = "0.0.1-alpha.10"
+version = "0.0.1-alpha.11"
 dependencies = [
  "parking_lot",
  "tokio",

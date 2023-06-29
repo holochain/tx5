@@ -37,6 +37,9 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Cargo Build
+        run: cargo build --all-targets
+
       - name: Cargo Test
         env:
           RUST_BACKTRACE: 1

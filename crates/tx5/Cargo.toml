@@ -37,8 +37,13 @@ url = { workspace = true }
 webrtc = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
 tracing-subscriber = { workspace = true }
 tx5-signal-srv = { workspace = true }
 rand = { workspace = true }
 rand-utf8 = { workspace = true }
+
+[[bench]]
+name = "throughput"
+harness = false

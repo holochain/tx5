@@ -56,6 +56,7 @@ publish:
 	git push --tags;
 
 test: static tools
+	cargo build --all-targets
 	RUST_BACKTRACE=1 cargo test -- --nocapture
 
 static: docs tools

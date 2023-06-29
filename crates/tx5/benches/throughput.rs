@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use tx5::{*, actor::ManyRcv};
-use tokio::sync::Mutex;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use tx5::{actor::ManyRcv, *};
 
 const DATA: &[u8] = &[0xdb; 4096];
 
@@ -26,7 +26,8 @@ impl Test {
 
         let sig_port = addr_list.get(0).unwrap().port();
 
-        let sig_url = Tx5Url::new(format!("ws://localhost:{sig_port}")).unwrap();
+        let sig_url =
+            Tx5Url::new(format!("ws://localhost:{sig_port}")).unwrap();
 
         let (ep1, mut ep_rcv1) = Ep::new().await.unwrap();
         let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
@@ -64,14 +65,22 @@ impl Test {
     }
 
     pub async fn test(&mut self) {
-        let Test { cli_url1, ep1, ep_rcv1, cli_url2, ep2, ep_rcv2 } = self;
+        let Test {
+            cli_url1,
+            ep1,
+            ep_rcv1,
+            cli_url2,
+            ep2,
+            ep_rcv2,
+        } = self;
 
         let _ = tokio::try_join!(
             ep1.send(cli_url2.clone(), DATA),
             ep2.send(cli_url1.clone(), DATA),
             async { ep_rcv1.recv().await.unwrap() },
             async { ep_rcv2.recv().await.unwrap() },
-        ).unwrap();
+        )
+        .unwrap();
     }
 }
 

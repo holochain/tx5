@@ -116,8 +116,8 @@ fn go_build() {
         cmd.current_dir(out_dir.clone())
             .env("GOCACHE", cache)
             .arg("build")
-            .arg("-ldflags") // strip debug symbols
-            .arg("-s -w") // strip debug symbols
+            //.arg("-ldflags") // strip debug symbols
+            //.arg("-s -w") // strip debug symbols
             .arg("-o")
             .arg(lib_path.clone())
             .arg("-mod=vendor")

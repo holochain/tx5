@@ -106,6 +106,9 @@ async fn main() {
 
         while let Some(cmd) = o_rcv.recv().await {
             match cmd {
+                Cmd::PeerEvt(PeerConnectionEvent::State(
+                    PeerConnectionState::Connected,
+                )) => (),
                 Cmd::PeerEvt(PeerConnectionEvent::ICECandidate(mut ice)) => {
                     if is_ice_relay(&mut ice) {
                         o2t_snd.send(Cmd::Ice(ice)).unwrap();
@@ -126,7 +129,7 @@ async fn main() {
                         c1.add_ice_candidate(ice).await.unwrap();
                     }
                 }
-                _ => panic!("unexpected"),
+                oth => panic!("unexpected: {oth:?}"),
             }
         }
     });
@@ -142,6 +145,9 @@ async fn main() {
 
     while let Some(cmd) = t_rcv.recv().await {
         match cmd {
+            Cmd::PeerEvt(PeerConnectionEvent::State(
+                PeerConnectionState::Connected,
+            )) => (),
             Cmd::PeerEvt(PeerConnectionEvent::ICECandidate(mut ice)) => {
                 if is_ice_relay(&mut ice) {
                     t2o_snd.send(Cmd::Ice(ice)).unwrap();
@@ -178,7 +184,7 @@ async fn main() {
                     c2.add_ice_candidate(ice).await.unwrap();
                 }
             }
-            _ => panic!("unexpected"),
+            oth => panic!("unexpected: {oth:?}"),
         }
     }
 }

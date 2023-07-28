@@ -105,12 +105,15 @@ impl Test {
     pub async fn shutdown(mut self) {
         self.shutdown = true;
 
+        /*
         let enc = prometheus::TextEncoder::new();
         let mut buf = Vec::new();
         use prometheus::Encoder;
         enc.encode(&prometheus::default_registry().gather(), &mut buf)
             .unwrap();
         println!("{}", String::from_utf8_lossy(&buf));
+        */
+        println!("TODO--PRINT_METRICS_HERE");
 
         self.state.close(Error::id("TestShutdown"));
 

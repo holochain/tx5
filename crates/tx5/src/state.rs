@@ -8,6 +8,9 @@ use std::collections::{hash_map, HashMap};
 use std::future::Future;
 use std::sync::Arc;
 
+use influxive_otel_atomic_obs::*;
+use opentelemetry_api::metrics::MeterProvider;
+
 use tx5_core::{Id, Tx5Url};
 
 mod sig;
@@ -32,64 +35,6 @@ const MAX_CON_TIME: std::time::Duration =
 /// Similar to MAX_CON_TIME, this has to be hard-coded for now.
 const CON_CLOSE_SEND_GRACE: std::time::Duration =
     std::time::Duration::from_secs(30);
-
-// TODO - creates too many time series, just aggregate the full counts
-pub(crate) fn bad_uniq() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static UNIQ: AtomicU64 = AtomicU64::new(1);
-    UNIQ.fetch_add(1, Ordering::Relaxed)
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MetricTimestamp(
-    Arc<parking_lot::Mutex<std::time::Instant>>,
-    prometheus::IntGauge,
-);
-
-impl MetricTimestamp {
-    pub fn new<S1: Into<String>, S2: Into<String>>(
-        name: S1,
-        help: S2,
-    ) -> Result<Self> {
-        let now = Arc::new(parking_lot::Mutex::new(std::time::Instant::now()));
-        let metric =
-            prometheus::IntGauge::new(name, help).map_err(Error::err)?;
-        Ok(Self(now, metric))
-    }
-
-    pub fn reset(&self) {
-        let now = std::time::Instant::now();
-        *self.0.lock() = now;
-        self.1.set(0);
-    }
-
-    pub fn elapsed(&self) -> std::time::Duration {
-        self.0.lock().elapsed()
-    }
-
-    fn priv_update(&self) {
-        let elapsed = self.elapsed().as_micros();
-        self.1.set(elapsed as i64);
-    }
-}
-
-impl prometheus::core::Collector for MetricTimestamp {
-    fn desc(&self) -> Vec<&prometheus::core::Desc> {
-        self.1.desc()
-    }
-
-    fn collect(&self) -> Vec<prometheus::proto::MetricFamily> {
-        self.priv_update();
-        self.1.collect()
-    }
-}
-
-impl prometheus::core::Metric for MetricTimestamp {
-    fn metric(&self) -> prometheus::proto::Metric {
-        self.priv_update();
-        self.1.metric()
-    }
-}
 
 /// Respond type.
 #[must_use]
@@ -241,8 +186,6 @@ struct StateData {
     state_uniq: Uniq,
     this_id: Option<Id>,
     this: StateWeak,
-    state_prefix: Arc<str>,
-    metrics: prometheus::Registry,
     meta: StateMeta,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx5Url, SigStateWeak>,
@@ -262,9 +205,6 @@ impl Drop for StateData {
 impl StateData {
     fn shutdown(&mut self, err: std::io::Error) {
         tracing::trace!(state_uniq = %self.state_uniq, this_id = ?self.this_id, "StateShutdown");
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_conn_count.clone()));
         for (_, sig) in self.signal_map.drain() {
             if let Some(sig) = sig.upgrade() {
                 sig.close(err.err_clone());
@@ -380,7 +320,7 @@ impl StateData {
             let meta = conn.meta();
             tot_snd_bytes += meta.metric_bytes_snd.get();
             tot_rcv_bytes += meta.metric_bytes_rcv.get();
-            tot_age += meta.metric_age.elapsed().as_secs_f64();
+            tot_age += meta.created_at.elapsed().as_secs_f64();
             age_cnt += 1.0;
         }
 
@@ -406,11 +346,8 @@ impl StateData {
                     .load(std::sync::atomic::Ordering::SeqCst),
                 this_snd_bytes: meta.metric_bytes_snd.get(),
                 this_rcv_bytes: meta.metric_bytes_rcv.get(),
-                this_age_s: meta.metric_age.elapsed().as_secs_f64(),
-                this_last_active_s: meta
-                    .metric_last_active
-                    .elapsed()
-                    .as_secs_f64(),
+                this_age_s: meta.created_at.elapsed().as_secs_f64(),
+                this_last_active_s: meta.last_active_at.elapsed().as_secs_f64(),
             };
 
             if let drop_consider::DropConsiderResult::MustDrop =
@@ -536,11 +473,10 @@ impl StateData {
         let conn = match ConnState::new_and_publish(
             self.meta.config.clone(),
             self.meta.conn_limit.clone(),
-            self.state_prefix.clone(),
-            self.metrics.clone(),
             self.meta.metric_conn_count.clone(),
             self.this.clone(),
             sig,
+            self.state_uniq.clone(),
             conn_uniq,
             self.this_id.unwrap(),
             cli_url.clone(),
@@ -912,8 +848,6 @@ async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
     state_uniq: Uniq,
     this: StateWeak,
-    state_prefix: Arc<str>,
-    metrics: prometheus::Registry,
     meta: StateMeta,
     evt: StateEvtSnd,
     recv_limit: Arc<tokio::sync::Semaphore>,
@@ -922,8 +856,6 @@ async fn state_task(
         state_uniq,
         this_id: None,
         this,
-        state_prefix,
-        metrics,
         meta,
         evt,
         signal_map: HashMap::new(),
@@ -954,7 +886,7 @@ pub(crate) struct StateMeta {
     pub(crate) config: DynConfig,
     pub(crate) conn_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) snd_limit: Arc<tokio::sync::Semaphore>,
-    pub(crate) metric_conn_count: prometheus::IntGauge,
+    pub(crate) metric_conn_count: UpDownObsAtomicI64,
     pub(crate) snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -984,8 +916,6 @@ impl Eq for State {}
 impl State {
     /// Construct a new state instance.
     pub fn new(config: DynConfig) -> Result<(Self, ManyRcv<StateEvt>)> {
-        let metrics = config.metrics().clone();
-
         let conn_limit = Arc::new(tokio::sync::Semaphore::new(
             config.max_conn_count() as usize,
         ));
@@ -999,17 +929,20 @@ impl State {
 
         let state_uniq = Uniq::default();
 
-        let bad_uniq = bad_uniq();
-        let state_prefix = format!("tx5_ep_{bad_uniq}").into_boxed_str().into();
-
-        let metric_conn_count = prometheus::IntGauge::new(
-            format!("{state_prefix}_conn_count"),
-            "active connection count",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_conn_count.clone()))
-            .map_err(Error::err)?;
+        let metric_conn_count = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![opentelemetry_api::KeyValue::new(
+                    "state_uniq",
+                    state_uniq.to_string(),
+                )]),
+            )
+            .i64_observable_up_down_counter_atomic("tx5.endpoint.conn.count", 0)
+            .with_description("Count of open connections managed by endpoint")
+            .init()
+            .0;
 
         let meta = StateMeta {
             state_uniq: state_uniq.clone(),
@@ -1028,8 +961,6 @@ impl State {
                     rcv,
                     state_uniq,
                     StateWeak(this, meta.clone()),
-                    state_prefix,
-                    metrics,
                     meta,
                     StateEvtSnd(state_snd),
                     rcv_limit,

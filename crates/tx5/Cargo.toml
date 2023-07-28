@@ -22,9 +22,10 @@ backend-webrtc-rs = [ "webrtc" ]
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true }
+influxive-otel-atomic-obs = { workspace = true }
 once_cell = { workspace = true }
+opentelemetry_api = { workspace = true }
 parking_lot = { workspace = true }
-prometheus = { workspace = true }
 rand = { workspace = true }
 rand-utf8 = { workspace = true }
 serde_json = { workspace = true }
@@ -38,6 +39,7 @@ webrtc = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+influxive = { workspace = true }
 tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
 tracing-subscriber = { workspace = true }
 tx5-signal-srv = { workspace = true }

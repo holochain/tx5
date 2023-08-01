@@ -886,7 +886,7 @@ pub(crate) struct StateMeta {
     pub(crate) config: DynConfig,
     pub(crate) conn_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) snd_limit: Arc<tokio::sync::Semaphore>,
-    pub(crate) metric_conn_count: UpDownObsAtomicI64,
+    pub(crate) metric_conn_count: AtomicObservableUpDownCounterI64,
     pub(crate) snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 

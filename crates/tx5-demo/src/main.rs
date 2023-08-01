@@ -3,6 +3,8 @@
 #![allow(clippy::needless_range_loop)]
 //! tx5-demo
 
+const DASH_TX5: &[u8] = include_bytes!("influxive-dashboards/tx5.json");
+
 use bytes::Buf;
 use clap::Parser;
 use std::collections::HashMap;
@@ -296,6 +298,23 @@ async fn main_err() -> Result<()> {
             .init();
     }
 
+    let tmp = tempfile::tempdir()?;
+
+    let (i, meter_provider) =
+        influxive::influxive_child_process_meter_provider(
+            influxive::InfluxiveChildSvcConfig::default()
+                .with_database_path(Some(tmp.path().to_owned())),
+            influxive::InfluxiveMeterProviderConfig::default(),
+        )
+        .await?;
+    if let Ok(cur) = i.list_dashboards().await {
+        if cur.contains("\"dashboards\": []") {
+            let _ = i.apply(DASH_TX5).await;
+        }
+    }
+    opentelemetry_api::global::set_meter_provider(meter_provider);
+    d!(info, "METRICS", "{}", i.get_host());
+
     let sig_url = Tx5Url::new(sig_url)?;
 
     let (ep, mut evt) = tx5::Ep::new().await?;
@@ -384,7 +403,7 @@ async fn main_err() -> Result<()> {
             })) => {
                 node.add_known_peer(rem_cli_url.clone());
                 match Message::decode(data.copy_to_bytes(data.remaining())) {
-                    Err(err) => panic!("{err:?}"),
+                    Err(err) => d!(error, "RECV_ERROR", "{err:?}"),
                     Ok(Message::Hello { known_peers: kp }) => {
                         for peer in kp {
                             node.add_known_peer(Tx5Url::new(peer).unwrap());

@@ -241,7 +241,7 @@ impl ConnStateEvtSnd {
 struct ConnStateData {
     conn_uniq: Uniq,
     this: ConnStateWeak,
-    metric_conn_count: UpDownObsAtomicI64,
+    metric_conn_count: AtomicObservableUpDownCounterI64,
     meta: ConnStateMeta,
     state: StateWeak,
     this_id: Id,
@@ -259,6 +259,7 @@ struct ConnStateData {
 
 impl Drop for ConnStateData {
     fn drop(&mut self) {
+        self.metric_conn_count.add(-1);
         self.shutdown(Error::id("Dropped"));
     }
 }
@@ -276,7 +277,6 @@ impl ConnStateData {
             rem_id = ?self.rem_id,
             "ConnShutdown",
         );
-        self.metric_conn_count.add(-1);
         if let Some(state) = self.state.upgrade() {
             state.close_conn(self.rem_id, self.this.clone(), err.err_clone());
         }
@@ -685,7 +685,7 @@ enum ConnCmd {
 #[allow(clippy::too_many_arguments)]
 async fn conn_state_task(
     conn_limit: Arc<tokio::sync::Semaphore>,
-    metric_conn_count: UpDownObsAtomicI64,
+    metric_conn_count: AtomicObservableUpDownCounterI64,
     meta: ConnStateMeta,
     strong: ConnState,
     conn_rcv: ManyRcv<ConnStateEvt>,
@@ -776,8 +776,8 @@ pub(crate) struct ConnStateMeta {
     pub(crate) connected: Arc<atomic::AtomicBool>,
     _conn_snd: ConnStateEvtSnd,
     pub(crate) rcv_limit: Arc<tokio::sync::Semaphore>,
-    pub(crate) metric_bytes_snd: CounterObsAtomicU64,
-    pub(crate) metric_bytes_rcv: CounterObsAtomicU64,
+    pub(crate) metric_bytes_snd: AtomicObservableCounterU64,
+    pub(crate) metric_bytes_rcv: AtomicObservableCounterU64,
     snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -956,7 +956,7 @@ impl ConnState {
     pub(crate) fn new_and_publish(
         config: DynConfig,
         conn_limit: Arc<tokio::sync::Semaphore>,
-        metric_conn_count: UpDownObsAtomicI64,
+        metric_conn_count: AtomicObservableUpDownCounterI64,
         state: StateWeak,
         sig_state: SigStateWeak,
         state_uniq: Uniq,
@@ -986,6 +986,10 @@ impl ConnState {
                         "conn_uniq",
                         conn_uniq.to_string(),
                     ),
+                    opentelemetry_api::KeyValue::new(
+                        "remote_id",
+                        rem_id.to_string(),
+                    ),
                 ]),
             )
             .u64_observable_counter_atomic("tx5.endpoint.conn.send", 0)
@@ -1007,6 +1011,10 @@ impl ConnState {
                     opentelemetry_api::KeyValue::new(
                         "conn_uniq",
                         conn_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "remote_id",
+                        rem_id.to_string(),
                     ),
                 ]),
             )

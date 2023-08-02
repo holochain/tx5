@@ -39,7 +39,9 @@ webrtc = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+influxive-child-svc = { workspace = true }
 influxive = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
 tracing-subscriber = { workspace = true }
 tx5-signal-srv = { workspace = true }

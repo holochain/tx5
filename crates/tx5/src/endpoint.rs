@@ -1,6 +1,8 @@
 //! Tx5 endpoint.
 
 use crate::*;
+use opentelemetry_api::{metrics::Unit, KeyValue};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tx5_core::Tx5Url;
 
@@ -331,6 +333,19 @@ async fn new_sig_task(
     tracing::warn!("signal connection CLOSED");
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackendMetrics {
+    #[serde(default)]
+    messages_sent: u64,
+    #[serde(default)]
+    messages_received: u64,
+    #[serde(default)]
+    bytes_sent: u64,
+    #[serde(default)]
+    bytes_received: u64,
+}
+
 #[cfg(feature = "backend-go-pion")]
 pub(crate) fn on_new_conn(
     config: DynConfig,
@@ -351,6 +366,11 @@ async fn new_conn_task(
     use tx5_go_pion::PeerConnectionState as PeerState;
 
     enum MultiEvt {
+        Stats(
+            tokio::sync::oneshot::Sender<
+                Option<HashMap<String, BackendMetrics>>,
+            >,
+        ),
         Peer(PeerEvt),
         Data(DataEvt),
     }
@@ -383,6 +403,131 @@ async fn new_conn_task(
         Ok(r) => r,
     };
 
+    let state_uniq = conn_state.meta().state_uniq.clone();
+    let conn_uniq = conn_state.meta().conn_uniq.clone();
+    let rem_id = conn_state.meta().cli_url.id().unwrap();
+
+    struct Unregister(
+        Option<Box<dyn opentelemetry_api::metrics::CallbackRegistration>>,
+    );
+    impl Drop for Unregister {
+        fn drop(&mut self) {
+            if let Some(mut unregister) = self.0.take() {
+                let _ = unregister.unregister();
+            }
+        }
+    }
+
+    let slot: Arc<std::sync::Mutex<Option<HashMap<String, BackendMetrics>>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let weak_slot = Arc::downgrade(&slot);
+    let peer_snd_task = peer_snd.clone();
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+            if let Some(slot) = weak_slot.upgrade() {
+                let (s, r) = tokio::sync::oneshot::channel();
+                if peer_snd_task.send(MultiEvt::Stats(s)).is_err() {
+                    break;
+                }
+                if let Ok(stats) = r.await {
+                    *slot.lock().unwrap() = stats;
+                }
+            } else {
+                break;
+            }
+        }
+    });
+
+    let weak_slot = Arc::downgrade(&slot);
+    let _unregister = {
+        use opentelemetry_api::metrics::MeterProvider;
+
+        let meter = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![
+                    KeyValue::new("state_uniq", state_uniq.to_string()),
+                    KeyValue::new("conn_uniq", conn_uniq.to_string()),
+                    KeyValue::new("remote_id", rem_id.to_string()),
+                ]),
+            );
+        let ice_snd = meter
+            .u64_observable_counter("tx5.conn.ice.send")
+            .with_description("Bytes sent on ice channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let ice_rcv = meter
+            .u64_observable_counter("tx5.conn.ice.recv")
+            .with_description("Bytes received on ice channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let data_snd = meter
+            .u64_observable_counter("tx5.conn.data.send")
+            .with_description("Bytes sent on data channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let data_rcv = meter
+            .u64_observable_counter("tx5.conn.data.recv")
+            .with_description("Bytes received on data channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let data_snd_msg = meter
+            .u64_observable_counter("tx5.conn.data.send.message.count")
+            .with_description("Message count sent on data channel")
+            .init();
+        let data_rcv_msg = meter
+            .u64_observable_counter("tx5.conn.data.recv.message.count")
+            .with_description("Message count received on data channel")
+            .init();
+        let unregister = match meter.register_callback(
+            &[data_snd.as_any(), data_rcv.as_any()],
+            move |obs| {
+                if let Some(slot) = weak_slot.upgrade() {
+                    if let Some(slot) = slot.lock().unwrap().take() {
+                        for (k, v) in slot.iter() {
+                            if k.starts_with("DataChannel") {
+                                obs.observe_u64(&data_snd, v.bytes_sent, &[]);
+                                obs.observe_u64(
+                                    &data_rcv,
+                                    v.bytes_received,
+                                    &[],
+                                );
+                                obs.observe_u64(
+                                    &data_snd_msg,
+                                    v.messages_sent,
+                                    &[],
+                                );
+                                obs.observe_u64(
+                                    &data_rcv_msg,
+                                    v.messages_received,
+                                    &[],
+                                );
+                            } else if k.starts_with("iceTransport") {
+                                obs.observe_u64(&ice_snd, v.bytes_sent, &[]);
+                                obs.observe_u64(
+                                    &ice_rcv,
+                                    v.bytes_received,
+                                    &[],
+                                );
+                            }
+                        }
+                    }
+                }
+            },
+        ) {
+            Ok(unregister) => Some(unregister),
+            Err(err) => {
+                tracing::warn!(?err, "unable to register connection metrics");
+                None
+            }
+        };
+        Unregister(unregister)
+    };
+
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
 
     tracing::debug!("PEER CON OPEN");
@@ -394,6 +539,17 @@ async fn new_conn_task(
                     None => {
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
+                    }
+                    Some(MultiEvt::Stats(resp)) => {
+                        if let Ok(mut buf) = peer.stats().await.map(BackBuf::from_raw) {
+                            if let Ok(val) = buf.to_json() {
+                                let _ = resp.send(Some(val));
+                            } else {
+                                let _ = resp.send(None);
+                            }
+                        } else {
+                            let _ = resp.send(None);
+                        }
                     }
                     Some(MultiEvt::Peer(PeerEvt::Error(err))) => {
                         conn_state.close(err);

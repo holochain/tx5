@@ -770,7 +770,8 @@ async fn conn_state_task(
 pub(crate) struct ConnStateMeta {
     pub(crate) created_at: std::time::Instant,
     pub(crate) last_active_at: std::time::Instant,
-    cli_url: Tx5Url,
+    pub(crate) cli_url: Tx5Url,
+    pub(crate) state_uniq: Uniq,
     pub(crate) conn_uniq: Uniq,
     pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
@@ -836,6 +837,10 @@ impl ConnState {
         &self.1
     }
     */
+
+    pub(crate) fn meta(&self) -> &ConnStateMeta {
+        &self.1
+    }
 
     /// Get a weak version of this ConnState instance.
     pub fn weak(&self) -> ConnStateWeak {
@@ -1028,6 +1033,7 @@ impl ConnState {
             created_at: std::time::Instant::now(),
             last_active_at: std::time::Instant::now(),
             cli_url,
+            state_uniq,
             conn_uniq: conn_uniq.clone(),
             config: config.clone(),
             connected: Arc::new(atomic::AtomicBool::new(false)),

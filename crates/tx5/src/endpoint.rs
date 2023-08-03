@@ -487,7 +487,8 @@ async fn new_conn_task(
             &[data_snd.as_any(), data_rcv.as_any()],
             move |obs| {
                 if let Some(slot) = weak_slot.upgrade() {
-                    if let Some(slot) = slot.lock().unwrap().take() {
+                    let guard = slot.lock().unwrap();
+                    if let Some(slot) = &*guard {
                         for (k, v) in slot.iter() {
                             if k.starts_with("DataChannel") {
                                 obs.observe_u64(&data_snd, v.bytes_sent, &[]);

@@ -105,6 +105,8 @@ async fn endpoint_sanity() {
     assert!(metrics.matches("tx5.endpoint.conn.count").count() > 0);
     assert!(metrics.matches("tx5.endpoint.conn.recv.By").count() > 0);
     assert!(metrics.matches("tx5.endpoint.conn.send.By").count() > 0);
+
+    influxive.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread")]

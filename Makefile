@@ -57,7 +57,7 @@ publish:
 
 test: static tools
 	cargo build --all-targets
-	RUST_BACKTRACE=1 cargo test -- --nocapture
+	RUST_BACKTRACE=1 cargo test -- --test-threads 1 --nocapture
 
 static: docs tools
 	cargo fmt -- --check

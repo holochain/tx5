@@ -241,8 +241,7 @@ impl ConnStateEvtSnd {
 struct ConnStateData {
     conn_uniq: Uniq,
     this: ConnStateWeak,
-    metrics: prometheus::Registry,
-    metric_conn_count: prometheus::IntGauge,
+    metric_conn_count: AtomicObservableUpDownCounterI64,
     meta: ConnStateMeta,
     state: StateWeak,
     this_id: Id,
@@ -260,6 +259,7 @@ struct ConnStateData {
 
 impl Drop for ConnStateData {
     fn drop(&mut self) {
+        self.metric_conn_count.add(-1);
         self.shutdown(Error::id("Dropped"));
     }
 }
@@ -277,19 +277,6 @@ impl ConnStateData {
             rem_id = ?self.rem_id,
             "ConnShutdown",
         );
-        self.metric_conn_count.dec();
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_bytes_snd.clone()));
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_bytes_rcv.clone()));
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_age.clone()));
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_last_active.clone()));
         if let Some(state) = self.state.upgrade() {
             state.close_conn(self.rem_id, self.this.clone(), err.err_clone());
         }
@@ -334,8 +321,7 @@ impl ConnStateData {
     }
 
     async fn tick_1s(&mut self) -> Result<()> {
-        if self.meta.metric_last_active.elapsed()
-            > self.meta.config.max_conn_init()
+        if self.meta.last_active_at.elapsed() > self.meta.config.max_conn_init()
             && !self.connected()
         {
             self.shutdown(Error::id("InactivityTimeout"));
@@ -531,7 +517,7 @@ impl ConnStateData {
         // if we are within the close time send grace period
         // do not send any new messages so we can try to shut
         // down gracefully
-        if self.meta.metric_age.elapsed()
+        if self.meta.created_at.elapsed()
             > (MAX_CON_TIME - CON_CLOSE_SEND_GRACE)
         {
             return Ok(());
@@ -558,8 +544,8 @@ impl ConnStateData {
 
         tracing::trace!(conn_uniq = %self.conn_uniq, %msg_uniq, "conn send");
 
-        self.meta.metric_last_active.reset();
-        self.meta.metric_bytes_snd.inc_by(data.len()? as u64);
+        self.meta.last_active_at = std::time::Instant::now();
+        self.meta.metric_bytes_snd.add(data.len()? as u64);
 
         self.conn_evt.snd_data(
             self.this.clone(),
@@ -610,9 +596,9 @@ impl ConnStateData {
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<()> {
         let len = data.len();
-        self.meta.metric_last_active.reset();
+        self.meta.last_active_at = std::time::Instant::now();
 
-        self.meta.metric_bytes_rcv.inc_by(len as u64);
+        self.meta.metric_bytes_rcv.add(len as u64);
 
         let is_finish = ident.is_finish();
         let ident = ident.unset_finish();
@@ -699,8 +685,7 @@ enum ConnCmd {
 #[allow(clippy::too_many_arguments)]
 async fn conn_state_task(
     conn_limit: Arc<tokio::sync::Semaphore>,
-    metrics: prometheus::Registry,
-    metric_conn_count: prometheus::IntGauge,
+    metric_conn_count: AtomicObservableUpDownCounterI64,
     meta: ConnStateMeta,
     strong: ConnState,
     conn_rcv: ManyRcv<ConnStateEvt>,
@@ -714,12 +699,11 @@ async fn conn_state_task(
     sig_state: SigStateWeak,
     sig_ready: tokio::sync::oneshot::Receiver<Result<Tx5Url>>,
 ) -> Result<()> {
-    metric_conn_count.inc();
+    metric_conn_count.add(1);
 
     let mut data = ConnStateData {
         conn_uniq,
         this,
-        metrics,
         metric_conn_count,
         meta,
         state,
@@ -784,17 +768,17 @@ async fn conn_state_task(
 
 #[derive(Clone)]
 pub(crate) struct ConnStateMeta {
-    created_at: std::time::Instant,
-    cli_url: Tx5Url,
+    pub(crate) created_at: std::time::Instant,
+    pub(crate) last_active_at: std::time::Instant,
+    pub(crate) cli_url: Tx5Url,
+    pub(crate) state_uniq: Uniq,
     pub(crate) conn_uniq: Uniq,
     pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
     _conn_snd: ConnStateEvtSnd,
     pub(crate) rcv_limit: Arc<tokio::sync::Semaphore>,
-    pub(crate) metric_bytes_snd: prometheus::IntCounter,
-    pub(crate) metric_bytes_rcv: prometheus::IntCounter,
-    pub(crate) metric_age: MetricTimestamp,
-    pub(crate) metric_last_active: MetricTimestamp,
+    pub(crate) metric_bytes_snd: AtomicObservableCounterU64,
+    pub(crate) metric_bytes_rcv: AtomicObservableCounterU64,
     snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -853,6 +837,10 @@ impl ConnState {
         &self.1
     }
     */
+
+    pub(crate) fn meta(&self) -> &ConnStateMeta {
+        &self.1
+    }
 
     /// Get a weak version of this ConnState instance.
     pub fn weak(&self) -> ConnStateWeak {
@@ -973,11 +961,10 @@ impl ConnState {
     pub(crate) fn new_and_publish(
         config: DynConfig,
         conn_limit: Arc<tokio::sync::Semaphore>,
-        state_prefix: Arc<str>,
-        metrics: prometheus::Registry,
-        metric_conn_count: prometheus::IntGauge,
+        metric_conn_count: AtomicObservableUpDownCounterI64,
         state: StateWeak,
         sig_state: SigStateWeak,
+        state_uniq: Uniq,
         conn_uniq: Uniq,
         this_id: Id,
         cli_url: Tx5Url,
@@ -990,48 +977,63 @@ impl ConnState {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
         let conn_snd = ConnStateEvtSnd(conn_snd);
 
-        // TODO - creates too many time series, just aggregate the full counts
-        let bad_uniq = bad_uniq();
+        let metric_bytes_snd = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![
+                    opentelemetry_api::KeyValue::new(
+                        "state_uniq",
+                        state_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "conn_uniq",
+                        conn_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "remote_id",
+                        rem_id.to_string(),
+                    ),
+                ]),
+            )
+            .u64_observable_counter_atomic("tx5.endpoint.conn.send", 0)
+            .with_description("Outgoing bytes sent on this connection")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init()
+            .0;
 
-        let metric_bytes_snd = prometheus::IntCounter::new(
-            format!("{state_prefix}_conn_{bad_uniq}_bytes_snd"),
-            "bytes sent out of this connection",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_bytes_snd.clone()))
-            .map_err(Error::err)?;
-
-        let metric_bytes_rcv = prometheus::IntCounter::new(
-            format!("{state_prefix}_conn_{bad_uniq}_bytes_rcv"),
-            "incoming bytes received by this connection",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_bytes_rcv.clone()))
-            .map_err(Error::err)?;
-
-        let metric_age = MetricTimestamp::new(
-            format!("{state_prefix}_conn_{bad_uniq}_age"),
-            "microseconds since this connection was created",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_age.clone()))
-            .map_err(Error::err)?;
-
-        let metric_last_active = MetricTimestamp::new(
-            format!("{state_prefix}_conn_{bad_uniq}_last_active"),
-            "microseconds since we last sent or received data on this connection",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_last_active.clone()))
-            .map_err(Error::err)?;
+        let metric_bytes_rcv = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![
+                    opentelemetry_api::KeyValue::new(
+                        "state_uniq",
+                        state_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "conn_uniq",
+                        conn_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "remote_id",
+                        rem_id.to_string(),
+                    ),
+                ]),
+            )
+            .u64_observable_counter_atomic("tx5.endpoint.conn.recv", 0)
+            .with_description("Incoming bytes received on this connection")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init()
+            .0;
 
         let meta = ConnStateMeta {
             created_at: std::time::Instant::now(),
+            last_active_at: std::time::Instant::now(),
             cli_url,
+            state_uniq,
             conn_uniq: conn_uniq.clone(),
             config: config.clone(),
             connected: Arc::new(atomic::AtomicBool::new(false)),
@@ -1039,8 +1041,6 @@ impl ConnState {
             rcv_limit,
             metric_bytes_snd,
             metric_bytes_rcv,
-            metric_age,
-            metric_last_active,
             snd_ident,
         };
 
@@ -1056,7 +1056,6 @@ impl ConnState {
                 let strong = ConnState(this.upgrade().unwrap(), meta.clone());
                 conn_state_task(
                     conn_limit,
-                    metrics,
                     metric_conn_count,
                     meta.clone(),
                     strong,

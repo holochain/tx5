@@ -16,6 +16,23 @@ fn init_tracing() {
 async fn endpoint_sanity() {
     init_tracing();
 
+    let tmp = tempfile::tempdir().unwrap();
+
+    let (influxive, meter_provider) =
+        influxive::influxive_child_process_meter_provider(
+            influxive::InfluxiveChildSvcConfig::default()
+                .with_database_path(Some(tmp.path().to_owned())),
+            influxive::InfluxiveMeterProviderConfig::default()
+                .with_observable_report_interval(Some(
+                    std::time::Duration::from_millis(200),
+                )),
+        )
+        .await
+        .unwrap();
+    opentelemetry_api::global::set_meter_provider(meter_provider);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
     let mut srv_config = tx5_signal_srv::Config::default();
     srv_config.port = 0;
     srv_config.demo = true;
@@ -71,6 +88,25 @@ async fn endpoint_sanity() {
         "{}",
         serde_json::to_string_pretty(&ep2.get_stats().await.unwrap()).unwrap()
     );
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let metrics = influxive
+        .query(
+            r#"from(bucket: "influxive")
+|> range(start: -15m, stop: now())
+"#,
+        )
+        .await
+        .unwrap();
+
+    println!("@@@@@@\n{metrics}\n@@@@@@");
+
+    assert!(metrics.matches("tx5.endpoint.conn.count").count() > 0);
+    assert!(metrics.matches("tx5.endpoint.conn.recv.By").count() > 0);
+    assert!(metrics.matches("tx5.endpoint.conn.send.By").count() > 0);
+
+    influxive.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread")]

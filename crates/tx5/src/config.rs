@@ -19,9 +19,6 @@ pub trait Config: 'static + Send + Sync {
     /// Get the max init (connect) time for a connection.
     fn max_conn_init(&self) -> std::time::Duration;
 
-    /// Request the prometheus registry used by this config.
-    fn metrics(&self) -> &prometheus::Registry;
-
     /// Request the lair client associated with this config.
     fn lair_client(&self) -> &LairClient;
 
@@ -89,7 +86,6 @@ struct DefConfigBuilt {
     max_recv_bytes: u32,
     max_conn_count: u32,
     max_conn_init: std::time::Duration,
-    metrics: prometheus::Registry,
     _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     lair_tag: Arc<str>,
@@ -140,10 +136,6 @@ impl Config for DefConfigBuilt {
 
     fn max_conn_init(&self) -> std::time::Duration {
         self.max_conn_init
-    }
-
-    fn metrics(&self) -> &prometheus::Registry {
-        &self.metrics
     }
 
     fn lair_client(&self) -> &LairClient {
@@ -202,7 +194,6 @@ pub struct DefConfig {
     max_recv_bytes: Option<u32>,
     max_conn_count: Option<u32>,
     max_conn_init: Option<std::time::Duration>,
-    metrics: Option<prometheus::Registry>,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
     on_new_sig_cb: Option<
@@ -258,9 +249,6 @@ impl IntoConfig for DefConfig {
             let max_conn_init = self
                 .max_conn_init
                 .unwrap_or(std::time::Duration::from_secs(60));
-            let metrics = self
-                .metrics
-                .unwrap_or_else(|| prometheus::default_registry().clone());
             let mut lair_keystore = None;
 
             let lair_tag = self.lair_tag.unwrap_or_else(|| {
@@ -335,7 +323,6 @@ impl IntoConfig for DefConfig {
                 max_recv_bytes,
                 max_conn_count,
                 max_conn_init,
-                metrics,
                 _lair_keystore: lair_keystore,
                 lair_client,
                 lair_tag,
@@ -399,18 +386,6 @@ impl DefConfig {
         max_conn_init: std::time::Duration,
     ) -> Self {
         self.set_max_conn_init(max_conn_init);
-        self
-    }
-
-    /// Set the prometheus metrics registry to use.
-    /// The default is the global static default registry.
-    pub fn set_metrics(&mut self, metrics: prometheus::Registry) {
-        self.metrics = Some(metrics);
-    }
-
-    /// See `set_metrics()`, this is the builder version.
-    pub fn with_metrics(mut self, metrics: prometheus::Registry) -> Self {
-        self.set_metrics(metrics);
         self
     }
 

@@ -21,9 +21,9 @@ dunce = "1.0.3"
 futures = "0.3.28"
 if-addrs = "0.10.1"
 Inflector = "0.11.4"
-influxive-otel-atomic-obs = "=0.0.1-alpha.10"
-influxive-child-svc = "=0.0.1-alpha.10"
-influxive = "=0.0.1-alpha.10"
+influxive-otel-atomic-obs = "=0.0.1-alpha.11"
+influxive-child-svc = "=0.0.1-alpha.11"
+influxive = "=0.0.1-alpha.11"
 lair_keystore_api = "0.2.4"
 libc = "0.2.141"
 libloading = "0.8.0"
@@ -58,7 +58,7 @@ tx5-go-pion-sys = { version = "0.0.1-alpha.12", path = "crates/tx5-go-pion-sys" 
 tx5-go-pion = { version = "0.0.1-alpha.11", path = "crates/tx5-go-pion" }
 tx5-signal-srv = { version = "0.0.1-alpha.9", path = "crates/tx5-signal-srv" }
 tx5-signal = { version = "0.0.1-alpha.10", path = "crates/tx5-signal" }
-tx5 = { version = "0.0.1-alpha.18", path = "crates/tx5" }
+tx5 = { version = "0.0.1-alpha.19", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
 warp = { version = "0.3.4", features = [ "websocket" ] }
 webpki-roots = { version = "0.23.0" }

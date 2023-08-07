@@ -22,10 +22,8 @@ require (
 	github.com/pion/sdp/v3 v3.0.6 // indirect
 	github.com/pion/srtp/v2 v2.0.16 // indirect
 	github.com/pion/stun v0.6.1 // indirect
-	github.com/pion/transport v0.14.1 // indirect
 	github.com/pion/transport/v2 v2.2.1 // indirect
 	github.com/pion/turn/v2 v2.1.3 // indirect
-	github.com/pion/udp v0.1.4 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect
 	golang.org/x/crypto v0.12.0 // indirect

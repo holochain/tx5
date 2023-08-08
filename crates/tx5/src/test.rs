@@ -13,6 +13,132 @@ fn init_tracing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn check_send_backpressure() {
+    init_tracing();
+
+    let this_id = Id::from([1; 32]);
+    let this_id = &this_id;
+    let other_id = Id::from([2; 32]);
+    let other_id = &other_id;
+
+    let sig_url = Tx5Url::new("ws://fake:1").unwrap();
+
+    let this_url = sig_url.to_client(this_id.clone());
+    let this_url = &this_url;
+    let other_url = sig_url.to_client(other_id.clone());
+    let other_url = &other_url;
+
+    let send_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let notify = Arc::new(tokio::sync::Notify::new());
+
+    let this_url_sig = this_url.clone();
+    let other_id_sig = other_id.clone();
+    let send_count_conn = send_count.clone();
+    let notify_conn = notify.clone();
+    let config = DefConfig::default()
+        .with_max_send_bytes(20)
+        .with_per_data_chan_buf_low(10)
+        .with_new_sig_cb(move |_, _, seed| {
+            let (sig_state, mut sig_evt) = seed
+                .result_ok(
+                    this_url_sig.clone(),
+                    Arc::new(serde_json::json!([])),
+                )
+                .unwrap();
+            let other_id = other_id_sig.clone();
+            tokio::task::spawn(async move {
+                while let Some(Ok(evt)) = sig_evt.recv().await {
+                    match evt {
+                        state::SigStateEvt::SndOffer(_, _, mut r) => {
+                            r.send(Ok(()));
+                            sig_state
+                                .answer(
+                                    other_id.clone(),
+                                    BackBuf::from_slice(&[]).unwrap(),
+                                )
+                                .unwrap();
+                        }
+                        _ => println!("unhandled SIG_EVT: {evt:?}"),
+                    }
+                }
+            });
+        })
+        .with_new_conn_cb(move |_, _, seed| {
+            let (conn_state, mut conn_evt) = seed.result_ok().unwrap();
+            let send_count_conn = send_count_conn.clone();
+            let notify_conn = notify_conn.clone();
+            tokio::task::spawn(async move {
+                while let Some(Ok(evt)) = conn_evt.recv().await {
+                    match evt {
+                        state::ConnStateEvt::CreateOffer(mut r) => {
+                            r.send(BackBuf::from_slice(&[]));
+                        }
+                        state::ConnStateEvt::SetLoc(_, mut r) => {
+                            r.send(Ok(()));
+                        }
+                        state::ConnStateEvt::SetRem(_, mut r) => {
+                            r.send(Ok(()));
+                        }
+                        state::ConnStateEvt::SndData(_, mut r) => {
+                            let notify_conn = notify_conn.clone();
+                            tokio::task::spawn(async move {
+                                notify_conn.notified().await;
+                                r.send(Ok(state::BufState::Low));
+                            });
+                            send_count_conn.fetch_add(
+                                1,
+                                std::sync::atomic::Ordering::SeqCst,
+                            );
+                        }
+                        _ => println!("unhandled CONN_EVT: {evt:?}"),
+                    }
+                }
+            });
+            conn_state.ready().unwrap();
+            tokio::task::spawn(async move {
+                let _conn_state = conn_state;
+
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            });
+        });
+
+    let (ep1, _ep_rcv1) = Ep::with_config(config).await.unwrap();
+
+    ep1.listen(sig_url).await.unwrap();
+
+    let fut1 = ep1.send(other_url.clone(), &b"1234567890"[..]);
+    let send_task_1 = tokio::task::spawn(async move {
+        fut1.await.unwrap();
+    });
+
+    let fut2 = ep1.send(other_url.clone(), &b"1234567890"[..]);
+    let send_task_2 = tokio::task::spawn(async move {
+        fut2.await.unwrap();
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // make sure only the preflight and our first message have been "sent"
+    assert_eq!(2, send_count.load(std::sync::atomic::Ordering::SeqCst));
+
+    notify.notify_waiters();
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // after sending the preflight and first messages through,
+    // now the second message is queued up for send on our mock backend.
+    assert_eq!(3, send_count.load(std::sync::atomic::Ordering::SeqCst));
+
+    // now let the second message through
+    notify.notify_waiters();
+
+    // make sure our send tasks resolve
+    send_task_1.await.unwrap();
+    send_task_2.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn endpoint_sanity() {
     init_tracing();
 

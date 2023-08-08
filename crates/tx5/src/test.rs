@@ -327,17 +327,26 @@ async fn preflight_huge() {
     let cli_url2 = ep2.listen(sig_url).await.unwrap();
     println!("cli_url2: {}", cli_url2);
 
+    let recv_task = tokio::task::spawn(async move {
+        match ep_rcv1.recv().await {
+            Some(Ok(EpEvt::Connected { .. })) => (),
+            oth => panic!("unexpected: {:?}", oth),
+        }
+
+        match ep_rcv2.recv().await {
+            Some(Ok(EpEvt::Connected { .. })) => (),
+            oth => panic!("unexpected: {:?}", oth),
+        }
+
+        match ep_rcv2.recv().await {
+            Some(Ok(EpEvt::Data { .. })) => (),
+            oth => panic!("unexpected: {:?}", oth),
+        }
+    });
+
     ep1.send(cli_url2, &b"hello"[..]).await.unwrap();
 
-    match ep_rcv1.recv().await {
-        Some(Ok(EpEvt::Connected { .. })) => (),
-        oth => panic!("unexpected: {:?}", oth),
-    }
-
-    match ep_rcv2.recv().await {
-        Some(Ok(EpEvt::Connected { .. })) => (),
-        oth => panic!("unexpected: {:?}", oth),
-    }
+    recv_task.await.unwrap();
 
     assert_eq!(2, valid_count.load(std::sync::atomic::Ordering::SeqCst));
 }

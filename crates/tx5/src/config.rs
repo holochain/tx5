@@ -254,7 +254,8 @@ impl IntoConfig for DefConfig {
         Box::pin(async move {
             let max_send_bytes =
                 self.max_send_bytes.unwrap_or(16 * 1024 * 1024);
-            let per_data_chan_buf_low = self.per_data_chan_buf_low.unwrap_or(0);
+            let per_data_chan_buf_low =
+                self.per_data_chan_buf_low.unwrap_or(64 * 1024);
             let max_recv_bytes =
                 self.max_recv_bytes.unwrap_or(16 * 1024 * 1024);
             let max_conn_count = self.max_conn_count.unwrap_or(255);
@@ -364,7 +365,7 @@ impl DefConfig {
     }
 
     /// Set the per-data-channel buffer low threshold.
-    /// The default is `0`.
+    /// The default is `64 * 1024`.
     pub fn set_per_data_chan_buf_low(&mut self, per_data_chan_buf_low: usize) {
         self.per_data_chan_buf_low = Some(per_data_chan_buf_low);
     }

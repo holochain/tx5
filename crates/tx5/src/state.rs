@@ -239,6 +239,7 @@ impl StateData {
                 msg_uniq,
                 rem_id,
                 data,
+                timestamp,
                 send_permit,
                 resp,
                 cli_url,
@@ -247,6 +248,7 @@ impl StateData {
                     msg_uniq,
                     rem_id,
                     data,
+                    timestamp,
                     send_permit,
                     resp,
                     cli_url,
@@ -499,11 +501,13 @@ impl StateData {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn send_data(
         &mut self,
         msg_uniq: Uniq,
         rem_id: Id,
         data: BackBuf,
+        timestamp: std::time::Instant,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         data_sent: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
@@ -513,8 +517,8 @@ impl StateData {
                 ?rem_id,
                 "Ignoring request to send data to banned remote"
             );
+            let _ = data_sent.send(Err(Error::id("Ban")));
             return Ok(());
-            //return Err(Error::id("Ban"));
         }
 
         self.send_map
@@ -523,7 +527,7 @@ impl StateData {
             .push_back(SendData {
                 msg_uniq: msg_uniq.clone(),
                 data,
-                timestamp: std::time::Instant::now(),
+                timestamp,
                 resp: Some(data_sent),
                 send_permit,
             });
@@ -532,7 +536,7 @@ impl StateData {
 
         if let Some((e, _)) = self.conn_map.get(&rem_id) {
             if let Some(conn) = e.upgrade() {
-                conn.notify_send_waiting().await;
+                conn.check_send_waiting(None).await;
                 return Ok(());
             } else {
                 self.conn_map.remove(&rem_id);
@@ -793,6 +797,7 @@ enum StateCmd {
         msg_uniq: Uniq,
         rem_id: Id,
         data: BackBuf,
+        timestamp: std::time::Instant,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         resp: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
@@ -1047,6 +1052,8 @@ impl State {
         cli_url: Tx5Url,
         data: B,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
+        let timestamp = std::time::Instant::now();
+
         let buf_list = if !cli_url.is_client() {
             Err(Error::err(
                 "Invalid tx5 signal server url, expect client url",
@@ -1059,63 +1066,76 @@ impl State {
 
         let this = self.clone();
         async move {
-            let cli_url = &cli_url;
-            let msg_uniq = meta.state_uniq.sub();
+            tokio::time::timeout(meta.config.max_conn_init(), async move {
+                let cli_url = &cli_url;
+                let msg_uniq = meta.state_uniq.sub();
+                let msg_uniq = &msg_uniq;
 
-            let buf_list = buf_list?;
+                let buf_list = buf_list?;
 
-            for (idx, mut buf) in buf_list.into_iter().enumerate() {
-                let len = buf.len()?;
+                let mut resp_list = Vec::with_capacity(buf_list.len());
 
-                tracing::trace!(%msg_uniq, %len, "snd_data");
+                for (idx, mut buf) in buf_list.into_iter().enumerate() {
+                    let len = buf.len()?;
 
-                if meta.snd_limit.available_permits() < len {
-                    tracing::warn!(%msg_uniq, %len, "send queue full, waiting for permits");
-                }
+                    tracing::trace!(%msg_uniq, %len, "snd_data");
 
-                let send_permit = meta
-                    .snd_limit
-                    .clone()
-                    .acquire_many_owned(len as u32)
-                    .await
-                    .map_err(Error::err)?;
+                    if meta.snd_limit.available_permits() < len {
+                        tracing::warn!(%msg_uniq, %len, "send queue full, waiting for permits");
+                    }
 
-                tracing::trace!(%msg_uniq, %idx, %len, "snd_data:got permit");
+                    let send_permit = meta
+                        .snd_limit
+                        .clone()
+                        .acquire_many_owned(len as u32)
+                        .await
+                        .map_err(Error::err)?;
 
-                let rem_id = cli_url.id().unwrap();
+                    tracing::trace!(%msg_uniq, %idx, %len, "snd_data:got permit");
 
-                let (s_sent, r_sent) = tokio::sync::oneshot::channel();
+                    let rem_id = cli_url.id().unwrap();
 
-                if let Err(err) = this.0.send(Ok(StateCmd::SendData {
-                    msg_uniq: msg_uniq.clone(),
-                    rem_id,
-                    data: buf,
-                    send_permit,
-                    resp: s_sent,
-                    cli_url: cli_url.clone(),
-                })) {
-                    tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
-                    return Err(err);
-                }
+                    let (s_sent, r_sent) = tokio::sync::oneshot::channel();
 
-                match r_sent.await.map_err(|_| Error::id("Closed")) {
-                    Ok(r) => match r {
-                        Ok(_) => {
-                            tracing::trace!(%msg_uniq, %idx, "snd_data:complete ok");
-                        }
-                        Err(err) => {
-                            tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
-                            return Err(err);
-                        }
-                    },
-                    Err(err) => {
+                    if let Err(err) = this.0.send(Ok(StateCmd::SendData {
+                        msg_uniq: msg_uniq.clone(),
+                        rem_id,
+                        data: buf,
+                        timestamp,
+                        send_permit,
+                        resp: s_sent,
+                        cli_url: cli_url.clone(),
+                    })) {
                         tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
                         return Err(err);
                     }
-                }
-            }
 
-            Ok(())
+                    resp_list.push(async move {
+                        match r_sent.await.map_err(|_| Error::id("Closed")) {
+                            Ok(r) => match r {
+                                Ok(_) => {
+                                    tracing::trace!(%msg_uniq, %idx, "snd_data:complete ok");
+                                }
+                                Err(err) => {
+                                    tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
+                                    return Err(err);
+                                }
+                            },
+                            Err(err) => {
+                                tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
+                                return Err(err);
+                            }
+                        }
+                        Ok(())
+                    });
+                }
+
+                for resp in resp_list {
+                    resp.await?;
+                }
+
+                Ok(())
+            }).await.map_err(|_| Error::id("Timeout"))?
         }
     }
 

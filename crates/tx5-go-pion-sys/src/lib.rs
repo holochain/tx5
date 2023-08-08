@@ -179,6 +179,7 @@ pub enum Event {
         data_chan_id: DataChanId,
         buffer_id: BufferId,
     },
+    DataChanBufferedAmountLow(DataChanId),
 }
 
 pub struct Api(LibInner);
@@ -246,6 +247,9 @@ impl Api {
                     data_chan_id: slot_a,
                     buffer_id: slot_b,
                 },
+                TY_DATA_CHAN_ON_BUFFERED_AMOUNT_LOW => {
+                    Event::DataChanBufferedAmountLow(slot_a)
+                }
                 oth => Event::Error(Error::err(format!(
                     "invalid event_type: {oth}",
                 ))),
@@ -616,11 +620,30 @@ impl Api {
         &self,
         id: DataChanId,
         buffer_id: BufferId,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         self.call(TY_DATA_CHAN_SEND, id, buffer_id, 0, 0, |r| match r {
-            Ok((_t, _a, _b, _c, _d)) => Ok(()),
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })
+    }
+
+    #[inline]
+    pub unsafe fn data_chan_set_buffered_amount_low_threshold(
+        &self,
+        id: DataChanId,
+        threshold: usize,
+    ) -> Result<usize> {
+        self.call(
+            TY_DATA_CHAN_SET_BUFFERED_AMOUNT_LOW_THRESHOLD,
+            id,
+            threshold,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
+            },
+        )
     }
 }
 

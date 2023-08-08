@@ -357,10 +357,12 @@ pub(crate) fn on_new_conn(
 
 #[cfg(feature = "backend-go-pion")]
 async fn new_conn_task(
-    _config: DynConfig,
+    config: DynConfig,
     ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
+    let config = &config;
+
     use tx5_go_pion::DataChannelEvent as DataEvt;
     use tx5_go_pion::PeerConnectionEvent as PeerEvt;
     use tx5_go_pion::PeerConnectionState as PeerState;
@@ -582,6 +584,14 @@ async fn new_conn_task(
                         data_chan = Some(chan.handle(move |evt| {
                             let _ = peer_snd.send(MultiEvt::Data(evt));
                         }));
+                        if let Err(err) = data_chan
+                            .as_mut()
+                            .unwrap()
+                            .set_buffered_amount_low_threshold(
+                                config.per_data_chan_buf_low(),
+                            ) {
+                                tracing::warn!(?err, "failed to set buffered amount low threshold on incoming data channel");
+                            }
                     }
                     Some(MultiEvt::Data(DataEvt::Open)) => {
                         if conn_state.ready().is_err() {
@@ -596,6 +606,9 @@ async fn new_conn_task(
                         if conn_state.rcv_data(BackBuf::from_raw(buf)).is_err() {
                             break;
                         }
+                    }
+                    Some(MultiEvt::Data(DataEvt::BufferedAmountLow)) => {
+                        conn_state.notify_send_complete(state::BufState::Low);
                     }
                 }
             }
@@ -615,6 +628,13 @@ async fn new_conn_task(
                             *data_chan = Some(chan.handle(move |evt| {
                                 let _ = peer_snd.send(MultiEvt::Data(evt));
                             }));
+
+                            data_chan
+                                .as_mut()
+                                .unwrap()
+                                .set_buffered_amount_low_threshold(
+                                    config.per_data_chan_buf_low(),
+                                )?;
 
                             let mut buf = peer.create_offer(
                                 tx5_go_pion::OfferConfig::default(),
@@ -669,9 +689,12 @@ async fn new_conn_task(
                             match data_chan {
                                 None => Err(Error::id("NoDataChannel")),
                                 Some(chan) => {
-                                    chan.send(buf.imp.buf).await?;
-                                    // TODO - actually report this
-                                    Ok(state::BufState::Low)
+                                    let buf = chan.send(buf.imp.buf).await?;
+                                    if buf > config.per_data_chan_buf_low() {
+                                        Ok(state::BufState::High)
+                                    } else {
+                                        Ok(state::BufState::Low)
+                                    }
                                 }
                             }
                         }).await;

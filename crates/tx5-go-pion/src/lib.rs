@@ -325,15 +325,24 @@ mod tests {
         assert_eq!("data", &lbl1);
         assert_eq!("data", &lbl2);
 
+        // -- set the buffered amount low thresholds -- //
+
+        let b = chan1.set_buffered_amount_low_threshold(5).unwrap();
+        println!("chan1 pre-send buffered amount: {b}");
+        let b = chan2.set_buffered_amount_low_threshold(5).unwrap();
+        println!("chan2 pre-send buffered amount: {b}");
+
         // -- send data on the data channels -- //
 
         let mut buf = GoBuf::new().unwrap();
         buf.extend(b"hello").unwrap();
-        chan1.send(buf).await.unwrap();
+        let b = chan1.send(buf).await.unwrap();
+        println!("chan1 post-send buffered amount: {b}");
 
         let mut buf = GoBuf::new().unwrap();
         buf.extend(b"world").unwrap();
-        chan2.send(buf).await.unwrap();
+        let b = chan2.send(buf).await.unwrap();
+        println!("chan2 post-send buffered amount: {b}");
 
         // -- await receiving data on the data channels -- //
 

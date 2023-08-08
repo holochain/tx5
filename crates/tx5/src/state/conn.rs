@@ -255,6 +255,7 @@ struct ConnStateData {
     offer: (u64, u64, u64, u64),
     answer: (u64, u64, u64, u64),
     ice: (u64, u64, u64, u64),
+    buf_state: BufState,
 }
 
 impl Drop for ConnStateData {
@@ -310,7 +311,9 @@ impl ConnStateData {
             ConnCmd::InAnswer { answer } => self.in_answer(answer).await,
             ConnCmd::InIce { ice, cache } => self.in_ice(ice, cache).await,
             ConnCmd::Ready => self.ready().await,
-            ConnCmd::MaybeFetchForSend => self.maybe_fetch_for_send().await,
+            ConnCmd::MaybeFetchForSend { buf_state } => {
+                self.maybe_fetch_for_send(buf_state).await
+            }
             ConnCmd::Send { to_send } => self.send(to_send).await,
             ConnCmd::Recv {
                 ident,
@@ -506,10 +509,17 @@ impl ConnStateData {
         }
 
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
-        self.maybe_fetch_for_send().await
+        self.maybe_fetch_for_send(None).await
     }
 
-    async fn maybe_fetch_for_send(&mut self) -> Result<()> {
+    async fn maybe_fetch_for_send(
+        &mut self,
+        buf_state: Option<BufState>,
+    ) -> Result<()> {
+        if let Some(buf_state) = buf_state {
+            self.buf_state = buf_state;
+        }
+
         if !self.connected() {
             return Ok(());
         }
@@ -523,7 +533,11 @@ impl ConnStateData {
             return Ok(());
         }
 
-        // TODO - also check our buffer amt low status
+        if let BufState::High = self.buf_state {
+            // wait for our buffer state to be low before fetching
+            // more data to send.
+            return Ok(());
+        }
 
         if let Some(state) = self.state.upgrade() {
             state.fetch_for_send(self.this.clone(), self.rem_id)?;
@@ -671,7 +685,9 @@ enum ConnCmd {
         cache: bool,
     },
     Ready,
-    MaybeFetchForSend,
+    MaybeFetchForSend {
+        buf_state: Option<BufState>,
+    },
     Send {
         to_send: SendData,
     },
@@ -717,6 +733,7 @@ async fn conn_state_task(
         offer: (0, 0, 0, 0),
         answer: (0, 0, 0, 0),
         ice: (0, 0, 0, 0),
+        buf_state: BufState::Low,
     };
 
     let mut permit = None;
@@ -1151,17 +1168,18 @@ impl ConnState {
     }
 
     pub(crate) async fn notify_send_waiting(&self) {
-        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend));
+        let _ = self
+            .0
+            .send(Ok(ConnCmd::MaybeFetchForSend { buf_state: None }));
     }
 
     pub(crate) fn send(&self, to_send: SendData) {
         let _ = self.0.send(Ok(ConnCmd::Send { to_send }));
     }
 
-    pub(crate) fn notify_send_complete(&self, _buffer_state: BufState) {
-        // TODO - something with buffer state
-
-        // for now just trigger a check for another message to send
-        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend));
+    pub(crate) fn notify_send_complete(&self, buf_state: BufState) {
+        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend {
+            buf_state: Some(buf_state),
+        }));
     }
 }

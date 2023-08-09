@@ -442,15 +442,17 @@ async fn preflight_huge() {
             })
     }
 
-    let (ep1, mut ep_rcv1) = Ep::with_config(make_config(1, valid_count.clone()))
-        .await
-        .unwrap();
+    let (ep1, mut ep_rcv1) =
+        Ep::with_config(make_config(1, valid_count.clone()))
+            .await
+            .unwrap();
     let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
     println!("cli_url1: {}", cli_url1);
 
-    let (ep2, mut ep_rcv2) = Ep::with_config(make_config(2, valid_count.clone()))
-        .await
-        .unwrap();
+    let (ep2, mut ep_rcv2) =
+        Ep::with_config(make_config(2, valid_count.clone()))
+            .await
+            .unwrap();
     let cli_url2 = ep2.listen(sig_url).await.unwrap();
     println!("cli_url2: {}", cli_url2);
 

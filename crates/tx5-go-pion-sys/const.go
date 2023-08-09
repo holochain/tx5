@@ -144,7 +144,7 @@ const (
 	// - allowed contexts: Call, Response
 	// - call slot_a: data_chan id
 	// - call slot_b: buffer id
-  // - msg slot_a: cur buffer amount
+	// - msg slot_a: cur buffer amount
 	TyDataChanSend UintPtrT = 0xa004
 
 	// Request the label of an existing data channel.
@@ -157,13 +157,13 @@ const (
 	// - allowed contexts: Call, Response
 	// - call slot_a: data_chan id
 	// - call slot_b: threshold
-  // - msg slot_a: cur buffer amount
+	// - msg slot_a: cur buffer amount
 	TyDataChanSetBufferedAmountLowThreshold UintPtrT = 0xa006
 
 	// Get the amount of send data currently buffered on an existing data channel.
 	// - allowed contexts: Call, Response
 	// - call slot_a: data_chan id
-  // - msg slot_a: cur buffer amount
+	// - msg slot_a: cur buffer amount
 	TyDataChanBufferedAmount UintPtrT = 0xa007
 
 	// OnClose event on an existing data chan.

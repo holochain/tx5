@@ -543,6 +543,27 @@ async fn new_conn_task(
     };
 
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
+    let mut data_chan_ready = false;
+
+    let mut check_data_chan_ready =
+        |data_chan: &mut Option<tx5_go_pion::DataChannel>| {
+            if data_chan_ready {
+                return Ok(());
+            }
+            if let Some(data_chan) = data_chan.as_mut() {
+                let state = data_chan.ready_state()?;
+                if state == 2
+                /* open */
+                {
+                    data_chan_ready = true;
+                    data_chan.set_buffered_amount_low_threshold(
+                        config.per_data_chan_buf_low(),
+                    )?;
+                    conn_state.ready()?;
+                }
+            }
+            Result::Ok(())
+        };
 
     tracing::debug!(?conn_uniq, "PEER CON OPEN");
 
@@ -604,17 +625,12 @@ async fn new_conn_task(
                         data_chan = Some(chan.handle(move |evt| {
                             let _ = peer_snd.send(MultiEvt::Data(evt));
                         }));
-                        if let Err(err) = data_chan
-                            .as_mut()
-                            .unwrap()
-                            .set_buffered_amount_low_threshold(
-                                config.per_data_chan_buf_low(),
-                            ) {
-                                tracing::warn!(?err, "failed to set buffered amount low threshold on incoming data channel");
-                            }
+                        if check_data_chan_ready(&mut data_chan).is_err() {
+                            break;
+                        }
                     }
                     Some(MultiEvt::Data(DataEvt::Open)) => {
-                        if conn_state.ready().is_err() {
+                        if check_data_chan_ready(&mut data_chan).is_err() {
                             break;
                         }
                     }
@@ -637,7 +653,7 @@ async fn new_conn_task(
                 match msg {
                     Some(Ok(state::ConnStateEvt::CreateOffer(mut resp))) => {
                         let peer = &mut peer;
-                        let data_chan = &mut data_chan;
+                        let data_chan_w = &mut data_chan;
                         let peer_snd = peer_snd.clone();
                         resp.with(move || async move {
                             let chan = peer.create_data_channel(
@@ -646,16 +662,9 @@ async fn new_conn_task(
                                 }
                             ).await?;
 
-                            *data_chan = Some(chan.handle(move |evt| {
+                            *data_chan_w = Some(chan.handle(move |evt| {
                                 let _ = peer_snd.send(MultiEvt::Data(evt));
                             }));
-
-                            data_chan
-                                .as_mut()
-                                .unwrap()
-                                .set_buffered_amount_low_threshold(
-                                    config.per_data_chan_buf_low(),
-                                )?;
 
                             let mut buf = peer.create_offer(
                                 tx5_go_pion::OfferConfig::default(),
@@ -670,6 +679,10 @@ async fn new_conn_task(
 
                             Ok(BackBuf::from_raw(buf))
                         }).await;
+
+                        if check_data_chan_ready(&mut data_chan).is_err() {
+                            break;
+                        }
                     }
                     Some(Ok(state::ConnStateEvt::CreateAnswer(mut resp))) => {
                         let peer = &mut peer;

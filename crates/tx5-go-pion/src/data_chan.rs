@@ -86,12 +86,8 @@ impl DataChannel {
 
     /// Returns the current BufferedAmount.
     #[inline]
-    pub fn buffered_amount(
-        &mut self,
-    ) -> Result<usize> {
-        unsafe {
-            API.data_chan_buffered_amount(self.0)
-        }
+    pub fn buffered_amount(&mut self) -> Result<usize> {
+        unsafe { API.data_chan_buffered_amount(self.0) }
     }
 
     /// Send data to the remote peer on this DataChannel.

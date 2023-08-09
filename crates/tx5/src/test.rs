@@ -424,55 +424,80 @@ async fn preflight_huge() {
     const HUGE_DATA: &[u8] = &[42; 16 * 1024 * 512];
 
     fn make_config(
+        ep_num: usize,
         valid_count: Arc<std::sync::atomic::AtomicUsize>,
     ) -> DefConfig {
         DefConfig::default()
-            .with_conn_preflight(|_, _| {
-                println!("PREFLIGHT");
+            .with_conn_preflight(move |_, _| {
+                println!("PREFLIGHT:{ep_num}");
                 Box::pin(async move {
                     Ok(Some(bytes::Bytes::from_static(HUGE_DATA)))
                 })
             })
             .with_conn_validate(move |_, _, data| {
-                println!("VALIDATE");
+                println!("VALIDATE:{ep_num}");
                 assert_eq!(HUGE_DATA, data.unwrap());
                 valid_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Box::pin(async move { Ok(()) })
             })
     }
 
-    let (ep1, mut ep_rcv1) = Ep::with_config(make_config(valid_count.clone()))
+    let (ep1, mut ep_rcv1) = Ep::with_config(make_config(1, valid_count.clone()))
         .await
         .unwrap();
     let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
     println!("cli_url1: {}", cli_url1);
 
-    let (ep2, mut ep_rcv2) = Ep::with_config(make_config(valid_count.clone()))
+    let (ep2, mut ep_rcv2) = Ep::with_config(make_config(2, valid_count.clone()))
         .await
         .unwrap();
     let cli_url2 = ep2.listen(sig_url).await.unwrap();
     println!("cli_url2: {}", cli_url2);
 
-    let recv_task = tokio::task::spawn(async move {
-        match ep_rcv1.recv().await {
-            Some(Ok(EpEvt::Connected { .. })) => (),
-            oth => panic!("unexpected: {:?}", oth),
+    let (s1, r1) = tokio::sync::oneshot::channel();
+    let mut s1 = Some(s1);
+    tokio::task::spawn(async move {
+        loop {
+            match ep_rcv1.recv().await {
+                Some(Ok(EpEvt::Connected { .. })) => {
+                    if let Some(s1) = s1.take() {
+                        println!("ONE connected");
+                        let _ = s1.send(());
+                    }
+                }
+                oth => panic!("unexpected: {:?}", oth),
+            }
         }
+    });
 
-        match ep_rcv2.recv().await {
-            Some(Ok(EpEvt::Connected { .. })) => (),
-            oth => panic!("unexpected: {:?}", oth),
-        }
+    let (s2, r2) = tokio::sync::oneshot::channel();
+    let mut s2 = Some(s2);
+    tokio::task::spawn(async move {
+        let mut done_count = 0;
+        let done_count = &mut done_count;
+        let mut check = move || {
+            *done_count += 1;
+            println!("TWO recv: check_count: {done_count}");
+            if *done_count == 2 {
+                if let Some(s2) = s2.take() {
+                    let _ = s2.send(());
+                }
+            }
+        };
 
-        match ep_rcv2.recv().await {
-            Some(Ok(EpEvt::Data { .. })) => (),
-            oth => panic!("unexpected: {:?}", oth),
+        loop {
+            match ep_rcv2.recv().await {
+                Some(Ok(EpEvt::Connected { .. })) => check(),
+                Some(Ok(EpEvt::Data { .. })) => check(),
+                oth => panic!("unexpected: {:?}", oth),
+            }
         }
     });
 
     ep1.send(cli_url2, &b"hello"[..]).await.unwrap();
 
-    recv_task.await.unwrap();
+    r1.await.unwrap();
+    r2.await.unwrap();
 
     assert_eq!(2, valid_count.load(std::sync::atomic::Ordering::SeqCst));
 }

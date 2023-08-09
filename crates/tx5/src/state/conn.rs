@@ -56,6 +56,7 @@ impl ConnStateSeed {
 }
 
 /// Indication of the current buffer state.
+#[derive(Debug, PartialEq)]
 pub enum BufState {
     /// BackBuffer is low, we can buffer more data.
     Low,
@@ -525,7 +526,15 @@ impl ConnStateData {
         }
 
         if let Some(buf_state) = buf_state {
-            self.buf_state = buf_state;
+            if self.buf_state != buf_state {
+                tracing::debug!(
+                    conn_uniq = %self.meta.conn_uniq,
+                    old_buf_state = ?self.buf_state,
+                    new_buf_state = ?buf_state,
+                    "Updating BufState",
+                );
+                self.buf_state = buf_state;
+            }
         }
 
         if !self.connected() {

@@ -368,6 +368,7 @@ async fn new_conn_task(
     use tx5_go_pion::PeerConnectionState as PeerState;
 
     enum MultiEvt {
+        OneSec,
         Stats(
             tokio::sync::oneshot::Sender<
                 Option<HashMap<String, BackendMetrics>>,
@@ -419,6 +420,16 @@ async fn new_conn_task(
             }
         }
     }
+
+    let peer_snd_task = peer_snd.clone();
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if peer_snd_task.send(MultiEvt::OneSec).is_err() {
+                break;
+            }
+        }
+    });
 
     let slot: Arc<std::sync::Mutex<Option<HashMap<String, BackendMetrics>>>> =
         Arc::new(std::sync::Mutex::new(None));
@@ -533,7 +544,7 @@ async fn new_conn_task(
 
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
 
-    tracing::debug!("PEER CON OPEN");
+    tracing::debug!(?conn_uniq, "PEER CON OPEN");
 
     loop {
         tokio::select! {
@@ -542,6 +553,15 @@ async fn new_conn_task(
                     None => {
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
+                    }
+                    Some(MultiEvt::OneSec) => {
+                        if let Some(data_chan) = data_chan.as_mut() {
+                            if let Ok(buf) = data_chan.buffered_amount() {
+                                if buf <= config.per_data_chan_buf_low() {
+                                    conn_state.check_send_waiting(Some(state::BufState::Low)).await;
+                                }
+                            }
+                        }
                     }
                     Some(MultiEvt::Stats(resp)) => {
                         if let Ok(mut buf) = peer.stats().await.map(BackBuf::from_raw) {
@@ -608,7 +628,8 @@ async fn new_conn_task(
                         }
                     }
                     Some(MultiEvt::Data(DataEvt::BufferedAmountLow)) => {
-                        conn_state.notify_send_complete(state::BufState::Low);
+                        tracing::debug!(?conn_uniq, "BufferedAmountLow");
+                        conn_state.check_send_waiting(Some(state::BufState::Low)).await;
                     }
                 }
             }

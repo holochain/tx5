@@ -331,6 +331,8 @@ func callInner(
 		CallDataChanSend(slot_a, slot_b, response_cb, response_usr)
 	case TyDataChanSetBufferedAmountLowThreshold:
 		CallDataChanSetBufferedAmountLowThreshold(slot_a, slot_b, response_cb, response_usr)
+	case TyDataChanBufferedAmount:
+		CallDataChanBufferedAmount(slot_a, response_cb, response_usr)
 	default:
 		panic(fmt.Errorf("invalid call_type: %d", call_type))
 	}

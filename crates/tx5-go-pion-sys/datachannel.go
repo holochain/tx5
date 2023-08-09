@@ -194,6 +194,33 @@ func CallDataChanSetBufferedAmountLowThreshold(
 	)
 }
 
+func CallDataChanBufferedAmount(
+	data_chan_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(data_chan_id)
+	dataChan := hnd.Value().(*DataChan)
+	dataChan.mu.Lock()
+	defer dataChan.mu.Unlock()
+
+	if dataChan.closed {
+		panic("DataChanClosed")
+	}
+
+	buffered := dataChan.ch.BufferedAmount()
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyDataChanBufferedAmount,
+		UintPtrT(buffered),
+		0,
+		0,
+		0,
+	)
+}
+
 func CallDataChanSend(
 	data_chan_id UintPtrT,
 	buffer_id UintPtrT,

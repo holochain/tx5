@@ -645,6 +645,24 @@ impl Api {
             },
         )
     }
+
+    #[inline]
+    pub unsafe fn data_chan_buffered_amount(
+        &self,
+        id: DataChanId,
+    ) -> Result<usize> {
+        self.call(
+            TY_DATA_CHAN_BUFFERED_AMOUNT,
+            id,
+            0,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
+            },
+        )
+    }
 }
 
 /// The main entrypoint for working with this ffi binding crate.

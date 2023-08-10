@@ -357,15 +357,18 @@ pub(crate) fn on_new_conn(
 
 #[cfg(feature = "backend-go-pion")]
 async fn new_conn_task(
-    _config: DynConfig,
+    config: DynConfig,
     ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
+    let config = &config;
+
     use tx5_go_pion::DataChannelEvent as DataEvt;
     use tx5_go_pion::PeerConnectionEvent as PeerEvt;
     use tx5_go_pion::PeerConnectionState as PeerState;
 
     enum MultiEvt {
+        OneSec,
         Stats(
             tokio::sync::oneshot::Sender<
                 Option<HashMap<String, BackendMetrics>>,
@@ -417,6 +420,16 @@ async fn new_conn_task(
             }
         }
     }
+
+    let peer_snd_task = peer_snd.clone();
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if peer_snd_task.send(MultiEvt::OneSec).is_err() {
+                break;
+            }
+        }
+    });
 
     let slot: Arc<std::sync::Mutex<Option<HashMap<String, BackendMetrics>>>> =
         Arc::new(std::sync::Mutex::new(None));
@@ -530,8 +543,29 @@ async fn new_conn_task(
     };
 
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
+    let mut data_chan_ready = false;
 
-    tracing::debug!("PEER CON OPEN");
+    let mut check_data_chan_ready =
+        |data_chan: &mut Option<tx5_go_pion::DataChannel>| {
+            if data_chan_ready {
+                return Ok(());
+            }
+            if let Some(data_chan) = data_chan.as_mut() {
+                let state = data_chan.ready_state()?;
+                if state == 2
+                /* open */
+                {
+                    data_chan_ready = true;
+                    data_chan.set_buffered_amount_low_threshold(
+                        config.per_data_chan_buf_low(),
+                    )?;
+                    conn_state.ready()?;
+                }
+            }
+            Result::Ok(())
+        };
+
+    tracing::debug!(?conn_uniq, "PEER CON OPEN");
 
     loop {
         tokio::select! {
@@ -540,6 +574,15 @@ async fn new_conn_task(
                     None => {
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
+                    }
+                    Some(MultiEvt::OneSec) => {
+                        if let Some(data_chan) = data_chan.as_mut() {
+                            if let Ok(buf) = data_chan.buffered_amount() {
+                                if buf <= config.per_data_chan_buf_low() {
+                                    conn_state.check_send_waiting(Some(state::BufState::Low)).await;
+                                }
+                            }
+                        }
                     }
                     Some(MultiEvt::Stats(resp)) => {
                         if let Ok(mut buf) = peer.stats().await.map(BackBuf::from_raw) {
@@ -582,9 +625,12 @@ async fn new_conn_task(
                         data_chan = Some(chan.handle(move |evt| {
                             let _ = peer_snd.send(MultiEvt::Data(evt));
                         }));
+                        if check_data_chan_ready(&mut data_chan).is_err() {
+                            break;
+                        }
                     }
                     Some(MultiEvt::Data(DataEvt::Open)) => {
-                        if conn_state.ready().is_err() {
+                        if check_data_chan_ready(&mut data_chan).is_err() {
                             break;
                         }
                     }
@@ -597,13 +643,17 @@ async fn new_conn_task(
                             break;
                         }
                     }
+                    Some(MultiEvt::Data(DataEvt::BufferedAmountLow)) => {
+                        tracing::debug!(?conn_uniq, "BufferedAmountLow");
+                        conn_state.check_send_waiting(Some(state::BufState::Low)).await;
+                    }
                 }
             }
             msg = conn_evt.recv() => {
                 match msg {
                     Some(Ok(state::ConnStateEvt::CreateOffer(mut resp))) => {
                         let peer = &mut peer;
-                        let data_chan = &mut data_chan;
+                        let data_chan_w = &mut data_chan;
                         let peer_snd = peer_snd.clone();
                         resp.with(move || async move {
                             let chan = peer.create_data_channel(
@@ -612,7 +662,7 @@ async fn new_conn_task(
                                 }
                             ).await?;
 
-                            *data_chan = Some(chan.handle(move |evt| {
+                            *data_chan_w = Some(chan.handle(move |evt| {
                                 let _ = peer_snd.send(MultiEvt::Data(evt));
                             }));
 
@@ -629,6 +679,10 @@ async fn new_conn_task(
 
                             Ok(BackBuf::from_raw(buf))
                         }).await;
+
+                        if check_data_chan_ready(&mut data_chan).is_err() {
+                            break;
+                        }
                     }
                     Some(Ok(state::ConnStateEvt::CreateAnswer(mut resp))) => {
                         let peer = &mut peer;
@@ -669,9 +723,12 @@ async fn new_conn_task(
                             match data_chan {
                                 None => Err(Error::id("NoDataChannel")),
                                 Some(chan) => {
-                                    chan.send(buf.imp.buf).await?;
-                                    // TODO - actually report this
-                                    Ok(state::BufState::Low)
+                                    let buf = chan.send(buf.imp.buf).await?;
+                                    if buf > config.per_data_chan_buf_low() {
+                                        Ok(state::BufState::High)
+                                    } else {
+                                        Ok(state::BufState::Low)
+                                    }
                                 }
                             }
                         }).await;

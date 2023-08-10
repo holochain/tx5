@@ -10,6 +10,9 @@ pub trait Config: 'static + Send + Sync {
     /// Get the max pending send byte count limit.
     fn max_send_bytes(&self) -> u32;
 
+    /// The per-data-channel buffer low threshold.
+    fn per_data_chan_buf_low(&self) -> usize;
+
     /// Get the max queued recv byte count limit.
     fn max_recv_bytes(&self) -> u32;
 
@@ -62,8 +65,10 @@ impl std::fmt::Debug for dyn Config + 'static + Send + Sync {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("max_send_bytes", &self.max_send_bytes())
+            .field("per_data_chan_buf_low", &self.per_data_chan_buf_low())
             .field("max_recv_bytes", &self.max_recv_bytes())
             .field("max_conn_count", &self.max_conn_count())
+            .field("max_conn_init", &self.max_conn_init())
             .finish()
     }
 }
@@ -83,6 +88,7 @@ impl IntoConfig for DynConfig {
 struct DefConfigBuilt {
     this: Weak<Self>,
     max_send_bytes: u32,
+    per_data_chan_buf_low: usize,
     max_recv_bytes: u32,
     max_conn_count: u32,
     max_conn_init: std::time::Duration,
@@ -124,6 +130,10 @@ struct DefConfigBuilt {
 impl Config for DefConfigBuilt {
     fn max_send_bytes(&self) -> u32 {
         self.max_send_bytes
+    }
+
+    fn per_data_chan_buf_low(&self) -> usize {
+        self.per_data_chan_buf_low
     }
 
     fn max_recv_bytes(&self) -> u32 {
@@ -191,6 +201,7 @@ impl Config for DefConfigBuilt {
 #[allow(clippy::type_complexity)]
 pub struct DefConfig {
     max_send_bytes: Option<u32>,
+    per_data_chan_buf_low: Option<usize>,
     max_recv_bytes: Option<u32>,
     max_conn_count: Option<u32>,
     max_conn_init: Option<std::time::Duration>,
@@ -243,6 +254,8 @@ impl IntoConfig for DefConfig {
         Box::pin(async move {
             let max_send_bytes =
                 self.max_send_bytes.unwrap_or(16 * 1024 * 1024);
+            let per_data_chan_buf_low =
+                self.per_data_chan_buf_low.unwrap_or(64 * 1024);
             let max_recv_bytes =
                 self.max_recv_bytes.unwrap_or(16 * 1024 * 1024);
             let max_conn_count = self.max_conn_count.unwrap_or(255);
@@ -320,6 +333,7 @@ impl IntoConfig for DefConfig {
             let out: DynConfig = Arc::new_cyclic(|this| DefConfigBuilt {
                 this: this.clone(),
                 max_send_bytes,
+                per_data_chan_buf_low,
                 max_recv_bytes,
                 max_conn_count,
                 max_conn_init,
@@ -347,6 +361,21 @@ impl DefConfig {
     /// See `set_max_send_bytes()`, this is the builder version.
     pub fn with_max_send_bytes(mut self, max_send_bytes: u32) -> Self {
         self.set_max_send_bytes(max_send_bytes);
+        self
+    }
+
+    /// Set the per-data-channel buffer low threshold.
+    /// The default is `64 * 1024`.
+    pub fn set_per_data_chan_buf_low(&mut self, per_data_chan_buf_low: usize) {
+        self.per_data_chan_buf_low = Some(per_data_chan_buf_low);
+    }
+
+    /// See `set_per_data_chan_buf_low()`, this is the builder version.
+    pub fn with_per_data_chan_buf_low(
+        mut self,
+        per_data_chan_buf_low: usize,
+    ) -> Self {
+        self.set_per_data_chan_buf_low(per_data_chan_buf_low);
         self
     }
 

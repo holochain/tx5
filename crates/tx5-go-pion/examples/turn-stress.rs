@@ -216,7 +216,7 @@ async fn spawn_chan(
     let s_d = std::sync::Mutex::new(Some(s_d));
     let c = std::sync::atomic::AtomicUsize::new(1);
     let mut chan = seed.handle(move |evt| match evt {
-        DataChannelEvent::Close => (),
+        DataChannelEvent::Close | DataChannelEvent::BufferedAmountLow => (),
         DataChannelEvent::Open => {
             if let Some(s_o) = s_o.lock().unwrap().take() {
                 let _ = s_o.send(());

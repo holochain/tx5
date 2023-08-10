@@ -13,6 +13,132 @@ fn init_tracing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn check_send_backpressure() {
+    init_tracing();
+
+    let this_id = Id::from([1; 32]);
+    let this_id = &this_id;
+    let other_id = Id::from([2; 32]);
+    let other_id = &other_id;
+
+    let sig_url = Tx5Url::new("ws://fake:1").unwrap();
+
+    let this_url = sig_url.to_client(this_id.clone());
+    let this_url = &this_url;
+    let other_url = sig_url.to_client(other_id.clone());
+    let other_url = &other_url;
+
+    let send_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let notify = Arc::new(tokio::sync::Notify::new());
+
+    let this_url_sig = this_url.clone();
+    let other_id_sig = other_id.clone();
+    let send_count_conn = send_count.clone();
+    let notify_conn = notify.clone();
+    let config = DefConfig::default()
+        .with_max_send_bytes(20)
+        .with_per_data_chan_buf_low(10)
+        .with_new_sig_cb(move |_, _, seed| {
+            let (sig_state, mut sig_evt) = seed
+                .result_ok(
+                    this_url_sig.clone(),
+                    Arc::new(serde_json::json!([])),
+                )
+                .unwrap();
+            let other_id = other_id_sig.clone();
+            tokio::task::spawn(async move {
+                while let Some(Ok(evt)) = sig_evt.recv().await {
+                    match evt {
+                        state::SigStateEvt::SndOffer(_, _, mut r) => {
+                            r.send(Ok(()));
+                            sig_state
+                                .answer(
+                                    other_id.clone(),
+                                    BackBuf::from_slice(&[]).unwrap(),
+                                )
+                                .unwrap();
+                        }
+                        _ => println!("unhandled SIG_EVT: {evt:?}"),
+                    }
+                }
+            });
+        })
+        .with_new_conn_cb(move |_, _, seed| {
+            let (conn_state, mut conn_evt) = seed.result_ok().unwrap();
+            let send_count_conn = send_count_conn.clone();
+            let notify_conn = notify_conn.clone();
+            tokio::task::spawn(async move {
+                while let Some(Ok(evt)) = conn_evt.recv().await {
+                    match evt {
+                        state::ConnStateEvt::CreateOffer(mut r) => {
+                            r.send(BackBuf::from_slice(&[]));
+                        }
+                        state::ConnStateEvt::SetLoc(_, mut r) => {
+                            r.send(Ok(()));
+                        }
+                        state::ConnStateEvt::SetRem(_, mut r) => {
+                            r.send(Ok(()));
+                        }
+                        state::ConnStateEvt::SndData(_, mut r) => {
+                            let notify_conn = notify_conn.clone();
+                            tokio::task::spawn(async move {
+                                notify_conn.notified().await;
+                                r.send(Ok(state::BufState::Low));
+                            });
+                            send_count_conn.fetch_add(
+                                1,
+                                std::sync::atomic::Ordering::SeqCst,
+                            );
+                        }
+                        _ => println!("unhandled CONN_EVT: {evt:?}"),
+                    }
+                }
+            });
+            conn_state.ready().unwrap();
+            tokio::task::spawn(async move {
+                let _conn_state = conn_state;
+
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            });
+        });
+
+    let (ep1, _ep_rcv1) = Ep::with_config(config).await.unwrap();
+
+    ep1.listen(sig_url).await.unwrap();
+
+    let fut1 = ep1.send(other_url.clone(), &b"1234567890"[..]);
+    let send_task_1 = tokio::task::spawn(async move {
+        fut1.await.unwrap();
+    });
+
+    let fut2 = ep1.send(other_url.clone(), &b"1234567890"[..]);
+    let send_task_2 = tokio::task::spawn(async move {
+        fut2.await.unwrap();
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // make sure only the preflight and our first message have been "sent"
+    assert_eq!(2, send_count.load(std::sync::atomic::Ordering::SeqCst));
+
+    notify.notify_waiters();
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // after sending the preflight and first messages through,
+    // now the second message is queued up for send on our mock backend.
+    assert_eq!(3, send_count.load(std::sync::atomic::Ordering::SeqCst));
+
+    // now let the second message through
+    notify.notify_waiters();
+
+    // make sure our send tasks resolve
+    send_task_1.await.unwrap();
+    send_task_2.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn endpoint_sanity() {
     init_tracing();
 
@@ -298,46 +424,82 @@ async fn preflight_huge() {
     const HUGE_DATA: &[u8] = &[42; 16 * 1024 * 512];
 
     fn make_config(
+        ep_num: usize,
         valid_count: Arc<std::sync::atomic::AtomicUsize>,
     ) -> DefConfig {
         DefConfig::default()
-            .with_conn_preflight(|_, _| {
-                println!("PREFLIGHT");
+            .with_conn_preflight(move |_, _| {
+                println!("PREFLIGHT:{ep_num}");
                 Box::pin(async move {
                     Ok(Some(bytes::Bytes::from_static(HUGE_DATA)))
                 })
             })
             .with_conn_validate(move |_, _, data| {
-                println!("VALIDATE");
+                println!("VALIDATE:{ep_num}");
                 assert_eq!(HUGE_DATA, data.unwrap());
                 valid_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Box::pin(async move { Ok(()) })
             })
     }
 
-    let (ep1, mut ep_rcv1) = Ep::with_config(make_config(valid_count.clone()))
-        .await
-        .unwrap();
+    let (ep1, mut ep_rcv1) =
+        Ep::with_config(make_config(1, valid_count.clone()))
+            .await
+            .unwrap();
     let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
     println!("cli_url1: {}", cli_url1);
 
-    let (ep2, mut ep_rcv2) = Ep::with_config(make_config(valid_count.clone()))
-        .await
-        .unwrap();
+    let (ep2, mut ep_rcv2) =
+        Ep::with_config(make_config(2, valid_count.clone()))
+            .await
+            .unwrap();
     let cli_url2 = ep2.listen(sig_url).await.unwrap();
     println!("cli_url2: {}", cli_url2);
 
+    let (s1, r1) = tokio::sync::oneshot::channel();
+    let mut s1 = Some(s1);
+    tokio::task::spawn(async move {
+        loop {
+            match ep_rcv1.recv().await {
+                Some(Ok(EpEvt::Connected { .. })) => {
+                    if let Some(s1) = s1.take() {
+                        println!("ONE connected");
+                        let _ = s1.send(());
+                    }
+                }
+                oth => panic!("unexpected: {:?}", oth),
+            }
+        }
+    });
+
+    let (s2, r2) = tokio::sync::oneshot::channel();
+    let mut s2 = Some(s2);
+    tokio::task::spawn(async move {
+        let mut done_count = 0;
+        let done_count = &mut done_count;
+        let mut check = move || {
+            *done_count += 1;
+            println!("TWO recv: check_count: {done_count}");
+            if *done_count == 2 {
+                if let Some(s2) = s2.take() {
+                    let _ = s2.send(());
+                }
+            }
+        };
+
+        loop {
+            match ep_rcv2.recv().await {
+                Some(Ok(EpEvt::Connected { .. })) => check(),
+                Some(Ok(EpEvt::Data { .. })) => check(),
+                oth => panic!("unexpected: {:?}", oth),
+            }
+        }
+    });
+
     ep1.send(cli_url2, &b"hello"[..]).await.unwrap();
 
-    match ep_rcv1.recv().await {
-        Some(Ok(EpEvt::Connected { .. })) => (),
-        oth => panic!("unexpected: {:?}", oth),
-    }
-
-    match ep_rcv2.recv().await {
-        Some(Ok(EpEvt::Connected { .. })) => (),
-        oth => panic!("unexpected: {:?}", oth),
-    }
+    r1.await.unwrap();
+    r2.await.unwrap();
 
     assert_eq!(2, valid_count.load(std::sync::atomic::Ordering::SeqCst));
 }
@@ -440,35 +602,43 @@ async fn large_messages() {
     let mut msg_2 = vec![0; 1024 * 58];
     rng.fill(&mut msg_2[..]);
 
+    let recv_task = {
+        let msg_1 = msg_1.clone();
+        let msg_2 = msg_2.clone();
+        tokio::task::spawn(async move {
+            match ep_rcv2.recv().await {
+                Some(Ok(EpEvt::Connected { .. })) => (),
+                oth => panic!("unexpected: {:?}", oth),
+            }
+
+            for _ in 0..2 {
+                let recv = ep_rcv2.recv().await;
+                match recv {
+                    Some(Ok(EpEvt::Data {
+                        rem_cli_url, data, ..
+                    })) => {
+                        assert_eq!(cli_url1, rem_cli_url);
+                        let msg = data.to_vec().unwrap();
+                        if msg.len() == msg_1.len() {
+                            assert_eq!(msg, msg_1);
+                        } else if msg.len() == msg_2.len() {
+                            assert_eq!(msg, msg_2);
+                        } else {
+                            panic!("unexpected");
+                        }
+                    }
+                    oth => panic!("unexpected {:?}", oth),
+                }
+            }
+        })
+    };
+
     let f1 = ep1.send(cli_url2.clone(), msg_1.as_slice());
     let f2 = ep1.send(cli_url2, msg_2.as_slice());
 
     tokio::try_join!(f1, f2).unwrap();
 
-    match ep_rcv2.recv().await {
-        Some(Ok(EpEvt::Connected { .. })) => (),
-        oth => panic!("unexpected: {:?}", oth),
-    }
-
-    for _ in 0..2 {
-        let recv = ep_rcv2.recv().await;
-        match recv {
-            Some(Ok(EpEvt::Data {
-                rem_cli_url, data, ..
-            })) => {
-                assert_eq!(cli_url1, rem_cli_url);
-                let msg = data.to_vec().unwrap();
-                if msg.len() == msg_1.len() {
-                    assert_eq!(msg, msg_1);
-                } else if msg.len() == msg_2.len() {
-                    assert_eq!(msg, msg_2);
-                } else {
-                    panic!("unexpected");
-                }
-            }
-            oth => panic!("unexpected {:?}", oth),
-        }
-    }
+    recv_task.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

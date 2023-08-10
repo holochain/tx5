@@ -70,6 +70,9 @@ pub enum DataChannelEvent {
 
     /// DataChannel incoming message.
     Message(GoBuf),
+
+    /// DataChannel buffered amount is now low.
+    BufferedAmountLow,
 }
 
 #[inline]
@@ -173,6 +176,13 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                     MANAGER.lock().data_chan.get(&data_chan_id).cloned();
                 if let Some(cb) = maybe_cb {
                     cb(DataChannelEvent::Message(GoBuf(buffer_id)));
+                }
+            }
+            SysEvent::DataChanBufferedAmountLow(data_chan_id) => {
+                let maybe_cb =
+                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
+                if let Some(cb) = maybe_cb {
+                    cb(DataChannelEvent::BufferedAmountLow);
                 }
             }
         });

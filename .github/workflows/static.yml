@@ -35,8 +35,5 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Cargo Install Readme
-        run: cargo install cargo-rdme
-
       - name: Make Static
         run: make static

@@ -6,6 +6,17 @@ SHELL = /usr/bin/env sh -eu
 
 all: test
 
+publish-all:
+	$(MAKE) publish crate=tx5-core
+	$(MAKE) publish crate=tx5-online
+	$(MAKE) publish crate=tx5-go-pion-turn
+	$(MAKE) publish crate=tx5-go-pion-sys
+	$(MAKE) publish crate=tx5-go-pion
+	$(MAKE) publish crate=tx5-signal-srv
+	$(MAKE) publish crate=tx5-signal
+	$(MAKE) publish crate=tx5
+	$(MAKE) publish crate=tx5-demo
+
 publish:
 	@case "$(crate)" in \
 		tx5-core) \

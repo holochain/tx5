@@ -95,10 +95,7 @@ docs: tools
 tools: tool_rust tool_fmt tool_clippy tool_readme
 
 tool_rust:
-	@if rustup --version >/dev/null 2>&1; then \
-		echo "# Makefile # found rustup, setting override stable"; \
-		rustup override set stable; \
-	else \
+	@if ! rustup --version >/dev/null 2>&1; then \
 		echo "# Makefile # rustup not found, hopefully we're on stable"; \
 	fi;
 

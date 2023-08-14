@@ -569,8 +569,10 @@ impl StateData {
         &mut self,
         resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
-        let this_id =
-            self.this_id.map(|id| id.to_string()).unwrap_or("".into());
+        let this_id = self
+            .this_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "".into());
         let conn_list = self
             .conn_map
             .iter()

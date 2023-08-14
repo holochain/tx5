@@ -133,7 +133,7 @@ tool_clippy: tool_rust
 tool_readme: tool_rust
 	@if ! (cargo rdme --version); \
 	then \
-		cargo install cargo-rdme; \
+		cargo install cargo-rdme --version 1.4.0; \
 	else \
 		echo "# Makefile # readme ok"; \
 	fi;

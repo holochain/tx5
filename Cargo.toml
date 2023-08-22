@@ -1,14 +1,15 @@
 [workspace]
 members = [
-  "crates/tx5",
   "crates/tx5-core",
   "crates/tx5-online",
+  "crates/tx5-go-pion-turn",
   "crates/tx5-go-pion-sys",
   "crates/tx5-go-pion",
-  "crates/tx5-signal",
   "crates/tx5-signal-srv",
+  "crates/tx5-signal",
+  "crates/tx5",
+  "crates/tx5-pipe",
   "crates/tx5-demo",
-  "crates/tx5-go-pion-turn",
 ]
 
 [workspace.dependencies]

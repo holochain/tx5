@@ -1,0 +1,15 @@
+[package]
+name = "tx5-pipe"
+version = "0.0.2-alpha"
+edition = "2021"
+description = "Holochain WebRTC P2P CLI Tool"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/holochain/tx5"
+documentation = "https://docs.rs/tx5-pipe"
+authors = [ "Holochain Core Dev Team <devcore@holochain.org>" ]
+keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
+categories = ["network-programming"]
+
+[dependencies]
+tokio = { workspace = true, features = [ "full" ] }
+tx5-core = { workspace = true }

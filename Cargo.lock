@@ -3904,6 +3904,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx5-pipe"
+version = "0.0.2-alpha"
+dependencies = [
+ "tokio",
+ "tx5-core",
+]
+
+[[package]]
 name = "tx5-signal"
 version = "0.0.2-alpha"
 dependencies = [

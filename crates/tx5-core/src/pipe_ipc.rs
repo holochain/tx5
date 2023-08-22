@@ -80,7 +80,7 @@ impl Message for (String, Vec<String>, Vec<u8>) {
 
 impl<'a, 'b, 'c> Message for (&'a str, &'b [String], &'c [u8]) {
     fn command(&self) -> &str {
-        &self.0
+        self.0
     }
 
     fn argument_count(&self) -> usize {
@@ -93,13 +93,13 @@ impl<'a, 'b, 'c> Message for (&'a str, &'b [String], &'c [u8]) {
     }
 
     fn binary_item(&self) -> &[u8] {
-        &self.2
+        self.2
     }
 }
 
 impl<'a, 'b, 'c, 'd> Message for (&'a str, &'b [&'c str], &'d [u8]) {
     fn command(&self) -> &str {
-        &self.0
+        self.0
     }
 
     fn argument_count(&self) -> usize {
@@ -108,15 +108,15 @@ impl<'a, 'b, 'c, 'd> Message for (&'a str, &'b [&'c str], &'d [u8]) {
 
     fn arguments(&self) -> ArgIter<'_> {
         let mut iter = self.1.iter();
-        ArgIter::new(move || iter.next().map(|s| *s))
+        ArgIter::new(move || iter.next().copied())
     }
 
     fn binary_item(&self) -> &[u8] {
-        &self.2
+        self.2
     }
 }
 
-/// Extension trait for writing Messages to tokio::io::AsyncWrite items.
+/// Extension trait for writing [Message]s to tokio::io::AsyncWrite items.
 pub trait AsyncMessageWriteExt: tokio::io::AsyncWrite + Unpin {
     /// Write a [Message] to the writer.
     /// Note, this function currently makes a bunch of small writes,
@@ -148,6 +148,7 @@ pub trait AsyncMessageWriteExt: tokio::io::AsyncWrite + Unpin {
 impl<W: tokio::io::AsyncWrite + Unpin + ?Sized> AsyncMessageWriteExt for W {}
 
 #[inline(always)]
+#[allow(clippy::match_like_matches_macro)]
 fn is_whitespace(b: u8) -> bool {
     match b {
         b' ' | b'\t' | b'\r' | b'\n' => true,
@@ -156,6 +157,7 @@ fn is_whitespace(b: u8) -> bool {
 }
 
 #[inline(always)]
+#[allow(clippy::match_like_matches_macro)]
 fn is_digit(b: u8) -> bool {
     match b {
         b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
@@ -278,20 +280,17 @@ fn do_return(
     Ok((cmd, args, bin))
 }
 
-/// Extension trait for reading Messages from tokio::io::AsyncRead items.
+type ReadMessageFut<'lt> = Box<
+    dyn Future<Output = std::io::Result<(String, Vec<String>, Vec<u8>)>> + 'lt,
+>;
+
+/// Extension trait for reading [Message]s from tokio::io::AsyncRead items.
 pub trait AsyncMessageReadExt: tokio::io::AsyncRead + Unpin {
     /// Read a [Message] from the reader.
     /// Note, this function currently makes a bunch of small reads,
     /// consider wrapping your reader in a BufReader.
     /// Returns std::io::ErrorKind::UnexpectedEof if the stream ends.
-    fn read_message(
-        &mut self,
-    ) -> std::pin::Pin<
-        Box<
-            dyn Future<Output = std::io::Result<(String, Vec<String>, Vec<u8>)>>
-                + '_,
-        >,
-    > {
+    fn read_message(&mut self) -> std::pin::Pin<ReadMessageFut<'_>> {
         use tokio::io::AsyncReadExt;
 
         Box::pin(async {
@@ -312,6 +311,7 @@ pub trait AsyncMessageReadExt: tokio::io::AsyncRead + Unpin {
                     let b2 = self.read_u8().await?;
                     if is_whitespace(b2) {
                         args.push("b".to_string());
+                        continue;
                     } else if b2 == b'|' {
                         let bin = read_bin_token(self).await?;
                         return do_return(args, bin);
@@ -369,18 +369,18 @@ cmd #yo
         (
             br#"
 a ||
-b ||#
-#c ||||
-#d || e ||
-#f |2||||
+b || #
+c ||||
+d || e ||
+f b|2||||
 "#,
             &[
                 ("a", &[], b""),
                 ("b", &[], b""),
-                //("c", &[], b"|"),
-                //("d", &[], b""),
-                //("e", &[], b""),
-                //("f", &[], b"||"),
+                ("c", &[], b"|"),
+                ("d", &[], b""),
+                ("e", &[], b""),
+                ("f", &[], b"||"),
             ],
         ),
     ];
@@ -397,6 +397,7 @@ b ||#
             });
 
             for expected in *expected_list {
+                println!("expecting: {expected:?}");
                 let mut actual = recv.read_message().await.unwrap();
 
                 assert_eq!(expected.0, &actual.0);

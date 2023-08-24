@@ -26,6 +26,7 @@
 - [ tx5-go-pion ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion) ](https://crates.io/crates/tx5-go-pion) - Higher level rust bindings to the go pion webrtc library.
 - [ tx5-signal ](https://github.com/holochain/tx5/tree/main/crates/tx5-signal) - [ ![crates.io](https://img.shields.io/crates/v/tx5-signal) ](https://crates.io/crates/tx5-signal) - Holochain webrtc signal client.
 - [ tx5-signal-srv ](https://github.com/holochain/tx5/tree/main/crates/tx5-signal-srv) - [ ![crates.io](https://img.shields.io/crates/v/tx5-signal-srv) ](https://crates.io/crates/tx5-signal-srv) - Holochain webrtc signal server.
+- [ tx5-pipe ](https://github.com/holochain/tx5/tree/main/crates/tx5-pipe) - [ ![crates.io](https://img.shields.io/crates/v/tx5-pipe) ](https://crates.io/crates/tx5-pipe) - Holochain WebRTC P2P CLI Tool.
 - [ tx5-demo ](https://github.com/holochain/tx5/tree/main/crates/tx5-demo) - [ ![crates.io](https://img.shields.io/crates/v/tx5-demo) ](https://crates.io/crates/tx5-demo) - Demo showing off tx5 p2p connectivity.
 
 <!-- cargo-rdme -->

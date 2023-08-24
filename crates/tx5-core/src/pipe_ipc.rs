@@ -1,423 +1,837 @@
 //! Types for dealing with the tx5-pipe ipc protocol.
 
-use std::future::Future;
+type Message = (String, Vec<String>, Box<dyn bytes::Buf + Send>);
 
-type ArgIterCb<'lt> = Box<dyn FnMut() -> Option<&'lt str> + 'lt>;
-
-/// Iterator helper for Arguments.
-pub struct ArgIter<'lt>(ArgIterCb<'lt>);
-
-impl<'lt> ArgIter<'lt> {
-    /// Construct a new ArgIter helper.
-    pub fn new<Cb: FnMut() -> Option<&'lt str> + 'lt>(cb: Cb) -> Self {
-        Self(Box::new(cb))
+fn check_token(s: &str) -> std::io::Result<()> {
+    if s.contains([' ', '\t', '\r', '\n', '|']) {
+        Err(crate::Error::id("ArgCannotContainWhitespaceOrPipe"))
+    } else {
+        Ok(())
     }
 }
 
-impl<'lt> std::iter::Iterator for ArgIter<'lt> {
-    type Item = &'lt str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0()
-    }
+trait BufExt {
+    fn into_string(self) -> String;
 }
 
-/// A protocol "message".
-/// - A string "command".
-/// - A list of string "arguments".
-/// - A terminating binary item.
-pub trait Message {
-    /// The message "command".
-    fn command(&self) -> &str;
-
-    /// The count of items in the "arguments" list.
-    fn argument_count(&self) -> usize;
-
-    /// The list of string "arguments".
-    fn arguments(&self) -> ArgIter<'_>;
-
-    /// The terminating binary item.
-    fn binary_item(&self) -> &[u8];
-
-    #[cfg(test)]
-    fn test_dbg(&self) -> String {
-        let mut out = String::new();
-        out.push_str(self.command());
-        out.push(' ');
-        for arg in self.arguments() {
-            out.push_str(arg);
-            out.push(' ');
+impl BufExt for Box<dyn bytes::Buf + Send> {
+    fn into_string(mut self) -> String {
+        let mut out = Vec::with_capacity(self.remaining());
+        while self.has_remaining() {
+            let c = self.chunk();
+            out.extend_from_slice(c);
+            self.advance(c.len());
         }
-        out.push('|');
-        out.push_str(
-            &String::from_utf8_lossy(self.binary_item())
-                .to_string()
-                .replace("|", "||"),
-        );
-        out.push('|');
-        out
+        String::from_utf8_lossy(&out).to_string()
     }
 }
 
-impl Message for (String, Vec<String>, Vec<u8>) {
-    fn command(&self) -> &str {
-        self.0.as_str()
-    }
-
-    fn argument_count(&self) -> usize {
-        self.1.len()
-    }
-
-    fn arguments(&self) -> ArgIter<'_> {
-        let mut iter = self.1.iter();
-        ArgIter::new(move || iter.next().map(|s| s.as_str()))
-    }
-
-    fn binary_item(&self) -> &[u8] {
-        self.2.as_slice()
-    }
-}
-
-impl<'a, 'b, 'c> Message for (&'a str, &'b [String], &'c [u8]) {
-    fn command(&self) -> &str {
-        self.0
-    }
-
-    fn argument_count(&self) -> usize {
-        self.1.len()
-    }
-
-    fn arguments(&self) -> ArgIter<'_> {
-        let mut iter = self.1.iter();
-        ArgIter::new(move || iter.next().map(|s| s.as_str()))
-    }
-
-    fn binary_item(&self) -> &[u8] {
-        self.2
-    }
-}
-
-impl<'a, 'b, 'c, 'd> Message for (&'a str, &'b [&'c str], &'d [u8]) {
-    fn command(&self) -> &str {
-        self.0
-    }
-
-    fn argument_count(&self) -> usize {
-        self.1.len()
-    }
-
-    fn arguments(&self) -> ArgIter<'_> {
-        let mut iter = self.1.iter();
-        ArgIter::new(move || iter.next().copied())
-    }
-
-    fn binary_item(&self) -> &[u8] {
-        self.2
-    }
-}
-
-/// Extension trait for writing [Message]s to tokio::io::AsyncWrite items.
-pub trait AsyncMessageWriteExt: tokio::io::AsyncWrite + Unpin {
-    /// Write a [Message] to the writer.
-    /// Note, this function currently makes a bunch of small writes,
-    /// consider wrapping your writer in a BufWriter.
-    fn write_message<'a, 'b: 'a>(
-        &'a mut self,
-        m: &'b dyn Message,
-    ) -> std::pin::Pin<Box<dyn Future<Output = std::io::Result<()>> + 'a>> {
-        Box::pin(async {
-            use tokio::io::AsyncWriteExt;
-
-            self.write_all(m.command().as_bytes()).await?;
-            self.write_all(b" ").await?;
-            for arg in m.arguments() {
-                self.write_all(arg.as_bytes()).await?;
-                self.write_all(b" ").await?;
-            }
-
-            let b_hdr = format!("b|{}|", m.binary_item().len());
-            self.write_all(b_hdr.as_bytes()).await?;
-            self.write_all(m.binary_item()).await?;
-            self.write_all(b"|\n").await?;
-
-            Ok(())
-        })
-    }
-}
-
-impl<W: tokio::io::AsyncWrite + Unpin + ?Sized> AsyncMessageWriteExt for W {}
-
-#[inline(always)]
-#[allow(clippy::match_like_matches_macro)]
-fn is_whitespace(b: u8) -> bool {
-    match b {
-        b' ' | b'\t' | b'\r' | b'\n' => true,
-        _ => false,
-    }
-}
-
-#[inline(always)]
-#[allow(clippy::match_like_matches_macro)]
-fn is_digit(b: u8) -> bool {
-    match b {
-        b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
-            true
-        }
-        _ => false,
-    }
-}
-
-async fn eat_whitespace<R: tokio::io::AsyncRead + Unpin + ?Sized>(
-    r: &mut R,
-) -> std::io::Result<u8> {
-    use tokio::io::AsyncReadExt;
-
-    loop {
-        let b = r.read_u8().await?;
-        if !is_whitespace(b) {
-            return Ok(b);
-        }
-    }
-}
-
-async fn eat_comment<R: tokio::io::AsyncRead + Unpin + ?Sized>(
-    r: &mut R,
-) -> std::io::Result<()> {
-    use tokio::io::AsyncReadExt;
-
-    loop {
-        if r.read_u8().await? == b'\n' {
-            return Ok(());
-        }
-    }
-}
-
-async fn read_str_token<R: tokio::io::AsyncRead + Unpin + ?Sized>(
-    r: &mut R,
-    mut init: Vec<u8>,
-) -> std::io::Result<String> {
-    use tokio::io::AsyncReadExt;
-
-    loop {
-        let b = r.read_u8().await?;
-        if is_whitespace(b) {
-            return Ok(String::from_utf8_lossy(&init).to_string());
-        } else {
-            init.push(b);
-        }
-    }
-}
-
-async fn read_txt_token<R: tokio::io::AsyncRead + Unpin + ?Sized>(
-    r: &mut R,
-) -> std::io::Result<Vec<u8>> {
-    use tokio::io::AsyncReadExt;
+/// Low-level message encoder for the tx5 pipe ipc protocol.
+pub fn tx5_pipe_encode<C, A, I, B>(
+    cmd: C,
+    args: I,
+    mut bin: B,
+) -> std::io::Result<Vec<u8>>
+where
+    C: AsRef<str>,
+    A: AsRef<str>,
+    I: Iterator<Item = A>,
+    B: bytes::Buf,
+{
+    check_token(cmd.as_ref())?;
 
     let mut out = Vec::new();
+    out.extend_from_slice(cmd.as_ref().as_bytes());
+    out.push(b' ');
 
-    let mut escape = false;
+    for arg in args {
+        check_token(arg.as_ref())?;
 
-    loop {
-        let b = r.read_u8().await?;
-        if escape && b == b'|' {
-            out.push(b'|');
-            escape = false;
-        } else if escape {
-            if !is_whitespace(b) {
-                return Err(crate::Error::id("InvalidCharFollowingTextClose"));
-            }
-            return Ok(out);
-        } else if b == b'|' {
-            escape = true;
-        } else {
-            out.push(b);
-        }
-    }
-}
-
-async fn read_bin_token<R: tokio::io::AsyncRead + Unpin + ?Sized>(
-    r: &mut R,
-) -> std::io::Result<Vec<u8>> {
-    use tokio::io::AsyncReadExt;
-
-    let mut count = Vec::new();
-
-    loop {
-        let b = r.read_u8().await?;
-        if is_digit(b) {
-            count.push(b)
-        } else {
-            if count.is_empty() {
-                return Err(crate::Error::id("ExpectedBinaryLength"));
-            }
-            if b != b'|' {
-                return Err(crate::Error::id("ExpectedBinaryLengthTerminator"));
-            }
-            break;
-        }
+        out.extend_from_slice(arg.as_ref().as_bytes());
+        out.push(b' ');
     }
 
-    let count: usize = String::from_utf8_lossy(&count).parse().unwrap();
-
-    let mut out = vec![0; count];
-    r.read_exact(&mut out[..]).await?;
-
-    if r.read_u8().await? != b'|' {
-        return Err(crate::Error::id("ExpectedBinaryTerminator"));
+    let b_hdr = format!("b|{}|", bin.remaining());
+    out.extend_from_slice(b_hdr.as_bytes());
+    while bin.has_remaining() {
+        let c = bin.chunk();
+        out.extend_from_slice(c);
+        bin.advance(c.len());
     }
+    out.push(b'|');
+    out.push(b'\n');
 
     Ok(out)
 }
 
-fn do_return(
-    mut args: Vec<String>,
-    bin: Vec<u8>,
-) -> std::io::Result<(String, Vec<String>, Vec<u8>)> {
-    if args.is_empty() {
-        return Err(crate::Error::id("InvalidIpcProtocolMessage"));
-    }
-    let cmd = args.remove(0);
-    Ok((cmd, args, bin))
+enum DecodeState {
+    EatWhitespace,
+    EatComment,
+    GatherToken(Vec<u8>),
+    GatherText(bytes::BytesMut),
+    CheckText(bytes::BytesMut),
+    CheckBinary,
+    BinaryCount(Vec<u8>),
+    GatherBinary(usize, bytes::BytesMut),
 }
 
-type ReadMessageFut<'lt> = Box<
-    dyn Future<Output = std::io::Result<(String, Vec<String>, Vec<u8>)>> + 'lt,
->;
-
-/// Extension trait for reading [Message]s from tokio::io::AsyncRead items.
-pub trait AsyncMessageReadExt: tokio::io::AsyncRead + Unpin {
-    /// Read a [Message] from the reader.
-    /// Note, this function currently makes a bunch of small reads,
-    /// consider wrapping your reader in a BufReader.
-    /// Returns std::io::ErrorKind::UnexpectedEof if the stream ends.
-    fn read_message(&mut self) -> std::pin::Pin<ReadMessageFut<'_>> {
-        use tokio::io::AsyncReadExt;
-
-        Box::pin(async {
-            let mut args = Vec::new();
-
-            loop {
-                let mut init = Vec::with_capacity(8);
-
-                let b1 = eat_whitespace(self).await?;
-
-                if b1 == b'#' {
-                    eat_comment(self).await?;
-                    continue;
-                } else if b1 == b'|' {
-                    let bin = read_txt_token(self).await?;
-                    return do_return(args, bin);
-                } else if b1 == b'b' {
-                    let b2 = self.read_u8().await?;
-                    if is_whitespace(b2) {
-                        args.push("b".to_string());
-                        continue;
-                    } else if b2 == b'|' {
-                        let bin = read_bin_token(self).await?;
-                        return do_return(args, bin);
-                    } else {
-                        init.push(b'b');
-                        init.push(b2);
-                    }
-                } else {
-                    init.push(b1);
-                }
-
-                args.push(read_str_token(self, init).await?);
+impl std::fmt::Debug for DecodeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EatWhitespace => f.write_str("EatWhitespace"),
+            Self::EatComment => f.write_str("EatComment"),
+            Self::GatherToken(t) => {
+                write!(f, "GatherToken({:?})", String::from_utf8_lossy(t))
             }
-        })
+            Self::GatherText(t) => {
+                write!(f, "GatherText({:?})", String::from_utf8_lossy(t))
+            }
+            Self::CheckText(t) => {
+                write!(f, "CheckText({:?})", String::from_utf8_lossy(t))
+            }
+            Self::CheckBinary => f.write_str("CheckBinary"),
+            Self::BinaryCount(t) => {
+                write!(f, "BinaryCount({:?})", String::from_utf8_lossy(t))
+            }
+            Self::GatherBinary(c, t) => {
+                write!(f, "GatherBinary({c}, {:?})", String::from_utf8_lossy(t))
+            }
+        }
     }
 }
 
-impl<R: tokio::io::AsyncRead + Unpin + ?Sized> AsyncMessageReadExt for R {}
+/// Low-level message decoder for the tx5 pipe ipc protocol.
+pub struct Tx5PipeDecoder {
+    state: Option<DecodeState>,
+    working: Vec<String>,
+    complete: Vec<Message>,
+}
+
+impl Default for Tx5PipeDecoder {
+    fn default() -> Self {
+        Self {
+            state: Some(DecodeState::EatWhitespace),
+            working: Vec::new(),
+            complete: Vec::new(),
+        }
+    }
+}
+
+impl Tx5PipeDecoder {
+    /// Update the decoder with additional incoming bytes,
+    /// outputting any complete messages that were parsed.
+    pub fn update<E: AsRef<[u8]>>(
+        &mut self,
+        input: E,
+    ) -> std::io::Result<Vec<Message>> {
+        let mut input = input.as_ref();
+
+        while !input.is_empty() {
+            let state = self.state.take().unwrap();
+            input = self.run_state(state, input)?;
+        }
+
+        Ok(std::mem::take(&mut self.complete))
+    }
+
+    fn run_state<'b>(
+        &mut self,
+        state: DecodeState,
+        input: &'b [u8],
+    ) -> std::io::Result<&'b [u8]> {
+        // println!("run {state:?} {:?}", String::from_utf8_lossy(input));
+        match state {
+            DecodeState::EatWhitespace => {
+                let (state, input) = self.eat_whitespace(input)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+            DecodeState::EatComment => {
+                let (state, input) = self.eat_comment(input)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+            DecodeState::GatherToken(token) => {
+                let (state, input) = self.gather_token(input, token)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+            DecodeState::GatherText(text) => {
+                let (state, input) = self.gather_text(input, text)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+            DecodeState::CheckText(text) => {
+                let (state, input) = self.check_text(input, text)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+            DecodeState::CheckBinary => {
+                let (state, input) = self.check_binary(input)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+            DecodeState::BinaryCount(count) => {
+                let (state, input) = self.binary_count(input, count)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+            DecodeState::GatherBinary(count, bin) => {
+                let (state, input) = self.gather_binary(input, count, bin)?;
+                self.state = Some(state);
+                Ok(input)
+            }
+        }
+    }
+
+    fn do_complete(
+        &mut self,
+        bin: Box<dyn bytes::Buf + Send>,
+    ) -> std::io::Result<()> {
+        if self.working.is_empty() {
+            return Err(crate::Error::id("MissingCommand"));
+        }
+        let cmd = self.working.remove(0);
+        self.complete
+            .push((cmd, std::mem::take(&mut self.working), bin));
+        Ok(())
+    }
+
+    fn eat_whitespace<'b>(
+        &mut self,
+        mut input: &'b [u8],
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        while !input.is_empty() {
+            match input[0] {
+                b' ' | b'\t' | b'\r' | b'\n' => input = &input[1..],
+                b'#' => return Ok((DecodeState::EatComment, &input[1..])),
+                b'|' => {
+                    return Ok((
+                        DecodeState::GatherText(bytes::BytesMut::new()),
+                        &input[1..],
+                    ))
+                }
+                b'b' => return Ok((DecodeState::CheckBinary, &input[1..])),
+                _ => {
+                    return Ok((
+                        DecodeState::GatherToken(vec![input[0]]),
+                        &input[1..],
+                    ))
+                }
+            }
+        }
+        Ok((DecodeState::EatWhitespace, input))
+    }
+
+    fn eat_comment<'b>(
+        &mut self,
+        mut input: &'b [u8],
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        while !input.is_empty() {
+            match input[0] {
+                b'\n' => return Ok((DecodeState::EatWhitespace, &input[1..])),
+                _ => input = &input[1..],
+            }
+        }
+        Ok((DecodeState::EatComment, input))
+    }
+
+    fn gather_token<'b>(
+        &mut self,
+        mut input: &'b [u8],
+        mut token: Vec<u8>,
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        while !input.is_empty() {
+            match input[0] {
+                b' ' | b'\t' | b'\r' | b'\n' => {
+                    self.working
+                        .push(String::from_utf8_lossy(&token).to_string());
+                    return Ok((DecodeState::EatWhitespace, &input[1..]));
+                }
+                b'|' => {
+                    return Err(crate::Error::id("InvalidToken"));
+                }
+                _ => {
+                    token.push(input[0]);
+                    input = &input[1..];
+                }
+            }
+        }
+        Ok((DecodeState::GatherToken(token), input))
+    }
+
+    fn gather_text<'b>(
+        &mut self,
+        mut input: &'b [u8],
+        mut text: bytes::BytesMut,
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        while !input.is_empty() {
+            match input[0] {
+                b'|' => return Ok((DecodeState::CheckText(text), &input[1..])),
+                _ => {
+                    text.extend_from_slice(&input[0..=0]);
+                    input = &input[1..];
+                }
+            }
+        }
+        Ok((DecodeState::GatherText(text), input))
+    }
+
+    fn check_text<'b>(
+        &mut self,
+        input: &'b [u8],
+        mut text: bytes::BytesMut,
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        match input[0] {
+            b'|' => {
+                text.extend_from_slice(&input[0..=0]);
+                Ok((DecodeState::GatherText(text), &input[1..]))
+            }
+            b' ' | b'\t' | b'\r' | b'\n' => {
+                self.do_complete(Box::new(text))?;
+                Ok((DecodeState::EatWhitespace, &input[1..]))
+            }
+            _ => Err(crate::Error::id("InvalidTextToken")),
+        }
+    }
+
+    fn check_binary<'b>(
+        &mut self,
+        input: &'b [u8],
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        match input[0] {
+            b'|' => Ok((DecodeState::BinaryCount(Vec::new()), &input[1..])),
+            b' ' | b'\t' | b'\r' | b'\n' => {
+                self.working.push("b".to_string());
+                Ok((DecodeState::EatWhitespace, &input[1..]))
+            }
+            _ => Ok((
+                DecodeState::GatherToken(vec![b'b', input[0]]),
+                &input[1..],
+            )),
+        }
+    }
+
+    fn binary_count<'b>(
+        &mut self,
+        mut input: &'b [u8],
+        mut count: Vec<u8>,
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        while !input.is_empty() {
+            match input[0] {
+                b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7'
+                | b'8' | b'9' => {
+                    count.push(input[0]);
+                    input = &input[1..];
+                }
+                b'|' => {
+                    input = &input[1..];
+                    let count: usize =
+                        String::from_utf8_lossy(&count).parse().unwrap();
+                    return Ok((
+                        DecodeState::GatherBinary(
+                            count,
+                            bytes::BytesMut::new(),
+                        ),
+                        input,
+                    ));
+                }
+                _ => return Err(crate::Error::id("InvalidBinaryToken")),
+            }
+        }
+        Ok((DecodeState::BinaryCount(count), input))
+    }
+
+    fn gather_binary<'b>(
+        &mut self,
+        mut input: &'b [u8],
+        mut count: usize,
+        mut bin: bytes::BytesMut,
+    ) -> std::io::Result<(DecodeState, &'b [u8])> {
+        let amt = std::cmp::min(count, input.len());
+        if amt > 0 {
+            bin.extend_from_slice(&input[..amt]);
+            input = &input[amt..];
+            count -= amt;
+        }
+
+        if input.is_empty() {
+            Ok((DecodeState::GatherBinary(count, bin), input))
+        } else if input[0] == b'|' {
+            self.do_complete(Box::new(bin))?;
+            Ok((DecodeState::EatWhitespace, &input[1..]))
+        } else {
+            Err(crate::Error::id("InvalidPostBinaryToken"))
+        }
+    }
+}
+
+/// Request types that can be received by a Tx5Pipe server from a client.
+pub enum Tx5PipeRequest {
+    /// A request to register as addressable with a signal server.
+    SigReg {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// Signal Url.
+        sig_url: String,
+    },
+
+    /// A request to send a message to a remote peer.
+    Send {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// Remote url.
+        rem_url: String,
+
+        /// Message data.
+        data: Box<dyn bytes::Buf + Send>,
+    },
+}
+
+impl Tx5PipeRequest {
+    /// Register to be addressable with a signal server.
+    pub fn tx5_sig_reg<A, B>(cmd_id: A, sig_url: B) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+        B: AsRef<str>,
+    {
+        tx5_pipe_encode("sig_reg", [cmd_id].iter(), sig_url.as_ref().as_bytes())
+    }
+
+    /// Send a message to a remote.
+    pub fn tx5_send<A, B>(
+        cmd_id: A,
+        rem_url: A,
+        data: B,
+    ) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+        B: bytes::Buf,
+    {
+        tx5_pipe_encode("send", [cmd_id, rem_url].iter(), data)
+    }
+
+    /// Encode this instance in the tx5 pipe ipc protocol.
+    pub fn encode(self) -> std::io::Result<Vec<u8>> {
+        match self {
+            Self::SigReg { cmd_id, sig_url } => {
+                Self::tx5_sig_reg(cmd_id, sig_url)
+            }
+            Self::Send {
+                cmd_id,
+                rem_url,
+                data,
+            } => Self::tx5_send(cmd_id, rem_url, data),
+        }
+    }
+
+    /// Decode a Tx5PipeRequest instance from an already parsed
+    /// tx5 pipe ipc protocol message. See [Tx5PipeDecoder].
+    pub fn decode(
+        cmd: String,
+        mut args: Vec<String>,
+        data: Box<dyn bytes::Buf + Send>,
+    ) -> std::io::Result<Self> {
+        match cmd.as_str() {
+            "sig_reg" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::SigReg {
+                    cmd_id: args.remove(0),
+                    sig_url: data.into_string(),
+                })
+            }
+            "send" => {
+                if args.len() != 2 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::Send {
+                    cmd_id: args.remove(0),
+                    rem_url: args.remove(0),
+                    data,
+                })
+            }
+            oth => Err(crate::Error::err(format!("invalid cmd: {oth}"))),
+        }
+    }
+}
+
+/// Response types that can be received by a Tx5Pipe client from a server.
+pub enum Tx5PipeResponse {
+    /// Unsolicited help info.
+    Tx5PipeHelp {
+        /// Server version.
+        version: String,
+
+        /// Help info.
+        info: String,
+    },
+
+    /// An error response.
+    Error {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// Error code.
+        code: u32,
+
+        /// Error text.
+        text: String,
+    },
+
+    /// An ok response to a sigreg request.
+    SigRegOk {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// Client Url.
+        cli_url: String,
+    },
+
+    /// An ok response to a send request.
+    SendOk {
+        /// Command identifier.
+        cmd_id: String,
+    },
+
+    /// Receive a message from a remote.
+    Recv {
+        /// Remote url.
+        rem_url: String,
+
+        /// Message data.
+        data: Box<dyn bytes::Buf + Send>,
+    },
+}
+
+impl Tx5PipeResponse {
+    /// Send unsolicited help information.
+    pub fn tx5_pipe_help<A, B>(version: A, info: B) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+        B: AsRef<str>,
+    {
+        tx5_pipe_encode("<help", [version].iter(), info.as_ref().as_bytes())
+    }
+
+    /// If you need to send an error response to a command.
+    pub fn tx5_error<A, B>(
+        cmd_id: A,
+        code: u32,
+        text: B,
+    ) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+        B: AsRef<str>,
+    {
+        let code = format!("{code}");
+        tx5_pipe_encode(
+            "<error",
+            [cmd_id.as_ref(), &code].iter(),
+            text.as_ref().as_bytes(),
+        )
+    }
+
+    /// Okay response to a sigreg request.
+    pub fn tx5_sig_reg_ok<A, B>(
+        cmd_id: A,
+        cli_url: B,
+    ) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+        B: AsRef<str>,
+    {
+        tx5_pipe_encode(
+            "<sig_reg_ok",
+            [cmd_id].iter(),
+            cli_url.as_ref().as_bytes(),
+        )
+    }
+
+    /// Okay response to a send request.
+    pub fn tx5_send_ok<A>(cmd_id: A) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+    {
+        tx5_pipe_encode(
+            "<send_ok",
+            [cmd_id].iter(),
+            Box::new(bytes::Bytes::new()),
+        )
+    }
+
+    /// Receive data from a remote peer.
+    pub fn tx5_recv<A, B>(rem_url: A, data: B) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+        B: bytes::Buf,
+    {
+        tx5_pipe_encode("<recv", [rem_url].iter(), data)
+    }
+
+    /// Encode this instance in the tx5 pipe ipc protocol.
+    pub fn encode(self) -> std::io::Result<Vec<u8>> {
+        match self {
+            Self::Tx5PipeHelp { version, info } => {
+                Self::tx5_pipe_help(version, info)
+            }
+            Self::Error { cmd_id, code, text } => {
+                Self::tx5_error(cmd_id, code, text)
+            }
+            Self::SigRegOk { cmd_id, cli_url } => {
+                Self::tx5_sig_reg_ok(cmd_id, cli_url)
+            }
+            Self::SendOk { cmd_id } => Self::tx5_send_ok(cmd_id),
+            Self::Recv { rem_url, data } => Self::tx5_recv(rem_url, data),
+        }
+    }
+
+    /// Decode a Tx5PipeRequest instance from an already parsed
+    /// tx5 pipe ipc protocol message. See [Tx5PipeDecoder].
+    pub fn decode(
+        cmd: String,
+        mut args: Vec<String>,
+        data: Box<dyn bytes::Buf + Send>,
+    ) -> std::io::Result<Self> {
+        match cmd.as_str() {
+            "<help" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::Tx5PipeHelp {
+                    version: args.remove(0),
+                    info: data.into_string(),
+                })
+            }
+            "<error" => {
+                if args.len() != 2 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::Error {
+                    cmd_id: args.remove(0),
+                    code: args.remove(0).parse().map_err(crate::Error::err)?,
+                    text: data.into_string(),
+                })
+            }
+            "<sig_reg_ok" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::SigRegOk {
+                    cmd_id: args.remove(0),
+                    cli_url: data.into_string(),
+                })
+            }
+            "<send_ok" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::SendOk {
+                    cmd_id: args.remove(0),
+                })
+            }
+            "<recv" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::Recv {
+                    rem_url: args.remove(0),
+                    data,
+                })
+            }
+            oth => Err(crate::Error::err(format!("invalid cmd: {oth}"))),
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
     use super::*;
 
-    #[test]
-    fn types() {
-        let a1 = (
-            "cmd".to_string(),
-            vec!["arg".to_string()],
-            b"binary".to_vec(),
-        )
-            .test_dbg();
-        let a2 = ("cmd", &["arg".to_string()][..], &b"binary"[..]).test_dbg();
-        let a3 = ("cmd", &["arg"][..], &b"binary"[..]).test_dbg();
-        assert_eq!("cmd arg |binary|", a1);
-        assert_eq!(a1, a2);
-        assert_eq!(a1, a3);
-    }
-
     const READ_FIX: &[(&[u8], &[(&str, &[&str], &[u8])])] = &[
-        (b"cmd arg |binary|\n", &[("cmd", &["arg"], b"binary")]),
-        (b"empty-text ||\n", &[("empty-text", &[], b"")]),
-        (b"cmd arg b|3|bin|\n", &[("cmd", &["arg"], b"bin")]),
-        (b"cmd b|0||\n", &[("cmd", &[], b"")]),
+        (
+            b"test1 arg |bin\x00ry|\n",
+            &[("test1", &["arg"], b"bin\x00ry")],
+        ),
+        (b"test2 ||\n", &[("test2", &[], b"")]),
+        (
+            b"test3 arg b|3|b\x00n|\n",
+            &[("test3", &["arg"], b"b\x00n")],
+        ),
+        (b"test4 b|0||\n", &[("test4", &[], b"")]),
         (
             br#"# yo
-cmd #yo
+test5 #yo
 #yo
   arg # yo oy |aoeu| b|3|aoe|
   |#
   multi||
   line|
 "#,
-            &[("cmd", &["arg"], b"#\n  multi|\n  line")],
+            &[("test5", &["arg"], b"#\n  multi|\n  line")],
         ),
         (
             br#"
-a ||
-b || #
-c ||||
-d || e ||
-f b|2||||
+test6 ||
+test7 || #
+test8 ||||
+test9 || test10 ||
+test11 b|2||||
+test12 b barg b|0||
 "#,
             &[
-                ("a", &[], b""),
-                ("b", &[], b""),
-                ("c", &[], b"|"),
-                ("d", &[], b""),
-                ("e", &[], b""),
-                ("f", &[], b"||"),
+                ("test6", &[], b""),
+                ("test7", &[], b""),
+                ("test8", &[], b"|"),
+                ("test9", &[], b""),
+                ("test10", &[], b""),
+                ("test11", &[], b"||"),
+                ("test12", &["b", "barg"], b""),
             ],
         ),
     ];
 
-    #[tokio::test]
-    async fn read() {
-        use tokio::io::AsyncWriteExt;
+    fn check_read_fix(
+        exp_list: &[(&str, &[&str], &[u8])],
+        mut res: Vec<Message>,
+    ) {
+        for exp in exp_list {
+            if res.is_empty() {
+                panic!("expected {exp:?}, actual was missing");
+            }
+            let res = res.remove(0);
 
-        for (encoded, expected_list) in READ_FIX {
-            let (mut send, mut recv) = tokio::io::duplex(7);
+            let mut ok = true;
 
-            let task = tokio::task::spawn(async move {
-                send.write_all(encoded).await.unwrap()
-            });
+            if exp.0 != &res.0 {
+                ok = false;
+            }
 
-            for expected in *expected_list {
-                println!("expecting: {expected:?}");
-                let mut actual = recv.read_message().await.unwrap();
-
-                assert_eq!(expected.0, &actual.0);
-
-                for arg in expected.1 {
-                    assert_eq!(arg, &actual.1.remove(0));
-                }
-
-                if expected.2 != &actual.2 {
-                    panic!(
-                        "expected: {}, actual: {}",
-                        String::from_utf8_lossy(expected.2),
-                        String::from_utf8_lossy(&actual.2),
-                    );
+            if exp.1.len() != res.1.len() {
+                ok = false;
+            } else {
+                for (idx, exp) in exp.1.iter().enumerate() {
+                    if exp != &res.1[idx] {
+                        ok = false;
+                        break;
+                    }
                 }
             }
 
-            assert!(recv.read_message().await.is_err());
+            let exp_data = String::from_utf8_lossy(exp.2).to_string();
+            let res_data = res.2.into_string();
 
-            task.await.unwrap();
+            if exp_data != res_data {
+                ok = false;
+            }
+
+            if !ok {
+                panic!(
+                    "expected: {exp:?}, actual: [({:?}, {:?}, {:?}]",
+                    res.0, res.1, res_data,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decoder_block() {
+        for (enc, exp_list) in READ_FIX {
+            let mut d = Tx5PipeDecoder::default();
+            let res = d.update(enc).unwrap();
+            check_read_fix(exp_list, res);
+        }
+    }
+
+    #[test]
+    fn test_decoder_bytes() {
+        for (enc, exp_list) in READ_FIX {
+            let mut d = Tx5PipeDecoder::default();
+            let mut res = Vec::new();
+            for b in enc.iter() {
+                res.append(&mut d.update(&[*b][..]).unwrap());
+            }
+            check_read_fix(exp_list, res);
+        }
+    }
+
+    const REQ_RES_FIX: &[(&str, &[&str], &[u8])] = &[
+        ("sig_reg", &["test1"], b"wss://yada"),
+        ("send", &["test2", "wss://yada"], b"yada"),
+        ("<help", &["test3"], b"yada\nmultiline"),
+        ("<error", &["test4", "42"], b"yada"),
+        ("<sig_reg_ok", &["test5"], b"yada"),
+        ("<send_ok", &["test6"], b""),
+        ("<recv", &["test7"], b"yada"),
+    ];
+
+    fn cmp_res(a: Tx5PipeResponse, b: Tx5PipeResponse) {
+        let a = a.encode().unwrap();
+        let b = b.encode().unwrap();
+        let a = String::from_utf8_lossy(&a);
+        let b = String::from_utf8_lossy(&b);
+        assert_eq!(a, b);
+    }
+
+    fn cmp_req(a: Tx5PipeRequest, b: Tx5PipeRequest) {
+        let a = a.encode().unwrap();
+        let b = b.encode().unwrap();
+        let a = String::from_utf8_lossy(&a);
+        let b = String::from_utf8_lossy(&b);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn request_response() {
+        let mut decoder = Tx5PipeDecoder::default();
+
+        for (cmd, args, data) in REQ_RES_FIX {
+            let cmd = cmd.to_string();
+            let args: Vec<_> = args.iter().map(|s| s.to_string()).collect();
+            let data = data.to_vec();
+            println!("({cmd:?}, {args:?}, {})", String::from_utf8_lossy(&data));
+            if cmd.starts_with("<") {
+                let exp1 = Tx5PipeResponse::decode(
+                    cmd.clone(),
+                    args.clone(),
+                    Box::new(std::io::Cursor::new(data.clone())),
+                )
+                .unwrap();
+                let exp2 = Tx5PipeResponse::decode(
+                    cmd,
+                    args,
+                    Box::new(std::io::Cursor::new(data)),
+                )
+                .unwrap();
+                let encoded = exp1.encode().unwrap();
+                let mut actual = decoder.update(encoded).unwrap();
+                assert_eq!(1, actual.len());
+                let (cmd, args, data) = actual.remove(0);
+                let actual = Tx5PipeResponse::decode(cmd, args, data).unwrap();
+                cmp_res(exp2, actual);
+            } else {
+                let exp1 = Tx5PipeRequest::decode(
+                    cmd.clone(),
+                    args.clone(),
+                    Box::new(std::io::Cursor::new(data.clone())),
+                )
+                .unwrap();
+                let exp2 = Tx5PipeRequest::decode(
+                    cmd,
+                    args,
+                    Box::new(std::io::Cursor::new(data)),
+                )
+                .unwrap();
+                let encoded = exp1.encode().unwrap();
+                let mut actual = decoder.update(encoded).unwrap();
+                assert_eq!(1, actual.len());
+                let (cmd, args, data) = actual.remove(0);
+                let actual = Tx5PipeRequest::decode(cmd, args, data).unwrap();
+                cmp_req(exp2, actual);
+            }
         }
     }
 }

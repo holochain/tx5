@@ -19,6 +19,9 @@ backend-go-pion = [ "tx5-go-pion" ]
 # use the webrtc-rs crate as the webrtc backend
 backend-webrtc-rs = [ "webrtc" ]
 
+# tx5-pipe enables some additional features
+pipe_ipc = [ "tx5-core/pipe_ipc" ]
+
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true }

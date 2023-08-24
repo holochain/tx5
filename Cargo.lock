@@ -3811,6 +3811,7 @@ name = "tx5-core"
 version = "0.0.2-alpha"
 dependencies = [
  "base64 0.13.1",
+ "bytes",
  "dirs",
  "once_cell",
  "rand",
@@ -3907,7 +3908,9 @@ dependencies = [
 name = "tx5-pipe"
 version = "0.0.2-alpha"
 dependencies = [
+ "bytes",
  "tokio",
+ "tx5",
  "tx5-core",
 ]
 

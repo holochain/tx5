@@ -12,17 +12,23 @@ fn check_token(s: &str) -> std::io::Result<()> {
 
 trait BufExt {
     fn into_string(self) -> String;
+    fn into_vec(self) -> Vec<u8>;
 }
 
 impl BufExt for Box<dyn bytes::Buf + Send> {
-    fn into_string(mut self) -> String {
+    fn into_string(self) -> String {
+        let out = self.into_vec();
+        String::from_utf8_lossy(&out).to_string()
+    }
+
+    fn into_vec(mut self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.remaining());
         while self.has_remaining() {
             let c = self.chunk();
             out.extend_from_slice(c);
             self.advance(c.len());
         }
-        String::from_utf8_lossy(&out).to_string()
+        out
     }
 }
 
@@ -368,6 +374,15 @@ impl Tx5PipeDecoder {
 
 /// Request types that can be received by a Tx5Pipe server from a client.
 pub enum Tx5PipeRequest {
+    /// Register an application hash.
+    AppReg {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// Application hash.
+        app_hash: [u8; 32],
+    },
+
     /// A request to register as addressable with a signal server.
     SigReg {
         /// Command identifier.
@@ -375,6 +390,15 @@ pub enum Tx5PipeRequest {
 
         /// Signal Url.
         sig_url: String,
+    },
+
+    /// A request to make this node discoverable on a bootstrap server.
+    BootReg {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// Bootstrap server url.
+        boot_url: String,
     },
 
     /// A request to send a message to a remote peer.
@@ -391,6 +415,18 @@ pub enum Tx5PipeRequest {
 }
 
 impl Tx5PipeRequest {
+    /// Register an application hash.
+    pub fn tx5_app_reg<A>(
+        cmd_id: A,
+        app_hash: &[u8; 32],
+    ) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+    {
+        let b64 = base64::encode(app_hash);
+        tx5_pipe_encode("app_reg", [cmd_id].iter(), b64.as_bytes())
+    }
+
     /// Register to be addressable with a signal server.
     pub fn tx5_sig_reg<A, B>(cmd_id: A, sig_url: B) -> std::io::Result<Vec<u8>>
     where
@@ -398,6 +434,22 @@ impl Tx5PipeRequest {
         B: AsRef<str>,
     {
         tx5_pipe_encode("sig_reg", [cmd_id].iter(), sig_url.as_ref().as_bytes())
+    }
+
+    /// A request to make this node discoverable on a bootstrap server.
+    pub fn tx5_boot_reg<A, B>(
+        cmd_id: A,
+        boot_url: B,
+    ) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+        B: AsRef<str>,
+    {
+        tx5_pipe_encode(
+            "boot_reg",
+            [cmd_id].iter(),
+            boot_url.as_ref().as_bytes(),
+        )
     }
 
     /// Send a message to a remote.
@@ -416,8 +468,14 @@ impl Tx5PipeRequest {
     /// Encode this instance in the tx5 pipe ipc protocol.
     pub fn encode(self) -> std::io::Result<Vec<u8>> {
         match self {
+            Self::AppReg { cmd_id, app_hash } => {
+                Self::tx5_app_reg(cmd_id, &app_hash)
+            }
             Self::SigReg { cmd_id, sig_url } => {
                 Self::tx5_sig_reg(cmd_id, sig_url)
+            }
+            Self::BootReg { cmd_id, boot_url } => {
+                Self::tx5_boot_reg(cmd_id, boot_url)
             }
             Self::Send {
                 cmd_id,
@@ -435,6 +493,22 @@ impl Tx5PipeRequest {
         data: Box<dyn bytes::Buf + Send>,
     ) -> std::io::Result<Self> {
         match cmd.as_str() {
+            "app_reg" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                let app_hash_unsized = base64::decode(data.into_vec())
+                    .map_err(crate::Error::err)?;
+                if app_hash_unsized.len() != 32 {
+                    return Err(crate::Error::id("InvalidAppHashSize"));
+                }
+                let mut app_hash = [0; 32];
+                app_hash.copy_from_slice(&app_hash_unsized);
+                Ok(Self::AppReg {
+                    cmd_id: args.remove(0),
+                    app_hash,
+                })
+            }
             "sig_reg" => {
                 if args.len() != 1 {
                     return Err(crate::Error::id("InvalidArgs"));
@@ -442,6 +516,15 @@ impl Tx5PipeRequest {
                 Ok(Self::SigReg {
                     cmd_id: args.remove(0),
                     sig_url: data.into_string(),
+                })
+            }
+            "boot_reg" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::BootReg {
+                    cmd_id: args.remove(0),
+                    boot_url: data.into_string(),
                 })
             }
             "send" => {
@@ -482,13 +565,25 @@ pub enum Tx5PipeResponse {
         text: String,
     },
 
-    /// An ok response to a sigreg request.
+    /// An ok response to an app_reg request.
+    AppRegOk {
+        /// Command identifier.
+        cmd_id: String,
+    },
+
+    /// An ok response to a sig_reg request.
     SigRegOk {
         /// Command identifier.
         cmd_id: String,
 
         /// Client Url.
         cli_url: String,
+    },
+
+    /// An ok response to a boot_reg request.
+    BootRegOk {
+        /// Command identifier.
+        cmd_id: String,
     },
 
     /// An ok response to a send request.
@@ -535,7 +630,7 @@ impl Tx5PipeResponse {
         )
     }
 
-    /// Okay response to a sigreg request.
+    /// Okay response to a sig_reg request.
     pub fn tx5_sig_reg_ok<A, B>(
         cmd_id: A,
         cli_url: B,
@@ -551,6 +646,18 @@ impl Tx5PipeResponse {
         )
     }
 
+    /// Okay response to an app_reg request.
+    pub fn tx5_app_reg_ok<A>(cmd_id: A) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+    {
+        tx5_pipe_encode(
+            "<app_reg_ok",
+            [cmd_id].iter(),
+            Box::new(bytes::Bytes::new()),
+        )
+    }
+
     /// Okay response to a send request.
     pub fn tx5_send_ok<A>(cmd_id: A) -> std::io::Result<Vec<u8>>
     where
@@ -558,6 +665,18 @@ impl Tx5PipeResponse {
     {
         tx5_pipe_encode(
             "<send_ok",
+            [cmd_id].iter(),
+            Box::new(bytes::Bytes::new()),
+        )
+    }
+
+    /// Okay response to an boot_reg request.
+    pub fn tx5_boot_reg_ok<A>(cmd_id: A) -> std::io::Result<Vec<u8>>
+    where
+        A: AsRef<str>,
+    {
+        tx5_pipe_encode(
+            "<boot_reg_ok",
             [cmd_id].iter(),
             Box::new(bytes::Bytes::new()),
         )
@@ -581,9 +700,11 @@ impl Tx5PipeResponse {
             Self::Error { cmd_id, code, text } => {
                 Self::tx5_error(cmd_id, code, text)
             }
+            Self::AppRegOk { cmd_id } => Self::tx5_app_reg_ok(cmd_id),
             Self::SigRegOk { cmd_id, cli_url } => {
                 Self::tx5_sig_reg_ok(cmd_id, cli_url)
             }
+            Self::BootRegOk { cmd_id } => Self::tx5_boot_reg_ok(cmd_id),
             Self::SendOk { cmd_id } => Self::tx5_send_ok(cmd_id),
             Self::Recv { rem_url, data } => Self::tx5_recv(rem_url, data),
         }
@@ -616,6 +737,14 @@ impl Tx5PipeResponse {
                     text: data.into_string(),
                 })
             }
+            "<app_reg_ok" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::AppRegOk {
+                    cmd_id: args.remove(0),
+                })
+            }
             "<sig_reg_ok" => {
                 if args.len() != 1 {
                     return Err(crate::Error::id("InvalidArgs"));
@@ -623,6 +752,14 @@ impl Tx5PipeResponse {
                 Ok(Self::SigRegOk {
                     cmd_id: args.remove(0),
                     cli_url: data.into_string(),
+                })
+            }
+            "<boot_reg_ok" => {
+                if args.len() != 1 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::BootRegOk {
+                    cmd_id: args.remove(0),
                 })
             }
             "<send_ok" => {
@@ -759,13 +896,21 @@ test12 b barg b|0||
     }
 
     const REQ_RES_FIX: &[(&str, &[&str], &[u8])] = &[
-        ("sig_reg", &["test1"], b"wss://yada"),
-        ("send", &["test2", "wss://yada"], b"yada"),
-        ("<help", &["test3"], b"yada\nmultiline"),
-        ("<error", &["test4", "42"], b"yada"),
-        ("<sig_reg_ok", &["test5"], b"yada"),
-        ("<send_ok", &["test6"], b""),
-        ("<recv", &["test7"], b"yada"),
+        (
+            "app_reg",
+            &["test1"],
+            b"Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
+        ),
+        ("sig_reg", &["test2"], b"wss://yada"),
+        ("boot_reg", &["test3"], b"https://yada"),
+        ("send", &["test4", "wss://yada"], b"yada"),
+        ("<help", &["test5"], b"yada\nmultiline"),
+        ("<error", &["test6", "42"], b"yada"),
+        ("<app_reg_ok", &["test7"], b""),
+        ("<sig_reg_ok", &["test8"], b"yada"),
+        ("<boot_reg_ok", &["test9"], b""),
+        ("<send_ok", &["test10"], b""),
+        ("<recv", &["test11"], b"yada"),
     ];
 
     fn cmp_res(a: Tx5PipeResponse, b: Tx5PipeResponse) {

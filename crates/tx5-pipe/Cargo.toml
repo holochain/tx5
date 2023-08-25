@@ -11,7 +11,14 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
+base64 = { workspace = true }
+blake2b_simd = { workspace = true }
 bytes = { workspace = true }
+lair_keystore_api = { workspace = true }
+msgpackin_core = { workspace = true }
+once_cell = { workspace = true }
+reqwest = { workspace = true }
+sodoken = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tx5-core = { workspace = true, features = [ "pipe_ipc" ] }
 tx5 = { workspace = true, features = [ "pipe_ipc" ] }

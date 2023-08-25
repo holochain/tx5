@@ -6,21 +6,29 @@
 //!
 //! Holochain WebRTC p2p cli tool.
 
+use lair_keystore_api::prelude::*;
+
 /// Current Tx5Pipe version.
 pub const TX5_PIPE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const HELP_TEXT: &str = r#"
 # -- Begin Tx5Pipe Usage Info -- #
 # # Request Messages (received on stdin):
-# 'sig_reg cmd_id |sig_url|'     - connect to a signal server
-# 'send cmd_id rem_url |data|'   - send outgoing data to a peer
+# 'app_reg cmd_id |base64_app_hash|' - register your app hash
+# 'sig_reg cmd_id |sig_url|'         - connect to a signal server
+# 'boot_reg cmd_id |boot_url|'       - register with a bootstrap server
+# 'send cmd_id rem_url |data|'       - send outgoing data to a peer
 # # Response Messages (sent on stdout):
-# '<help version |info|'         - this help info
-# '<error cmd_id code |text|'    - error response to a request
-# '<sig_reg_ok cmd_id |cli_url|' - okay response to a sig_reg
-# '<send_ok cmd_id ||'           - okay response to a send
-# '<recv rem_url |data|'         - receive incoming peer data
+# '<help version |info|'             - this help info
+# '<error cmd_id code |text|'        - error response to a request
+# '<app_reg_ok cmd_id'               - okay response to an app_reg
+# '<sig_reg_ok cmd_id |cli_url|'     - okay response to a sig_reg
+# '<boot_reg_ok cmd_id'              - okay response to a boot_reg
+# '<send_ok cmd_id ||'               - okay response to a send
+# '<recv rem_url |data|'             - receive incoming peer data
 # -- End Tx5Pipe Usage Info -- #"#;
+
+pub mod boot;
 
 use std::sync::Arc;
 use tx5_core::pipe_ipc::*;
@@ -40,9 +48,13 @@ pub trait Tx5PipeHandler: 'static + Send + Sync {
 type DynTx5PipeHandler = Arc<dyn Tx5PipeHandler + 'static + Send + Sync>;
 
 /// The Tx5Pipe struct.
+#[derive(Clone)]
 pub struct Tx5Pipe {
     ep: tx5::Ep,
     hnd: DynTx5PipeHandler,
+    cur_cli_url: Arc<std::sync::Mutex<Option<String>>>,
+    cur_app_hash: Arc<std::sync::Mutex<Option<[u8; 32]>>>,
+    cur_boot_url: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Tx5Pipe {
@@ -92,20 +104,36 @@ impl Tx5Pipe {
             });
         }
 
-        Ok(Self { ep, hnd })
+        Ok(Self {
+            ep,
+            hnd,
+            cur_cli_url: Arc::new(std::sync::Mutex::new(None)),
+            cur_app_hash: Arc::new(std::sync::Mutex::new(None)),
+            cur_boot_url: Arc::new(std::sync::Mutex::new(None)),
+        })
     }
 
     /// Send a pipe request into the Tx5Pipe instance.
     pub fn pipe(&self, req: Tx5PipeRequest) {
-        let ep = self.ep.clone();
-        let hnd = self.hnd.clone();
+        let this = self.clone();
         tokio::task::spawn(async move {
             match req {
-                Tx5PipeRequest::SigReg { cmd_id, sig_url } => {
-                    handle_resp(
-                        hnd,
+                Tx5PipeRequest::AppReg { cmd_id, app_hash } => {
+                    this.handle_resp(
                         cmd_id.clone(),
-                        sig_reg(ep, cmd_id, sig_url).await,
+                        this.app_reg(cmd_id, app_hash).await,
+                    );
+                }
+                Tx5PipeRequest::SigReg { cmd_id, sig_url } => {
+                    this.handle_resp(
+                        cmd_id.clone(),
+                        this.sig_reg(cmd_id, sig_url).await,
+                    );
+                }
+                Tx5PipeRequest::BootReg { cmd_id, boot_url } => {
+                    this.handle_resp(
+                        cmd_id.clone(),
+                        this.boot_reg(cmd_id, boot_url).await,
                     );
                 }
                 Tx5PipeRequest::Send {
@@ -113,55 +141,138 @@ impl Tx5Pipe {
                     rem_url,
                     data,
                 } => {
-                    handle_resp(
-                        hnd,
+                    this.handle_resp(
                         cmd_id.clone(),
-                        send(ep, cmd_id, rem_url, data).await,
+                        this.send(cmd_id, rem_url, data).await,
                     );
                 }
             }
         });
     }
-}
 
-fn handle_resp(
-    hnd: DynTx5PipeHandler,
-    cmd_id: String,
-    rsp: std::io::Result<Tx5PipeResponse>,
-) {
-    let rsp = match rsp {
-        Ok(rsp) => rsp,
-        Err(err) => Tx5PipeResponse::Error {
-            cmd_id,
-            code: 0,
-            text: format!("{err:?}"),
-        },
-    };
-    if !hnd.pipe(rsp) {
-        todo!("handle pipe close in responder"); // TODO - FIXME
+    fn handle_resp(
+        &self,
+        cmd_id: String,
+        rsp: std::io::Result<Tx5PipeResponse>,
+    ) {
+        let rsp = match rsp {
+            Ok(rsp) => rsp,
+            Err(err) => Tx5PipeResponse::Error {
+                cmd_id,
+                code: 0,
+                text: format!("{err:?}"),
+            },
+        };
+        if !self.hnd.pipe(rsp) {
+            todo!("handle pipe close in responder"); // TODO - FIXME
+        }
     }
-}
 
-async fn sig_reg(
-    ep: tx5::Ep,
-    cmd_id: String,
-    sig_url: String,
-) -> std::io::Result<Tx5PipeResponse> {
-    let sig_url = Tx5Url::new(sig_url)?;
-    let cli_url = ep.listen(sig_url).await?;
-    Ok(Tx5PipeResponse::SigRegOk {
-        cmd_id,
-        cli_url: cli_url.to_string(),
-    })
-}
+    async fn check_do_bootstrap(&self) -> std::io::Result<()> {
+        let cur_app_hash = *self.cur_app_hash.lock().unwrap();
+        let cur_cli_url = self.cur_cli_url.lock().unwrap().clone();
+        let cur_boot_url = self.cur_boot_url.lock().unwrap().clone();
 
-async fn send(
-    ep: tx5::Ep,
-    cmd_id: String,
-    rem_url: String,
-    data: Box<dyn bytes::Buf + Send>,
-) -> std::io::Result<Tx5PipeResponse> {
-    let rem_url = Tx5Url::new(rem_url)?;
-    ep.send(rem_url, data).await?;
-    Ok(Tx5PipeResponse::SendOk { cmd_id })
+        if let (Some(app_hash), Some(cli_url), Some(boot_url)) =
+            (cur_app_hash, cur_cli_url, cur_boot_url)
+        {
+            let lair_tag = self.ep.get_config().lair_tag().clone();
+            let ed25519_pub_key = match self
+                .ep
+                .get_config()
+                .lair_client()
+                .get_entry(lair_tag)
+                .await?
+            {
+                LairEntryInfo::Seed {
+                    seed_info:
+                        SeedInfo {
+                            ed25519_pub_key, ..
+                        },
+                    ..
+                } => ed25519_pub_key,
+                _ => return Err(tx5_core::Error::id("InvalidLairEntry")),
+            };
+
+            let pub_key: [u8; 32] = *ed25519_pub_key.0;
+
+            let signed_at = std::time::SystemTime::now();
+            let expires_at =
+                signed_at + std::time::Duration::from_secs(60) * 20;
+
+            let entry = boot::BootEntry {
+                pub_key,
+                app_hash,
+                cli_url,
+                signed_at,
+                expires_at,
+                data: Vec::new(),
+            };
+
+            let enc1: Arc<[u8]> = entry.encode().into_boxed_slice().into();
+
+            let sig = self
+                .ep
+                .get_config()
+                .lair_client()
+                .sign_by_pub_key(ed25519_pub_key, None, enc1.clone())
+                .await?;
+            let signature: [u8; 64] = *sig.0;
+
+            let enc2 = entry.sign(&enc1, &signature);
+
+            boot::boot_post(&boot_url, enc2).await?;
+
+            // TODO - set up a task to poll for bootstrap peers
+        }
+
+        Ok(())
+    }
+
+    async fn app_reg(
+        &self,
+        cmd_id: String,
+        app_hash: [u8; 32],
+    ) -> std::io::Result<Tx5PipeResponse> {
+        *self.cur_app_hash.lock().unwrap() = Some(app_hash);
+        self.check_do_bootstrap().await?;
+        Ok(Tx5PipeResponse::AppRegOk { cmd_id })
+    }
+
+    async fn sig_reg(
+        &self,
+        cmd_id: String,
+        sig_url: String,
+    ) -> std::io::Result<Tx5PipeResponse> {
+        let sig_url = Tx5Url::new(sig_url)?;
+        let cli_url = self.ep.listen(sig_url).await?;
+        *self.cur_cli_url.lock().unwrap() = Some(cli_url.to_string());
+        self.check_do_bootstrap().await?;
+        Ok(Tx5PipeResponse::SigRegOk {
+            cmd_id,
+            cli_url: cli_url.to_string(),
+        })
+    }
+
+    async fn boot_reg(
+        &self,
+        cmd_id: String,
+        boot_url: String,
+    ) -> std::io::Result<Tx5PipeResponse> {
+        boot::boot_ping(&boot_url).await?;
+        *self.cur_boot_url.lock().unwrap() = Some(boot_url);
+        self.check_do_bootstrap().await?;
+        Ok(Tx5PipeResponse::BootRegOk { cmd_id })
+    }
+
+    async fn send(
+        &self,
+        cmd_id: String,
+        rem_url: String,
+        data: Box<dyn bytes::Buf + Send>,
+    ) -> std::io::Result<Tx5PipeResponse> {
+        let rem_url = Tx5Url::new(rem_url)?;
+        self.ep.send(rem_url, data).await?;
+        Ok(Tx5PipeResponse::SendOk { cmd_id })
+    }
 }

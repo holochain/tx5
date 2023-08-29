@@ -39,8 +39,6 @@ async fn main() {
 }
 
 fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
-    use std::io::Write;
-
     let (send, mut recv) =
         tokio::sync::mpsc::unbounded_channel::<Tx5PipeResponse>();
     std::thread::spawn(move || {
@@ -48,17 +46,13 @@ fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
         let mut stdout = stdout.lock();
 
         while let Some(res) = recv.blocking_recv() {
-            let enc = match res.encode() {
+            match res.encode(&mut stdout) {
                 Err(err) => {
                     eprintln!("{err:?}");
                     std::process::exit(127);
                 }
                 Ok(enc) => enc,
             };
-            if let Err(err) = stdout.write_all(&enc) {
-                eprintln!("{err:?}");
-                std::process::exit(127);
-            }
         }
     });
 
@@ -73,29 +67,28 @@ fn read_stdin() -> tokio::sync::mpsc::UnboundedReceiver<Tx5PipeRequest> {
         let stdin = std::io::stdin();
         let mut stdin = stdin.lock();
 
-        let mut dec = Tx5PipeDecoder::default();
+        let mut dec = asv::AsvParse::default();
         let mut buf = [0; 4096];
 
         loop {
             match stdin.read(&mut buf) {
                 Ok(read) => {
                     if read > 0 {
-                        let res = match dec.update(&buf[..read]) {
+                        let res = match dec.parse(&buf[..read]) {
                             Err(err) => {
                                 eprintln!("{err:?}");
                                 std::process::exit(127);
                             }
                             Ok(res) => res,
                         };
-                        for (cmd, args, data) in res {
-                            let req =
-                                match Tx5PipeRequest::decode(cmd, args, data) {
-                                    Err(err) => {
-                                        eprintln!("{err:?}");
-                                        std::process::exit(127);
-                                    }
-                                    Ok(req) => req,
-                                };
+                        for field_list in res {
+                            let req = match Tx5PipeRequest::decode(field_list) {
+                                Err(err) => {
+                                    eprintln!("{err:?}");
+                                    std::process::exit(127);
+                                }
+                                Ok(req) => req,
+                            };
                             if send.send(req).is_err() {
                                 eprintln!("stdin send channel closed");
                                 std::process::exit(127);

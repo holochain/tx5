@@ -14,18 +14,18 @@ pub const TX5_PIPE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const HELP_TEXT: &str = r#"
 # -- Begin Tx5Pipe Usage Info -- #
 # # Request Messages (received on stdin):
-# 'app_reg cmd_id |base64_app_hash|' - register your app hash
-# 'sig_reg cmd_id |sig_url|'         - connect to a signal server
-# 'boot_reg cmd_id |boot_url|'       - register with a bootstrap server
-# 'send cmd_id rem_url |data|'       - send outgoing data to a peer
+# 'app_reg cmd_id base64_app_hash' - register your app hash
+# 'sig_reg cmd_id sig_url'         - connect to a signal server
+# 'boot_reg cmd_id boot_url'       - register with a bootstrap server
+# 'send cmd_id rem_url data'       - send outgoing data to a peer
 # # Response Messages (sent on stdout):
-# '<help version |info|'             - this help info
-# '<error cmd_id code |text|'        - error response to a request
-# '<app_reg_ok cmd_id'               - okay response to an app_reg
-# '<sig_reg_ok cmd_id |cli_url|'     - okay response to a sig_reg
-# '<boot_reg_ok cmd_id'              - okay response to a boot_reg
-# '<send_ok cmd_id ||'               - okay response to a send
-# '<recv rem_url |data|'             - receive incoming peer data
+# '@help version info'             - this help info
+# '@error cmd_id code text'        - error response to a request
+# '@app_reg_ok cmd_id'             - okay response to an app_reg
+# '@sig_reg_ok cmd_id cli_url'     - okay response to a sig_reg
+# '@boot_reg_ok cmd_id'            - okay response to a boot_reg
+# '@send_ok cmd_id'                - okay response to a send
+# '@recv rem_url data'             - receive incoming peer data
 # -- End Tx5Pipe Usage Info -- #"#;
 
 pub mod boot;

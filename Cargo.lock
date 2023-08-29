@@ -308,6 +308,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "asv"
+version = "0.0.2-alpha"
+
+[[package]]
 name = "async-trait"
 version = "0.1.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3845,6 +3849,7 @@ dependencies = [
 name = "tx5-core"
 version = "0.0.2-alpha"
 dependencies = [
+ "asv",
  "base64 0.13.1",
  "bytes",
  "dirs",
@@ -3943,6 +3948,7 @@ dependencies = [
 name = "tx5-pipe"
 version = "0.0.2-alpha"
 dependencies = [
+ "asv",
  "base64 0.13.1",
  "blake2b_simd",
  "bytes",

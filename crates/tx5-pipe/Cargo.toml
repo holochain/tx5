@@ -11,6 +11,7 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
+asv = { workspace = true }
 base64 = { workspace = true }
 blake2b_simd = { workspace = true }
 bytes = { workspace = true }

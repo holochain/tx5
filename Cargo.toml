@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/asv",
   "crates/tx5-core",
   "crates/tx5-online",
   "crates/tx5-go-pion-turn",
@@ -13,6 +14,7 @@ members = [
 ]
 
 [workspace.dependencies]
+asv = { version = "0.0.2-alpha", path = "crates/asv" }
 base64 = "0.13.0"
 blake2b_simd = "1.0.1"
 bytes = "1.4.0"

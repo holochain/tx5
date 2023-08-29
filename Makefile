@@ -7,6 +7,7 @@ SHELL = /usr/bin/env sh -eu
 all: test
 
 publish-all:
+	$(MAKE) publish crate=asv
 	$(MAKE) publish crate=tx5-core
 	$(MAKE) publish crate=tx5-online
 	$(MAKE) publish crate=tx5-go-pion-turn
@@ -20,6 +21,9 @@ publish-all:
 
 publish:
 	@case "$(crate)" in \
+		asv) \
+			export MANIFEST="./crates/asv/Cargo.toml"; \
+			;; \
 		tx5-core) \
 			export MANIFEST="./crates/tx5-core/Cargo.toml"; \
 			;; \
@@ -51,6 +55,7 @@ publish:
 			export MANIFEST="./crates/tx5-demo/Cargo.toml"; \
 			;; \
 		*) \
+			echo "USAGE: make publish crate=asv"; \
 			echo "USAGE: make publish crate=tx5-core"; \
 			echo "USAGE: make publish crate=tx5-online"; \
 			echo "USAGE: make publish crate=tx5-go-pion-turn"; \
@@ -83,6 +88,7 @@ static: docs tools
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 docs: tools
+	cargo rdme --force -w asv
 	cp -f crates/tx5-core/src/README.tpl README.md
 	printf '### The `tx5-signal-srv` executable\n`tx5-signal-srv --help`\n```text\n' > crates/tx5-signal-srv/src/docs/srv_help.md
 	cargo run --manifest-path crates/tx5-signal-srv/Cargo.toml -- --help >> crates/tx5-signal-srv/src/docs/srv_help.md

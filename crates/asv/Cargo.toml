@@ -1,0 +1,13 @@
+[package]
+name = "asv"
+version = "0.0.2-alpha"
+edition = "2021"
+description = "A separated value encoder and parser"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/holochain/tx5"
+documentation = "https://docs.rs/asv"
+authors = [ "Holochain Core Dev Team <devcore@holochain.org>" ]
+keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
+categories = ["network-programming"]
+
+[dependencies]

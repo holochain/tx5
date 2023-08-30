@@ -107,6 +107,9 @@ async fn main() {
         while let Some(cmd) = o_rcv.recv().await {
             match cmd {
                 Cmd::PeerEvt(PeerConnectionEvent::State(
+                    PeerConnectionState::Connecting,
+                )) => (),
+                Cmd::PeerEvt(PeerConnectionEvent::State(
                     PeerConnectionState::Connected,
                 )) => (),
                 Cmd::PeerEvt(PeerConnectionEvent::ICECandidate(mut ice)) => {
@@ -145,6 +148,9 @@ async fn main() {
 
     while let Some(cmd) = t_rcv.recv().await {
         match cmd {
+            Cmd::PeerEvt(PeerConnectionEvent::State(
+                PeerConnectionState::Connecting,
+            )) => (),
             Cmd::PeerEvt(PeerConnectionEvent::State(
                 PeerConnectionState::Connected,
             )) => (),

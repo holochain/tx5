@@ -203,13 +203,13 @@ impl Tx5Pipe {
             let entry = boot::BootEntry {
                 pub_key,
                 app_hash,
-                cli_url,
+                cli_url: Some(cli_url),
                 signed_at,
                 expires_at,
                 data: Vec::new(),
             };
 
-            let enc1: Arc<[u8]> = entry.encode().into_boxed_slice().into();
+            let enc1: Arc<[u8]> = entry.encode()?.into_boxed_slice().into();
 
             let sig = self
                 .ep
@@ -219,9 +219,9 @@ impl Tx5Pipe {
                 .await?;
             let signature: [u8; 64] = *sig.0;
 
-            let enc2 = entry.sign(&enc1, &signature);
+            let enc2 = entry.sign(&enc1, &signature)?;
 
-            boot::boot_post(&boot_url, enc2).await?;
+            boot::boot_put(&boot_url, enc2).await?;
 
             // TODO - set up a task to poll for bootstrap peers
         }

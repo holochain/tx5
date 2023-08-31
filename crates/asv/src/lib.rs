@@ -134,6 +134,11 @@ pub mod asv_encoder {
 
     /// Determine the best output format for given data.
     pub fn get_best_fmt(data: &[u8]) -> BestFmt {
+        // Empty fields must be quoted, otherwise they will be ignored.
+        if data.is_empty() {
+            return BestFmt::Quote;
+        }
+
         // Anything bigger than a 64 byte hash encoded in base64.
         if data.len() > 86 {
             return BestFmt::Bin;
@@ -546,13 +551,20 @@ mod test {
                     "smiley -\r\n🙃",
                 ],
             ],
-        )
+        ),
+        (
+            b"empty \"\" field\n", &[&["empty", "", "field"]]
+        ),
     ];
 
     fn check_fix_utf8(expected: &[&[&str]], actual: Vec<Vec<Vec<u8>>>) {
+        assert_eq!(expected.len(), actual.len());
         let mut actual = actual.iter();
         for expected_line in expected.iter() {
             let actual_line = actual.next().unwrap();
+
+            assert_eq!(expected_line.len(), actual_line.len());
+
             let mut actual_line = actual_line.iter();
             for expected_field in expected_line.iter() {
                 let actual_field = actual_line.next().unwrap();

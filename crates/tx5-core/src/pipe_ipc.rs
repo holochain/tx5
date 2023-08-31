@@ -117,6 +117,9 @@ pub enum Tx5PipeRequest {
 
         /// Bootstrap server url.
         boot_url: String,
+
+        /// Bootstrap meta data.
+        data: Box<dyn bytes::Buf + Send>,
     },
 
     /// A request to send a message to a remote peer.
@@ -165,11 +168,16 @@ impl Tx5PipeRequest {
         w: &mut W,
         cmd_id: &str,
         boot_url: &str,
+        data: Box<dyn Buf + Send>,
     ) -> std::io::Result<()> {
+        if data.remaining() > 512 {
+            return Err(crate::Error::id("BootDataOver512B"));
+        }
         Tx5PipeWriteRow::new(w)
             .write_field(b"boot_reg")?
             .write_field(cmd_id.as_bytes())?
             .write_field(boot_url.as_bytes())?
+            .write_bin(data)?
             .finish()
     }
 
@@ -180,6 +188,9 @@ impl Tx5PipeRequest {
         rem_url: &str,
         data: Box<dyn Buf + Send>,
     ) -> std::io::Result<()> {
+        if data.remaining() > 16 * 1024 {
+            return Err(crate::Error::id("MsgOver16KiB"));
+        }
         Tx5PipeWriteRow::new(w)
             .write_field(b"send")?
             .write_field(cmd_id.as_bytes())?
@@ -197,9 +208,11 @@ impl Tx5PipeRequest {
             Self::SigReg { cmd_id, sig_url } => {
                 Self::tx5_sig_reg(w, &cmd_id, &sig_url)
             }
-            Self::BootReg { cmd_id, boot_url } => {
-                Self::tx5_boot_reg(w, &cmd_id, &boot_url)
-            }
+            Self::BootReg {
+                cmd_id,
+                boot_url,
+                data,
+            } => Self::tx5_boot_reg(w, &cmd_id, &boot_url, data),
             Self::Send {
                 cmd_id,
                 rem_url,
@@ -242,14 +255,23 @@ impl Tx5PipeRequest {
                 Ok(Self::SigReg { cmd_id, sig_url })
             }
             b"boot_reg" => {
-                if fields.len() != 2 {
+                if fields.len() != 3 {
                     return Err(crate::Error::id("InvalidArgs"));
                 }
                 let cmd_id =
                     String::from_utf8_lossy(&fields.remove(0)).to_string();
                 let boot_url =
                     String::from_utf8_lossy(&fields.remove(0)).to_string();
-                Ok(Self::BootReg { cmd_id, boot_url })
+                let data = fields.remove(0);
+                if data.len() > 512 {
+                    return Err(crate::Error::id("BootDataOver512B"));
+                }
+                let data = Box::new(std::io::Cursor::new(data));
+                Ok(Self::BootReg {
+                    cmd_id,
+                    boot_url,
+                    data,
+                })
             }
             b"send" => {
                 if fields.len() != 3 {
@@ -259,7 +281,11 @@ impl Tx5PipeRequest {
                     String::from_utf8_lossy(&fields.remove(0)).to_string();
                 let rem_url =
                     String::from_utf8_lossy(&fields.remove(0)).to_string();
-                let data = Box::new(std::io::Cursor::new(fields.remove(0)));
+                let data = fields.remove(0);
+                if data.len() > 16 * 1024 {
+                    return Err(crate::Error::id("MsgOver16KiB"));
+                }
+                let data = Box::new(std::io::Cursor::new(data));
                 Ok(Self::Send {
                     cmd_id,
                     rem_url,
@@ -330,6 +356,18 @@ pub enum Tx5PipeResponse {
         rem_url: String,
 
         /// Message data.
+        data: Box<dyn bytes::Buf + Send>,
+    },
+
+    /// Receive a boot notice.
+    BootRecv {
+        /// Remote pub_key.
+        rem_pub_key: [u8; 32],
+
+        /// Remote url.
+        rem_url: Option<String>,
+
+        /// Bootstrap meta data.
         data: Box<dyn bytes::Buf + Send>,
     },
 }
@@ -423,6 +461,25 @@ impl Tx5PipeResponse {
             .finish()
     }
 
+    /// Receive a boot notice.
+    pub fn tx5_boot_recv<W: std::io::Write>(
+        w: &mut W,
+        rem_pub_key: &[u8; 32],
+        rem_url: Option<&str>,
+        data: Box<dyn Buf + Send>,
+    ) -> std::io::Result<()> {
+        if data.remaining() > 512 {
+            return Err(crate::Error::id("BootDataOver512B"));
+        }
+        let b64 = base64::encode(rem_pub_key);
+        Tx5PipeWriteRow::new(w)
+            .write_field(b"@boot_recv")?
+            .write_field(b64.as_bytes())?
+            .write_field(rem_url.unwrap_or("").as_bytes())?
+            .write_bin(data)?
+            .finish()
+    }
+
     /// Encode this instance in the tx5 pipe ipc protocol.
     pub fn encode<W: std::io::Write>(self, w: &mut W) -> std::io::Result<()> {
         match self {
@@ -439,6 +496,11 @@ impl Tx5PipeResponse {
             Self::BootRegOk { cmd_id } => Self::tx5_boot_reg_ok(w, &cmd_id),
             Self::SendOk { cmd_id } => Self::tx5_send_ok(w, &cmd_id),
             Self::Recv { rem_url, data } => Self::tx5_recv(w, &rem_url, data),
+            Self::BootRecv {
+                rem_pub_key,
+                rem_url,
+                data,
+            } => Self::tx5_boot_recv(w, &rem_pub_key, rem_url.as_deref(), data),
         }
     }
 
@@ -515,8 +577,42 @@ impl Tx5PipeResponse {
                 }
                 let rem_url =
                     String::from_utf8_lossy(&fields.remove(0)).to_string();
-                let data = Box::new(std::io::Cursor::new(fields.remove(0)));
+                let data = fields.remove(0);
+                if data.len() > 16 * 1024 {
+                    return Err(crate::Error::id("MsgOver16KiB"));
+                }
+                let data = Box::new(std::io::Cursor::new(data));
                 Ok(Self::Recv { rem_url, data })
+            }
+            b"@boot_recv" => {
+                if fields.len() != 3 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+
+                let data = fields.remove(0);
+                let pk_unsized =
+                    base64::decode(data).map_err(crate::Error::err)?;
+                if pk_unsized.len() != 32 {
+                    return Err(crate::Error::id("InvalidRemPubKeySize"));
+                }
+                let mut rem_pub_key = [0; 32];
+                rem_pub_key.copy_from_slice(&pk_unsized);
+                let data = fields.remove(0);
+                let rem_url = if data.is_empty() {
+                    None
+                } else {
+                    Some(String::from_utf8_lossy(&data).to_string())
+                };
+                let data = fields.remove(0);
+                if data.len() > 512 {
+                    return Err(crate::Error::id("BootDataOver512B"));
+                }
+                let data = Box::new(std::io::Cursor::new(data));
+                Ok(Self::BootRecv {
+                    rem_pub_key,
+                    rem_url,
+                    data,
+                })
             }
             oth => Err(crate::Error::err(format!(
                 "invalid cmd: {}",
@@ -537,7 +633,7 @@ mod test {
             "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
         ],
         &["sig_reg", "test2", "wss://yada"],
-        &["boot_reg", "test3", "https://yada"],
+        &["boot_reg", "test3", "https://yada", "yada"],
         &["send", "test4", "wss://yada", "yada"],
         &["@help", "test5", "yada\nmultiline"],
         &["@error", "test6", "42", "yada"],
@@ -546,6 +642,18 @@ mod test {
         &["@boot_reg_ok", "test9"],
         &["@send_ok", "test10"],
         &["@recv", "test11", "yada"],
+        &[
+            "@boot_recv",
+            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
+            "wss://yada",
+            "yada",
+        ],
+        &[
+            "@boot_recv",
+            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
+            "wss://yada",
+            "",
+        ],
     ];
 
     #[test]

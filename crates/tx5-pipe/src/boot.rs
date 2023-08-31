@@ -192,7 +192,7 @@ impl BootEntry {
             - signed_at_ms;
 
         let mut meta_info = msgpackin::to_bytes(&MetaEncode {
-            dht_storage_arc_half_length: 0,
+            dht_storage_arc_half_length: self.data.len() as u32,
         })
         .map_err(Error::err)?;
 
@@ -234,10 +234,13 @@ impl BootEntry {
             msgpackin::from_ref(encoded).map_err(Error::err)?;
         let raw_info: AgentInfoEncode =
             msgpackin::from_ref(raw_sig.agent_info).map_err(Error::err)?;
-        let mut cur = std::io::Cursor::new(raw_info.meta_info);
-        let _raw_meta: MetaEncode =
-            msgpackin::from_sync(&mut cur).map_err(Error::err)?;
-        let raw_remain = &raw_info.meta_info[cur.position() as usize..];
+        let raw_meta: MetaEncode =
+            msgpackin::from_ref(raw_info.meta_info).map_err(Error::err)?;
+        let meta_len = std::cmp::min(
+            raw_meta.dht_storage_arc_half_length as usize,
+            raw_info.meta_info.len(),
+        );
+        let meta = &raw_info.meta_info[(raw_info.meta_info.len() - meta_len)..];
 
         if raw_sig.agent != raw_info.agent || raw_sig.agent.len() != 36 {
             return Err(Error::id("InvalidPubKey"));
@@ -275,7 +278,7 @@ impl BootEntry {
             cli_url,
             signed_at,
             expires_at,
-            data: raw_remain.to_vec(),
+            data: meta.to_vec(),
         })
     }
 }
@@ -295,15 +298,14 @@ mod test {
         let _ = tracing::subscriber::set_global_default(subscriber);
     }
 
-    const TEST_ENCODED: &str = "g6VhZ2VudMQkAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIgST39qXNpZ25hdHVyZcRAAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA6phZ2VudF9pbmZvxP2GpXNwYWNlxCQBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAX7Pzr6lYWdlbnTEJAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICIEk9/aR1cmxzkdlGd3NzOi8vdHg1LmhvbG8uaG9zdC90eDUtd3MvWVdSMERYVEprV21wZnM3TFlYUEJNWEFHR0NlWHhCQ0xPR0V1V2FFMVl2VaxzaWduZWRfYXRfbXMqsGV4cGlyZXNfYWZ0ZXJfbXMbqW1ldGFfaW5mb8QqgbtkaHRfc3RvcmFnZV9hcmNfaGFsZl9sZW5ndGgAaGVsbG8gd29ybGQh";
+    const TEST_ENCODED: &str = "g6VhZ2VudMQkAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIgST39qXNpZ25hdHVyZcRAAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA6phZ2VudF9pbmZvxP2GpXNwYWNlxCQBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAX7Pzr6lYWdlbnTEJAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICIEk9/aR1cmxzkdlGd3NzOi8vdHg1LmhvbG8uaG9zdC90eDUtd3MvWVdSMERYVEprV21wZnM3TFlYUEJNWEFHR0NlWHhCQ0xPR0V1V2FFMVl2VaxzaWduZWRfYXRfbXMqsGV4cGlyZXNfYWZ0ZXJfbXMbqW1ldGFfaW5mb8QqgbtkaHRfc3RvcmFnZV9hcmNfaGFsZl9sZW5ndGgMaGVsbG8gd29ybGQh";
 
     #[test]
     fn boot_entry_encode_decode() {
         init_tracing();
 
         let enc = base64::decode(TEST_ENCODED).unwrap();
-        let mut entry = BootEntry::decode(&enc).unwrap();
-        entry.data = b"hello world!".to_vec();
+        let entry = BootEntry::decode(&enc).unwrap();
         //println!("{entry:#?}");
 
         let re_enc_info = entry.encode().unwrap();

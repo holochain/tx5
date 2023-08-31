@@ -6,6 +6,7 @@
 //!
 //! Holochain WebRTC p2p cli tool.
 
+use crate::boot::BootEntry;
 use lair_keystore_api::prelude::*;
 
 /// Current Tx5Pipe version.
@@ -16,7 +17,7 @@ const HELP_TEXT: &str = r#"
 # # Request Messages (received on stdin):
 # 'app_reg cmd_id base64_app_hash' - register your app hash
 # 'sig_reg cmd_id sig_url'         - connect to a signal server
-# 'boot_reg cmd_id boot_url'       - register with a bootstrap server
+# 'boot_reg cmd_id boot_url data'  - register with a bootstrap server
 # 'send cmd_id rem_url data'       - send outgoing data to a peer
 # # Response Messages (sent on stdout):
 # '@help version info'             - this help info
@@ -47,19 +48,78 @@ pub trait Tx5PipeHandler: 'static + Send + Sync {
 
 type DynTx5PipeHandler = Arc<dyn Tx5PipeHandler + 'static + Send + Sync>;
 
+#[derive(Default)]
+struct BootCache {
+    cache: std::collections::HashMap<[u8; 32], BootEntry>,
+}
+
+impl BootCache {
+    fn incoming(
+        &mut self,
+        list: Vec<BootEntry>,
+    ) -> Vec<([u8; 32], Option<String>, Vec<u8>)> {
+        use std::collections::hash_map::Entry;
+        let mut out = Vec::new();
+
+        let now = std::time::SystemTime::now();
+
+        self.cache.retain(|_k, a| a.expires_at > now);
+
+        for boot_entry in list {
+            if boot_entry.expires_at <= now {
+                continue;
+            }
+
+            match self.cache.entry(boot_entry.pub_key) {
+                Entry::Occupied(mut e) => {
+                    if boot_entry.signed_at > e.get().signed_at {
+                        out.push((
+                            boot_entry.pub_key,
+                            boot_entry.cli_url.clone(),
+                            boot_entry.data.clone(),
+                        ));
+                        e.insert(boot_entry);
+                    }
+                }
+                Entry::Vacant(e) => {
+                    out.push((
+                        boot_entry.pub_key,
+                        boot_entry.cli_url.clone(),
+                        boot_entry.data.clone(),
+                    ));
+                    e.insert(boot_entry);
+                }
+            }
+        }
+
+        out
+    }
+}
+
 /// The Tx5Pipe struct.
-#[derive(Clone)]
 pub struct Tx5Pipe {
     ep: tx5::Ep,
     hnd: DynTx5PipeHandler,
     cur_cli_url: Arc<std::sync::Mutex<Option<String>>>,
     cur_app_hash: Arc<std::sync::Mutex<Option<[u8; 32]>>>,
     cur_boot_url: Arc<std::sync::Mutex<Option<String>>>,
+    cur_boot_data: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    recv_task: tokio::task::JoinHandle<()>,
+    boot_task: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+impl Drop for Tx5Pipe {
+    fn drop(&mut self) {
+        self.recv_task.abort();
+        if let Some(boot_task) = self.boot_task.lock().unwrap().take() {
+            boot_task.abort();
+        }
+    }
 }
 
 impl Tx5Pipe {
     /// Construct a new Tx5Pipe instance.
-    pub async fn new<H: Tx5PipeHandler>(hnd: H) -> std::io::Result<Self> {
+    pub async fn new<H: Tx5PipeHandler>(hnd: H) -> std::io::Result<Arc<Self>> {
         let (ep, mut recv) = tx5::Ep::new().await?;
 
         let hnd: DynTx5PipeHandler = Arc::new(hnd);
@@ -73,7 +133,7 @@ impl Tx5Pipe {
             ));
         }
 
-        {
+        let recv_task = {
             let hnd = hnd.clone();
             tokio::task::spawn(async move {
                 while let Some(evt) = recv.recv().await {
@@ -101,20 +161,23 @@ impl Tx5Pipe {
                         }
                     }
                 }
-            });
-        }
+            })
+        };
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             ep,
             hnd,
             cur_cli_url: Arc::new(std::sync::Mutex::new(None)),
             cur_app_hash: Arc::new(std::sync::Mutex::new(None)),
             cur_boot_url: Arc::new(std::sync::Mutex::new(None)),
-        })
+            cur_boot_data: Arc::new(std::sync::Mutex::new(None)),
+            recv_task,
+            boot_task: Arc::new(std::sync::Mutex::new(None)),
+        }))
     }
 
     /// Send a pipe request into the Tx5Pipe instance.
-    pub fn pipe(&self, req: Tx5PipeRequest) {
+    pub fn pipe(self: &Arc<Self>, req: Tx5PipeRequest) {
         let this = self.clone();
         tokio::task::spawn(async move {
             match req {
@@ -130,10 +193,14 @@ impl Tx5Pipe {
                         this.sig_reg(cmd_id, sig_url).await,
                     );
                 }
-                Tx5PipeRequest::BootReg { cmd_id, boot_url } => {
+                Tx5PipeRequest::BootReg {
+                    cmd_id,
+                    boot_url,
+                    data,
+                } => {
                     this.handle_resp(
                         cmd_id.clone(),
-                        this.boot_reg(cmd_id, boot_url).await,
+                        this.boot_reg(cmd_id, boot_url, data).await,
                     );
                 }
                 Tx5PipeRequest::Send {
@@ -200,13 +267,20 @@ impl Tx5Pipe {
             let expires_at =
                 signed_at + std::time::Duration::from_secs(60) * 20;
 
+            let data = self
+                .cur_boot_data
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_default();
+
             let entry = boot::BootEntry {
                 pub_key,
                 app_hash,
                 cli_url: Some(cli_url),
                 signed_at,
                 expires_at,
-                data: Vec::new(),
+                data,
             };
 
             let enc1: Arc<[u8]> = entry.encode()?.into_boxed_slice().into();
@@ -223,7 +297,52 @@ impl Tx5Pipe {
 
             boot::boot_put(&boot_url, enc2).await?;
 
-            // TODO - set up a task to poll for bootstrap peers
+            {
+                let mut boot_task_lock = self.boot_task.lock().unwrap();
+                if boot_task_lock.is_none() {
+                    let cur_app_hash = self.cur_app_hash.clone();
+                    let hnd = self.hnd.clone();
+                    *boot_task_lock = Some(tokio::task::spawn(async move {
+                        let mut delay_s = 10;
+                        let mut boot_cache = BootCache::default();
+                        loop {
+                            let app_hash = *cur_app_hash.lock().unwrap();
+                            if let Some(app_hash) = app_hash {
+                                if let Ok(list) =
+                                    boot::boot_random(&boot_url, &app_hash)
+                                        .await
+                                {
+                                    for (rem_pub_key, rem_url, data) in
+                                        boot_cache.incoming(list)
+                                    {
+                                        if !hnd.pipe(
+                                            Tx5PipeResponse::BootRecv {
+                                                rem_pub_key,
+                                                rem_url,
+                                                data: Box::new(
+                                                    std::io::Cursor::new(data),
+                                                ),
+                                            },
+                                        ) {
+                                            todo!("handle pipe close in responder");
+                                            // TODO - FIXME
+                                        }
+                                    }
+                                }
+                            }
+
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                delay_s,
+                            ))
+                            .await;
+                            delay_s *= 2;
+                            if delay_s > 60 {
+                                delay_s = 60;
+                            }
+                        }
+                    }));
+                }
+            }
         }
 
         Ok(())
@@ -258,9 +377,18 @@ impl Tx5Pipe {
         &self,
         cmd_id: String,
         boot_url: String,
+        data: Box<dyn bytes::Buf + Send>,
     ) -> std::io::Result<Tx5PipeResponse> {
+        use tx5::BytesBufExt;
+
         boot::boot_ping(&boot_url).await?;
         *self.cur_boot_url.lock().unwrap() = Some(boot_url);
+        let data = data.to_vec()?;
+        if data.is_empty() {
+            *self.cur_boot_data.lock().unwrap() = None;
+        } else {
+            *self.cur_boot_data.lock().unwrap() = Some(data);
+        }
         self.check_do_bootstrap().await?;
         Ok(Tx5PipeResponse::BootRegOk { cmd_id })
     }

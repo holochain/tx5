@@ -383,7 +383,7 @@ mod test {
         boot_put(&url, enc2).await.unwrap();
 
         // wait for cloudflare consistency
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
 
         println!("{:#?}", boot_random(&url, &[1; 32]).await.unwrap());
     }

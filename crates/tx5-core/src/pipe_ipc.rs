@@ -136,6 +136,16 @@ pub enum Tx5PipeRequest {
 }
 
 impl Tx5PipeRequest {
+    /// If this response type contains a cmd_id, return it.
+    pub fn get_cmd_id(&self) -> String {
+        match self {
+            Self::AppReg { cmd_id, .. }
+            | Self::SigReg { cmd_id, .. }
+            | Self::BootReg { cmd_id, .. }
+            | Self::Send { cmd_id, .. } => cmd_id.clone(),
+        }
+    }
+
     /// Register an application hash.
     pub fn tx5_app_reg<W: std::io::Write>(
         w: &mut W,
@@ -373,6 +383,20 @@ pub enum Tx5PipeResponse {
 }
 
 impl Tx5PipeResponse {
+    /// If this response type contains a cmd_id, return it.
+    pub fn get_cmd_id(&self) -> Option<String> {
+        match self {
+            Self::Tx5PipeHelp { .. }
+            | Self::Recv { .. }
+            | Self::BootRecv { .. } => None,
+            Self::Error { cmd_id, .. }
+            | Self::AppRegOk { cmd_id }
+            | Self::SigRegOk { cmd_id, .. }
+            | Self::BootRegOk { cmd_id, .. }
+            | Self::SendOk { cmd_id, .. } => Some(cmd_id.clone()),
+        }
+    }
+
     /// Send unsolicited help information.
     pub fn tx5_pipe_help<W: std::io::Write>(
         w: &mut W,

@@ -7,48 +7,40 @@ A separated value encoder and parser.
 ```rust
 const FIELD: &str = "smiley -\n🙃";
 
-let mut enc = Vec::new();
+let mut enc = AsvEncoder::default();
 
-// write a field in the "raw" format:
-enc.extend_from_slice(&write_raw_field(FIELD.as_bytes()));
-
-// field delimiter
-enc.extend_from_slice(FIELD_DELIM);
-
-// write a field in the "quoted" format:
-enc.extend_from_slice(&write_quote_field(FIELD.as_bytes()));
-
-// field delimiter
-enc.extend_from_slice(FIELD_DELIM);
-
-// write a field in the "binary" format:
-enc.extend_from_slice(&write_bin_header(FIELD.as_bytes().len()));
-enc.extend_from_slice(FIELD.as_bytes());
-enc.extend_from_slice(BIN_FOOTER);
-
-// row delimiter
-enc.extend_from_slice(ROW_DELIM);
+enc.field("test");
+enc.field(r#"multi
+line"#);
+enc.field(FIELD);
+enc.binary_bytes(FIELD);
+enc.finish_row();
 
 let mut expected = String::new();
-expected.push_str("smiley%20-%0A%F0%9F%99%83");
+expected.push_str("test");
 expected.push(' ');
-expected.push_str(r#""smiley -
-%F0%9F%99%83""#);
+expected.push_str("\"multi\nline\"");
 expected.push(' ');
-expected.push_str(r#"`13|smiley -
-🙃`"#);
+expected.push_str(&format!("`13|{FIELD}`"));
+expected.push(' ');
+expected.push_str(&format!("`13|{FIELD}`"));
 expected.push('\n');
 
-assert_eq!(expected, String::from_utf8_lossy(&enc));
+let bytes = enc.drain().into_vec();
 
-let mut parser = AsvParse::default();
-let result = parser.parse(&enc).unwrap();
+assert_eq!(expected, String::from_utf8_lossy(&bytes));
+
+let mut parser = AsvParser::default();
+let mut result =  parser.parse(bytes).unwrap();
+
 assert_eq!(1, result.len());
-for row in result {
-    assert_eq!(3, row.len());
-    for field in row {
-        assert_eq!("smiley -\n🙃", String::from_utf8_lossy(&field));
-    }
+
+for mut row in result {
+    assert_eq!(4, row.len());
+    assert_eq!("test", &row.remove(0).into_string().unwrap());
+    assert_eq!("multi\nline", &row.remove(0).into_string().unwrap());
+    assert_eq!(FIELD, &row.remove(0).into_string().unwrap());
+    assert_eq!(FIELD, &row.remove(0).into_string().unwrap());
 }
 ```
 

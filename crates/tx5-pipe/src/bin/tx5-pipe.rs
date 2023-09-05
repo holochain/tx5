@@ -39,20 +39,45 @@ async fn main() {
 }
 
 fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
+    use bytes::Buf;
+    use std::io::Write;
+
     let (send, mut recv) =
         tokio::sync::mpsc::unbounded_channel::<Tx5PipeResponse>();
+
     std::thread::spawn(move || {
         let stdout = std::io::stdout();
         let mut stdout = stdout.lock();
 
-        while let Some(res) = recv.blocking_recv() {
-            match res.encode(&mut stdout) {
-                Err(err) => {
+        let mut enc = asv::AsvEncoder::default();
+
+        loop {
+            while let Ok(res) = recv.try_recv() {
+                if let Err(err) = res.encode(&mut enc) {
                     eprintln!("{err:?}");
                     std::process::exit(127);
                 }
-                Ok(enc) => enc,
-            };
+            }
+
+            let mut buf = enc.drain();
+            while buf.has_remaining() {
+                let c = buf.chunk();
+                if let Err(err) = stdout.write_all(c) {
+                    eprintln!("{err:?}");
+                    std::process::exit(127);
+                }
+                buf.advance(c.len());
+            }
+
+            match recv.blocking_recv() {
+                Some(res) => {
+                    if let Err(err) = res.encode(&mut enc) {
+                        eprintln!("{err:?}");
+                        std::process::exit(127);
+                    }
+                }
+                None => break,
+            }
         }
     });
 
@@ -67,14 +92,15 @@ fn read_stdin() -> tokio::sync::mpsc::UnboundedReceiver<Tx5PipeRequest> {
         let stdin = std::io::stdin();
         let mut stdin = stdin.lock();
 
-        let mut dec = asv::AsvParse::default();
+        let mut dec = asv::AsvParser::default();
         let mut buf = [0; 4096];
 
         loop {
             match stdin.read(&mut buf) {
                 Ok(read) => {
                     if read > 0 {
-                        let res = match dec.parse(&buf[..read]) {
+                        // TODO BytesMut?
+                        let res = match dec.parse(buf[..read].to_vec()) {
                             Err(err) => {
                                 eprintln!("{err:?}");
                                 std::process::exit(127);

@@ -1,8 +1,8 @@
 #![deny(missing_docs)]
-#![deny(unsafe_code)]
 #![deny(warnings)]
 //! tx5-pipe binary.
 
+use bytes::*;
 use tx5_core::pipe_ipc::*;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -39,7 +39,6 @@ async fn main() {
 }
 
 fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
-    use bytes::Buf;
     use std::io::Write;
 
     let (send, mut recv) =
@@ -93,14 +92,31 @@ fn read_stdin() -> tokio::sync::mpsc::UnboundedReceiver<Tx5PipeRequest> {
         let mut stdin = stdin.lock();
 
         let mut dec = asv::AsvParser::default();
-        let mut buf = [0; 4096];
+
+        const LOW_CAP: usize = 1024;
+        const HIGH_CAP: usize = 8 * LOW_CAP;
+
+        let mut buf = BytesMut::with_capacity(HIGH_CAP);
 
         loop {
+            if buf.capacity() < LOW_CAP {
+                std::mem::swap(
+                    &mut buf,
+                    &mut BytesMut::with_capacity(HIGH_CAP),
+                );
+            }
+            // unsafe read until read_buf is stablized
+            unsafe {
+                buf.set_len(buf.capacity());
+            }
             match stdin.read(&mut buf) {
                 Ok(read) => {
-                    if read > 0 {
-                        // TODO BytesMut?
-                        let res = match dec.parse(buf[..read].to_vec()) {
+                    unsafe {
+                        buf.set_len(read);
+                    }
+                    if buf.has_remaining() {
+                        let frozen = buf.split_to(buf.len()).freeze();
+                        let res = match dec.parse(frozen) {
                             Err(err) => {
                                 eprintln!("{err:?}");
                                 std::process::exit(127);
@@ -123,6 +139,9 @@ fn read_stdin() -> tokio::sync::mpsc::UnboundedReceiver<Tx5PipeRequest> {
                     }
                 }
                 Err(err) => {
+                    unsafe {
+                        buf.set_len(0);
+                    }
                     eprintln!("{err:?}");
                     std::process::exit(127);
                 }

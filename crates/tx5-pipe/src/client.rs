@@ -1,5 +1,6 @@
 //! tx5-pipe client types.
 
+use bytes::*;
 use std::future::Future;
 use std::io::Result;
 use std::sync::Arc;
@@ -26,20 +27,14 @@ pub mod client_impl {
 
             match resp {
                 Tx5PipeResponse::Error { .. }
-                | Tx5PipeResponse::AppRegOk { .. }
                 | Tx5PipeResponse::SigRegOk { .. }
                 | Tx5PipeResponse::BootRegOk { .. }
-                | Tx5PipeResponse::SendOk { .. } => unreachable!(),
-                Tx5PipeResponse::Tx5PipeHelp { .. } => (),
+                | Tx5PipeResponse::BootQueryOk { .. }
+                | Tx5PipeResponse::SendOk { .. }
+                | Tx5PipeResponse::BootQueryResp { .. } => unreachable!(),
+                Tx5PipeResponse::Help { .. } => (),
                 Tx5PipeResponse::Recv { rem_url, data } => {
                     self.client_handler.recv(rem_url, data);
-                }
-                Tx5PipeResponse::BootRecv {
-                    rem_pub_key,
-                    rem_url,
-                    data,
-                } => {
-                    self.client_handler.boot_recv(rem_pub_key, rem_url, data);
                 }
             }
         }
@@ -63,41 +58,52 @@ pub(crate) use client_impl::*;
 pub trait Tx5PipeClientHandler: 'static + Send + Sync {
     /// Incoming message from remote.
     fn recv(&self, rem_url: String, data: Box<dyn bytes::Buf + Send>);
-
-    /// Incoming bootstrap notice of peer availability
-    /// (or unavailability if rem_url is None).
-    fn boot_recv(
-        &self,
-        rem_pub_key: [u8; 32],
-        rem_url: Option<String>,
-        data: Box<dyn bytes::Buf + Send>,
-    );
 }
 
 type DynTx5PipeClientHandler =
     Arc<dyn Tx5PipeClientHandler + 'static + Send + Sync>;
 
-type Resp = tokio::sync::oneshot::Sender<Tx5PipeResponse>;
+type Resp =
+    tokio::sync::oneshot::Sender<(Tx5PipeResponse, Vec<Tx5PipeResponse>)>;
 
 #[derive(Default)]
 pub(crate) struct RespCache {
-    cache: std::collections::HashMap<String, Resp>,
+    cache: std::collections::HashMap<String, (Resp, Vec<Tx5PipeResponse>)>,
 }
 
 impl RespCache {
     fn reg(&mut self, cmd_id: String, r: Resp) {
-        self.cache.insert(cmd_id, r);
+        self.cache.insert(cmd_id, (r, Vec::new()));
     }
 
     fn prune(&mut self) {
-        self.cache.retain(|_k, a| !a.is_closed());
+        self.cache.retain(|_k, (a, _)| !a.is_closed());
     }
 
     fn resp(&mut self, cmd_id: String, v: Tx5PipeResponse) {
-        if let Some(r) = self.cache.remove(&cmd_id) {
-            let _ = r.send(v);
+        if matches!(&v, Tx5PipeResponse::BootQueryResp { .. }) {
+            if let Some(e) = self.cache.get_mut(&cmd_id) {
+                e.1.push(v);
+            }
+        } else if let Some((r, additional)) = self.cache.remove(&cmd_id) {
+            let _ = r.send((v, additional));
         }
     }
+}
+
+/// BootQueryResp struct.
+pub struct BootQueryResp {
+    /// Remote pub_key.
+    pub rem_pub_key: [u8; 32],
+
+    /// Remote url.
+    pub rem_url: Option<String>,
+
+    /// Expiration unix epoch seconds.
+    pub expires_at_s: u64,
+
+    /// Bootstrap meta data.
+    pub data: Box<dyn bytes::Buf + Send>,
 }
 
 /// A tx5-pipe client.
@@ -154,19 +160,89 @@ impl Tx5PipeClient {
     }
 
     /// Assuming you have spawned a Tx5Pipe process as a child process,
-    /// and have a `std::io::Read` handle for its stdout, and a `std::io::Write`
-    /// handle for its stdin, this function will provide a Tx5PipeClient
-    /// instance that can communicate with the Tx5Pipe process.
-    pub async fn spawn_std_io<
+    /// or you have some other equivalent [tokio::io::AsyncRead] handle
+    /// to a pipe stdout and [tokio::io::AsyncWrite] handle to a pipe stdin,
+    /// this function will provide a Tx5PipeClient instance that can
+    /// communicate with the Tx5Pipe server process.
+    pub async fn spawn_async_io<
         H: Tx5PipeClientHandler,
-        R: std::io::Read,
-        W: std::io::Write,
+        R: tokio::io::AsyncRead + 'static + Send + Unpin,
+        W: tokio::io::AsyncWrite + 'static + Send + Unpin,
     >(
-        _client_handler: H,
-        _stdout: R,
-        _stdin: W,
+        client_handler: H,
+        mut stdout: R,
+        mut stdin: W,
     ) -> Result<Self> {
-        todo!()
+        Self::new(client_handler, |ingest| async move {
+            tokio::task::spawn(async move {
+                use tokio::io::AsyncReadExt;
+
+                const LOW_CAP: usize = 1024;
+                const HIGH_CAP: usize = 8 * LOW_CAP;
+
+                let mut parser = asv::AsvParser::default();
+
+                let mut buf = BytesMut::with_capacity(HIGH_CAP);
+
+                loop {
+                    if buf.capacity() < LOW_CAP {
+                        std::mem::swap(
+                            &mut buf,
+                            &mut BytesMut::with_capacity(HIGH_CAP),
+                        );
+                    }
+
+                    stdout.read_buf(&mut buf).await?;
+
+                    for field_list in parser.parse(buf.split_to(buf.len()))? {
+                        let res = Tx5PipeResponse::decode(field_list)?;
+                        ingest.handle_response(res);
+                    }
+                }
+
+                #[allow(unreachable_code)]
+                Result::Ok(())
+            });
+
+            struct SrvImpl(tokio::sync::mpsc::UnboundedSender<Tx5PipeRequest>);
+
+            impl Tx5PipeClientImpl for SrvImpl {
+                fn shutdown(&self, _error: Error) {}
+
+                fn request(&self, req: Tx5PipeRequest) {
+                    let _ = self.0.send(req);
+                }
+            }
+
+            let (s, mut r) =
+                tokio::sync::mpsc::unbounded_channel::<Tx5PipeRequest>();
+
+            tokio::task::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+
+                let mut enc = asv::AsvEncoder::default();
+
+                while let Some(req) = r.recv().await {
+                    req.encode(&mut enc)?;
+
+                    while let Ok(req) = r.try_recv() {
+                        req.encode(&mut enc)?;
+                    }
+
+                    let mut buf = enc.drain();
+                    while buf.has_remaining() {
+                        let c = buf.chunk();
+                        stdin.write_all(c).await?;
+                        buf.advance(c.len());
+                    }
+                }
+
+                Result::Ok(())
+            });
+
+            Ok(SrvImpl(s))
+        })
+        .await
     }
 
     /// Spawn a Tx5Pipe "server" in-process and return a client for
@@ -221,37 +297,24 @@ impl Tx5PipeClient {
     fn make_request(
         &self,
         req: Tx5PipeRequest,
-    ) -> impl Future<Output = Result<Tx5PipeResponse>> + 'static + Send {
+    ) -> impl Future<Output = Result<(Tx5PipeResponse, Vec<Tx5PipeResponse>)>>
+           + 'static
+           + Send {
         let cmd_id = req.get_cmd_id();
         let (s, r) = tokio::sync::oneshot::channel();
         self.resp_cache.lock().unwrap().reg(cmd_id, s);
         self.client_impl.request(req);
         async move {
-            let resp: Tx5PipeResponse =
+            let resp: (Tx5PipeResponse, Vec<Tx5PipeResponse>) =
                 tokio::time::timeout(std::time::Duration::from_secs(20), r)
                     .await
                     .map(|r| r.map_err(|_| Error::id("Timeout")))
                     .map_err(|_| Error::id("Timeout"))??;
             match resp {
-                Tx5PipeResponse::Error { text, .. } => Err(Error::err(text)),
+                (Tx5PipeResponse::Error { text, .. }, _) => {
+                    Err(Error::err(text))
+                }
                 _ => Ok(resp),
-            }
-        }
-    }
-
-    /// Register an application hash.
-    pub fn app_reg(
-        &self,
-        app_hash: [u8; 32],
-    ) -> impl Future<Output = Result<()>> + 'static + Send {
-        let cmd_id = self.get_cmd_id();
-        let req = Tx5PipeRequest::AppReg { cmd_id, app_hash };
-        let fut = self.make_request(req);
-        async move {
-            match fut.await {
-                Ok(Tx5PipeResponse::AppRegOk { .. }) => Ok(()),
-                Err(err) => Err(err),
-                _ => Err(Error::id("InvalidAppRegResponse")),
             }
         }
     }
@@ -267,7 +330,9 @@ impl Tx5PipeClient {
         let fut = self.make_request(req);
         async move {
             match fut.await {
-                Ok(Tx5PipeResponse::SigRegOk { cli_url, .. }) => Ok(cli_url),
+                Ok((Tx5PipeResponse::SigRegOk { cli_url, .. }, _)) => {
+                    Ok(cli_url)
+                }
                 Err(err) => Err(err),
                 _ => Err(Error::id("InvalidSigRegResponse")),
             }
@@ -278,20 +343,65 @@ impl Tx5PipeClient {
     pub fn boot_reg(
         &self,
         boot_url: String,
+        app_hash: [u8; 32],
+        cli_url: Option<String>,
         data: Box<dyn bytes::Buf + Send>,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
         let cmd_id = self.get_cmd_id();
         let req = Tx5PipeRequest::BootReg {
             cmd_id,
             boot_url,
+            app_hash,
+            cli_url,
             data,
         };
         let fut = self.make_request(req);
         async move {
             match fut.await {
-                Ok(Tx5PipeResponse::BootRegOk { .. }) => Ok(()),
+                Ok((Tx5PipeResponse::BootRegOk { .. }, _)) => Ok(()),
                 Err(err) => Err(err),
                 _ => Err(Error::id("InvalidBootRegResponse")),
+            }
+        }
+    }
+
+    /// Query a bootstrap server for peers on a given app hash.
+    pub fn boot_query(
+        &self,
+        boot_url: String,
+        app_hash: [u8; 32],
+    ) -> impl Future<Output = Result<Vec<BootQueryResp>>> + 'static + Send {
+        let cmd_id = self.get_cmd_id();
+        let req = Tx5PipeRequest::BootQuery {
+            cmd_id,
+            boot_url,
+            app_hash,
+        };
+        let fut = self.make_request(req);
+        async move {
+            match fut.await {
+                Ok((Tx5PipeResponse::BootQueryOk { .. }, additional)) => {
+                    Ok(additional
+                        .into_iter()
+                        .filter_map(|r| match r {
+                            Tx5PipeResponse::BootQueryResp {
+                                rem_pub_key,
+                                rem_url,
+                                expires_at_s,
+                                data,
+                                ..
+                            } => Some(BootQueryResp {
+                                rem_pub_key,
+                                rem_url,
+                                expires_at_s,
+                                data,
+                            }),
+                            _ => None,
+                        })
+                        .collect())
+                }
+                Err(err) => Err(err),
+                _ => Err(Error::id("InvalidBootQueryResponse")),
             }
         }
     }
@@ -311,7 +421,7 @@ impl Tx5PipeClient {
         let fut = self.make_request(req);
         async move {
             match fut.await {
-                Ok(Tx5PipeResponse::SendOk { .. }) => Ok(()),
+                Ok((Tx5PipeResponse::SendOk { .. }, _)) => Ok(()),
                 Err(err) => Err(err),
                 _ => Err(Error::id("InvalidSendResponse")),
             }

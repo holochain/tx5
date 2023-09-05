@@ -33,6 +33,15 @@ async fn main() {
         Ok(pipe) => pipe,
     };
 
+    {
+        let pipe = pipe.clone();
+        tokio::task::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            let _ = pipe.shutdown().await;
+            std::process::exit(0);
+        });
+    }
+
     while let Some(req) = rcv.recv().await {
         pipe.pipe(req);
     }
@@ -50,7 +59,12 @@ fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
 
         let mut enc = asv::AsvEncoder::default();
 
-        loop {
+        while let Some(res) = recv.blocking_recv() {
+            if let Err(err) = res.encode(&mut enc) {
+                eprintln!("{err:?}");
+                std::process::exit(127);
+            }
+
             while let Ok(res) = recv.try_recv() {
                 if let Err(err) = res.encode(&mut enc) {
                     eprintln!("{err:?}");
@@ -66,16 +80,6 @@ fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
                     std::process::exit(127);
                 }
                 buf.advance(c.len());
-            }
-
-            match recv.blocking_recv() {
-                Some(res) => {
-                    if let Err(err) = res.encode(&mut enc) {
-                        eprintln!("{err:?}");
-                        std::process::exit(127);
-                    }
-                }
-                None => break,
             }
         }
     });

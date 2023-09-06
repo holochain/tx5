@@ -92,6 +92,7 @@ impl RespCache {
 }
 
 /// BootQueryResp struct.
+#[derive(Debug)]
 pub struct BootQueryResp {
     /// Remote pub_key.
     pub rem_pub_key: [u8; 32],
@@ -103,7 +104,7 @@ pub struct BootQueryResp {
     pub expires_at_s: u64,
 
     /// Bootstrap meta data.
-    pub data: Box<dyn bytes::Buf + Send>,
+    pub data: Vec<u8>,
 }
 
 /// A tx5-pipe client.
@@ -157,6 +158,30 @@ impl Tx5PipeClient {
             prune_cache_task,
             cmd_id_uniq: std::sync::atomic::AtomicU64::new(1),
         })
+    }
+
+    /// Spawn tx5-pipe as a child process.
+    /// Delegates to spawn_async_io.
+    pub async fn spawn_child<
+        H: Tx5PipeClientHandler,
+        P: AsRef<std::ffi::OsStr>,
+    >(
+        client_handler: H,
+        exec_path: P,
+    ) -> Result<(Self, tokio::process::Child)> {
+        let mut child = tokio::process::Command::new(exec_path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()?;
+
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+
+        let this = Self::spawn_async_io(client_handler, stdout, stdin).await?;
+
+        Ok((this, child))
     }
 
     /// Assuming you have spawned a Tx5Pipe process as a child process,
@@ -379,6 +404,8 @@ impl Tx5PipeClient {
         };
         let fut = self.make_request(req);
         async move {
+            use tx5::BytesBufExt;
+
             match fut.await {
                 Ok((Tx5PipeResponse::BootQueryOk { .. }, additional)) => {
                     Ok(additional
@@ -394,7 +421,7 @@ impl Tx5PipeClient {
                                 rem_pub_key,
                                 rem_url,
                                 expires_at_s,
-                                data,
+                                data: data.to_vec().unwrap(),
                             }),
                             _ => None,
                         })

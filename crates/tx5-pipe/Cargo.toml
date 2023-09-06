@@ -28,5 +28,7 @@ tx5-core = { workspace = true, features = [ "pipe_ipc" ] }
 tx5 = { workspace = true, features = [ "pipe_ipc" ] }
 
 [dev-dependencies]
+escargot = "0.5.8"
 kitsune_p2p_bootstrap = { workspace = true }
 tracing-subscriber = { workspace = true }
+tx5-signal-srv = { workspace = true }

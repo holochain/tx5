@@ -1278,6 +1278,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "escargot"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "768064bd3a0e2bedcba91dc87ace90beea91acc41b6a01a3ca8e9aa8827461bf"
+dependencies = [
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fastrand"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4869,6 +4881,7 @@ dependencies = [
  "base64 0.13.1",
  "blake2b_simd",
  "bytes",
+ "escargot",
  "kitsune_p2p_bootstrap",
  "lair_keystore_api",
  "msgpackin",
@@ -4882,6 +4895,7 @@ dependencies = [
  "tracing-subscriber",
  "tx5",
  "tx5-core",
+ "tx5-signal-srv",
 ]
 
 [[package]]

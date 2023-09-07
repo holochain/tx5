@@ -3,6 +3,27 @@
 use asv::*;
 use bytes::Buf;
 
+fn b64_encode_32(b: &[u8; 32]) -> String {
+    base64::encode_config(b, base64::URL_SAFE_NO_PAD)
+}
+
+fn b64_decode_32<B: AsRef<[u8]>>(b: B) -> std::io::Result<[u8; 32]> {
+    if b.as_ref().len() > 44 {
+        return Err(crate::Error::id("InvalidHashSize"));
+    }
+    let dec = match base64::decode_config(&b, base64::URL_SAFE_NO_PAD) {
+        Ok(dec) => Ok(dec),
+        Err(_) => base64::decode_config(&b, base64::STANDARD),
+    }
+    .map_err(crate::Error::err)?;
+    if dec.len() != 32 {
+        return Err(crate::Error::id("InvalidHashSize"));
+    }
+    let mut out = [0; 32];
+    out.copy_from_slice(&dec);
+    Ok(out)
+}
+
 /// Request types that can be received by a Tx5Pipe server from a client.
 pub enum Tx5PipeRequest {
     /// A request to shutdown the pipe.
@@ -128,7 +149,7 @@ impl Tx5PipeRequest {
         if data.remaining() > 512 {
             return Err(crate::Error::id("BootDataOver512B"));
         }
-        let b64 = base64::encode(app_hash);
+        let b64 = b64_encode_32(&app_hash);
         enc.field(&b"boot_reg"[..]);
         enc.field(cmd_id.into_bytes());
         enc.field(boot_url.into_bytes());
@@ -146,7 +167,7 @@ impl Tx5PipeRequest {
         boot_url: String,
         app_hash: [u8; 32],
     ) -> std::io::Result<()> {
-        let b64 = base64::encode(app_hash);
+        let b64 = b64_encode_32(&app_hash);
         enc.field(&b"boot_query"[..]);
         enc.field(cmd_id.into_bytes());
         enc.field(boot_url.into_bytes());
@@ -236,14 +257,7 @@ impl Tx5PipeRequest {
                 }
                 let cmd_id = fields.remove(0).into_string()?;
                 let boot_url = fields.remove(0).into_string()?;
-                let data = fields.remove(0).into_vec();
-                let app_hash_unsized =
-                    base64::decode(data).map_err(crate::Error::err)?;
-                if app_hash_unsized.len() != 32 {
-                    return Err(crate::Error::id("InvalidAppHashSize"));
-                }
-                let mut app_hash = [0; 32];
-                app_hash.copy_from_slice(&app_hash_unsized);
+                let app_hash = b64_decode_32(fields.remove(0).into_vec())?;
                 let data = fields.remove(0);
                 let cli_url = if data.has_remaining() {
                     Some(data.into_string()?)
@@ -269,14 +283,7 @@ impl Tx5PipeRequest {
                 }
                 let cmd_id = fields.remove(0).into_string()?;
                 let boot_url = fields.remove(0).into_string()?;
-                let data = fields.remove(0).into_vec();
-                let app_hash_unsized =
-                    base64::decode(data).map_err(crate::Error::err)?;
-                if app_hash_unsized.len() != 32 {
-                    return Err(crate::Error::id("InvalidAppHashSize"));
-                }
-                let mut app_hash = [0; 32];
-                app_hash.copy_from_slice(&app_hash_unsized);
+                let app_hash = b64_decode_32(fields.remove(0).into_vec())?;
                 Ok(Self::BootQuery {
                     cmd_id,
                     boot_url,
@@ -442,7 +449,7 @@ impl Tx5PipeResponse {
         cmd_id: String,
         hash: [u8; 32],
     ) -> std::io::Result<()> {
-        let b64 = base64::encode(hash);
+        let b64 = b64_encode_32(&hash);
         enc.field(&b"@hash_ok"[..]);
         enc.field(cmd_id.into_bytes());
         enc.field(b64.into_bytes());
@@ -521,7 +528,7 @@ impl Tx5PipeResponse {
         if data.remaining() > 512 {
             return Err(crate::Error::id("BootDataOver512B"));
         }
-        let b64 = base64::encode(rem_pub_key);
+        let b64 = b64_encode_32(&rem_pub_key);
         enc.field(&b"@boot_query_resp"[..]);
         enc.field(cmd_id.into_bytes());
         enc.field(b64.into_bytes());
@@ -639,14 +646,7 @@ impl Tx5PipeResponse {
                 }
 
                 let cmd_id = fields.remove(0).into_string()?;
-                let data = fields.remove(0).into_vec();
-                let pk_unsized =
-                    base64::decode(data).map_err(crate::Error::err)?;
-                if pk_unsized.len() != 32 {
-                    return Err(crate::Error::id("InvalidRemPubKeySize"));
-                }
-                let mut rem_pub_key = [0; 32];
-                rem_pub_key.copy_from_slice(&pk_unsized);
+                let rem_pub_key = b64_decode_32(fields.remove(0).into_vec())?;
                 let data = fields.remove(0);
                 let rem_url = if data.has_remaining() {
                     Some(data.into_string()?)
@@ -684,7 +684,7 @@ mod test {
             "boot_reg",
             "test20",
             "https://yada",
-            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
+            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k",
             "wss://yada",
             "yada",
         ],
@@ -692,7 +692,7 @@ mod test {
             "boot_query",
             "test30",
             "https://yada",
-            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
+            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k",
         ],
         &["send", "test40", "wss://yada", "yada"],
         &["@help", "test50", "yada\nmultiline"],
@@ -705,7 +705,7 @@ mod test {
         &[
             "@boot_query_resp",
             "testC0",
-            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
+            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k",
             "wss://yada",
             "42",
             "yada",
@@ -713,7 +713,7 @@ mod test {
         &[
             "@boot_query_resp",
             "testD0",
-            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k=",
+            "Ov8rjjg6jzhf7yUlp4S9Q1L9s9wZhaKJGe2mB4pax0k",
             "wss://yada",
             "42",
             "",

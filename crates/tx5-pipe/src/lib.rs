@@ -106,7 +106,34 @@ impl Drop for Tx5Pipe {
 impl Tx5Pipe {
     /// Construct a new Tx5Pipe instance.
     pub async fn new<H: Tx5PipeHandler>(hnd: H) -> std::io::Result<Arc<Self>> {
-        let (ep, mut recv) = tx5::Ep::new().await?;
+        let mut config = tx5::DefConfig::default();
+        config.set_conn_preflight(|_, _| {
+            Box::pin(async {
+                Ok(Some(bytes::Bytes::from_static(TX5_PIPE_VERSION.as_bytes())))
+            })
+        });
+        config.set_conn_validate(|_, _, d| {
+            Box::pin(async {
+                match d {
+                    Some(v) => {
+                        if v != TX5_PIPE_VERSION {
+                            Err(tx5_core::Error::err(format!(
+                                "InvalidRemoteVersionPreflight {}, expected {}",
+                                String::from_utf8_lossy(&v),
+                                TX5_PIPE_VERSION,
+                            )))
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    None => Err(tx5_core::Error::id(
+                        "MissingRemoteVersionPreflight",
+                    )),
+                }
+            })
+        });
+
+        let (ep, mut recv) = tx5::Ep::with_config(config).await?;
 
         let hnd: DynTx5PipeHandler = Arc::new(hnd);
 

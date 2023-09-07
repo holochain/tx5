@@ -41,12 +41,12 @@ async fn exec_binary() {
 
     struct H;
 
-    impl tx5_pipe::client::Tx5PipeClientHandler for H {
+    impl tx5_pipe_control::Tx5PipeControlHandler for H {
         fn recv(&self, _rem_url: String, _data: Box<dyn bytes::Buf + Send>) {}
     }
 
     let (cli, mut child) =
-        tx5_pipe::client::Tx5PipeClient::spawn_child(H, exec_path)
+        tx5_pipe_control::Tx5PipeControl::spawn_child(H, exec_path)
             .await
             .unwrap();
 

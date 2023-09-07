@@ -12,7 +12,7 @@ async fn main() {
 
     struct Handler(tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse>);
 
-    impl tx5_pipe::server::Tx5PipeServerHandler for Handler {
+    impl tx5_pipe::Tx5PipeHandler for Handler {
         fn fatal(&self, error: std::io::Error) {
             eprintln!("{error:?}");
             std::process::exit(127);
@@ -25,7 +25,7 @@ async fn main() {
 
     let hnd = Handler(snd);
 
-    let pipe = match tx5_pipe::server::Tx5PipeServer::new(hnd).await {
+    let pipe = match tx5_pipe::Tx5Pipe::new(hnd).await {
         Err(err) => {
             eprintln!("{err:?}");
             std::process::exit(127);

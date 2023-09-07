@@ -16,6 +16,7 @@ publish-all:
 	$(MAKE) publish crate=tx5-signal-srv
 	$(MAKE) publish crate=tx5-signal
 	$(MAKE) publish crate=tx5
+	$(MAKE) publish crate=tx5-pipe-control
 	$(MAKE) publish crate=tx5-pipe
 	$(MAKE) publish crate=tx5-demo
 
@@ -48,6 +49,9 @@ publish:
 		tx5) \
 			export MANIFEST="./crates/tx5/Cargo.toml"; \
 			;; \
+		tx5-pipe-control) \
+			export MANIFEST="./crates/tx5-pipe-control/Cargo.toml"; \
+			;; \
 		tx5-pipe) \
 			export MANIFEST="./crates/tx5-pipe/Cargo.toml"; \
 			;; \
@@ -64,6 +68,7 @@ publish:
 			echo "USAGE: make publish crate=tx5-signal-srv"; \
 			echo "USAGE: make publish crate=tx5-signal"; \
 			echo "USAGE: make publish crate=tx5"; \
+			echo "USAGE: make publish crate=tx5-pipe-control"; \
 			echo "USAGE: make publish crate=tx5-pipe"; \
 			echo "USAGE: make publish crate=tx5-demo"; \
 			exit 1; \
@@ -111,6 +116,8 @@ docs: tools
 	cargo rdme --force -w tx5-signal
 	cp -f crates/tx5-core/src/README.tpl crates/tx5/README.md
 	cargo rdme --force -w tx5
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-pipe-control/README.md
+	cargo rdme --force -w tx5-pipe-control
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-pipe/README.md
 	cargo rdme --force -w tx5-pipe
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-demo/README.md

@@ -4895,7 +4895,18 @@ dependencies = [
  "tracing-subscriber",
  "tx5",
  "tx5-core",
+ "tx5-pipe-control",
  "tx5-signal-srv",
+]
+
+[[package]]
+name = "tx5-pipe-control"
+version = "0.0.2-alpha"
+dependencies = [
+ "asv",
+ "bytes",
+ "tokio",
+ "tx5-core",
 ]
 
 [[package]]

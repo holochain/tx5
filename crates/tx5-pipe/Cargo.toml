@@ -26,6 +26,7 @@ tokio = { workspace = true, features = [ "full" ] }
 tracing = { workspace = true }
 tx5-core = { workspace = true, features = [ "pipe_ipc" ] }
 tx5 = { workspace = true, features = [ "pipe_ipc" ] }
+tx5-pipe-control = { workspace = true }
 
 [dev-dependencies]
 escargot = "0.5.8"

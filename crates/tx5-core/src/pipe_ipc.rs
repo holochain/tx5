@@ -5,6 +5,18 @@ use bytes::Buf;
 
 /// Request types that can be received by a Tx5Pipe server from a client.
 pub enum Tx5PipeRequest {
+    /// A request to shutdown the pipe.
+    Quit,
+
+    /// Hash some data (blake2b_256).
+    Hash {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// Data to hash.
+        data: Box<dyn bytes::Buf + Send>,
+    },
+
     /// A request to register as addressable with a signal server.
     SigReg {
         /// Command identifier.
@@ -60,13 +72,35 @@ pub enum Tx5PipeRequest {
 
 impl Tx5PipeRequest {
     /// If this response type contains a cmd_id, return it.
-    pub fn get_cmd_id(&self) -> String {
+    pub fn get_cmd_id(&self) -> Option<String> {
         match self {
-            Self::SigReg { cmd_id, .. }
+            Self::Quit => None,
+            Self::Hash { cmd_id, .. }
+            | Self::SigReg { cmd_id, .. }
             | Self::BootReg { cmd_id, .. }
             | Self::BootQuery { cmd_id, .. }
-            | Self::Send { cmd_id, .. } => cmd_id.clone(),
+            | Self::Send { cmd_id, .. } => Some(cmd_id.clone()),
         }
+    }
+
+    /// A request to shutdown the pipe.
+    pub fn quit(enc: &mut AsvEncoder) -> std::io::Result<()> {
+        enc.field(&b"quit"[..]);
+        enc.finish_row();
+        Ok(())
+    }
+
+    /// Hash some data (blake2b_256).
+    pub fn hash(
+        enc: &mut AsvEncoder,
+        cmd_id: String,
+        data: Box<dyn Buf + Send>,
+    ) -> std::io::Result<()> {
+        enc.field(&b"hash"[..]);
+        enc.field(cmd_id.into_bytes());
+        enc.binary_boxed(data);
+        enc.finish_row();
+        Ok(())
     }
 
     /// Register to be addressable with a signal server.
@@ -142,6 +176,8 @@ impl Tx5PipeRequest {
     /// Encode this instance in the tx5 pipe ipc protocol.
     pub fn encode(self, enc: &mut AsvEncoder) -> std::io::Result<()> {
         match self {
+            Self::Quit => Self::quit(enc),
+            Self::Hash { cmd_id, data } => Self::hash(enc, cmd_id, data),
             Self::SigReg { cmd_id, sig_url } => {
                 Self::sig_reg(enc, cmd_id, sig_url)
             }
@@ -172,6 +208,20 @@ impl Tx5PipeRequest {
             return Err(crate::Error::id("EmptyFieldList"));
         }
         match fields.remove(0).into_string()?.as_str() {
+            "quit" => {
+                if !fields.is_empty() {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                Ok(Self::Quit)
+            }
+            "hash" => {
+                if fields.len() != 2 {
+                    return Err(crate::Error::id("InvalidArgs"));
+                }
+                let cmd_id = fields.remove(0).into_string()?;
+                let data = Box::new(fields.remove(0));
+                Ok(Self::Hash { cmd_id, data })
+            }
             "sig_reg" => {
                 if fields.len() != 2 {
                     return Err(crate::Error::id("InvalidArgs"));
@@ -278,6 +328,15 @@ pub enum Tx5PipeResponse {
         text: String,
     },
 
+    /// An ok response to a hash request.
+    HashOk {
+        /// Command identifier.
+        cmd_id: String,
+
+        /// The hash.
+        hash: [u8; 32],
+    },
+
     /// An ok response to a sig_reg request.
     SigRegOk {
         /// Command identifier.
@@ -339,6 +398,7 @@ impl Tx5PipeResponse {
         match self {
             Self::Help { .. } | Self::Recv { .. } => None,
             Self::Error { cmd_id, .. }
+            | Self::HashOk { cmd_id, .. }
             | Self::SigRegOk { cmd_id, .. }
             | Self::BootRegOk { cmd_id, .. }
             | Self::BootQueryOk { cmd_id, .. }
@@ -372,6 +432,20 @@ impl Tx5PipeResponse {
         enc.field(cmd_id.into_bytes());
         enc.field(code.into_bytes());
         enc.field(text.into_bytes());
+        enc.finish_row();
+        Ok(())
+    }
+
+    /// An ok response to a hash request.
+    pub fn hash_ok(
+        enc: &mut AsvEncoder,
+        cmd_id: String,
+        hash: [u8; 32],
+    ) -> std::io::Result<()> {
+        let b64 = base64::encode(hash);
+        enc.field(&b"@hash_ok"[..]);
+        enc.field(cmd_id.into_bytes());
+        enc.field(b64.into_bytes());
         enc.finish_row();
         Ok(())
     }
@@ -465,6 +539,7 @@ impl Tx5PipeResponse {
             Self::Error { cmd_id, code, text } => {
                 Self::error(enc, cmd_id, code, text)
             }
+            Self::HashOk { cmd_id, hash } => Self::hash_ok(enc, cmd_id, hash),
             Self::SigRegOk { cmd_id, cli_url } => {
                 Self::sig_reg_ok(enc, cmd_id, cli_url)
             }

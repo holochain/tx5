@@ -74,6 +74,10 @@ pub trait Tx5PipeHandler: 'static + Send + Sync {
     /// A fatal error was generated, the pipe is closed.
     fn fatal(&self, error: std::io::Error);
 
+    /// A request to quit was made, do any cleanup needed,
+    /// then call shutdown on the pipe instance.
+    fn quit(&self);
+
     /// A pipe response was generated. This function should return:
     /// - `true` if we should keep running, or
     /// - `false` if we should shut down the pipe.
@@ -89,6 +93,8 @@ pub struct Tx5Pipe {
     recv_task: tokio::task::JoinHandle<()>,
     #[allow(clippy::type_complexity)]
     boot_reg: Arc<std::sync::Mutex<HashMap<[u8; 32], (String, Vec<u8>)>>>,
+    want_quit: Arc<std::sync::atomic::AtomicBool>,
+    req_count: Arc<std::sync::atomic::AtomicIsize>,
 }
 
 impl Drop for Tx5Pipe {
@@ -149,6 +155,8 @@ impl Tx5Pipe {
             hnd,
             recv_task,
             boot_reg: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            want_quit: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            req_count: Arc::new(std::sync::atomic::AtomicIsize::new(0)),
         }))
     }
 
@@ -160,13 +168,20 @@ impl Tx5Pipe {
         control_handler: H,
     ) -> std::io::Result<tx5_pipe_control::Tx5PipeControl> {
         tx5_pipe_control::Tx5PipeControl::new(control_handler, |ingest| async move {
+            let quit_not = Arc::new(tokio::sync::Notify::new());
+
             struct Hnd {
                 ingest: tx5_pipe_control::control_impl::Tx5PipeControlIngest,
+                quit_not: Arc<tokio::sync::Notify>,
             }
 
             impl Tx5PipeHandler for Hnd {
                 fn fatal(&self, _error: std::io::Error) {
                     todo!()
+                }
+
+                fn quit(&self) {
+                    self.quit_not.notify_waiters();
                 }
 
                 fn pipe(&self, response: Tx5PipeResponse) -> bool {
@@ -176,7 +191,18 @@ impl Tx5Pipe {
                 }
             }
 
-            let pipe = Tx5Pipe::new(Hnd { ingest }).await?;
+            let pipe = Tx5Pipe::new(Hnd {
+                ingest,
+                quit_not: quit_not.clone(),
+            }).await?;
+
+            {
+                let pipe = pipe.clone();
+                tokio::task::spawn(async move {
+                    quit_not.notified().await;
+                    let _ = pipe.shutdown().await;
+                });
+            }
 
             struct Impl {
                 pipe: Arc<Tx5Pipe>,
@@ -212,9 +238,29 @@ impl Tx5Pipe {
 
     /// Send a pipe request into the Tx5Pipe instance.
     pub fn pipe(self: &Arc<Self>, req: Tx5PipeRequest) {
+        self.req_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
         let this = self.clone();
         tokio::task::spawn(async move {
             match req {
+                Tx5PipeRequest::Quit => {
+                    this.want_quit
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    let count = this
+                        .req_count
+                        .fetch_add(-1, std::sync::atomic::Ordering::SeqCst)
+                        - 1;
+                    if count < 1 {
+                        this.hnd.quit();
+                    }
+                }
+                Tx5PipeRequest::Hash { cmd_id, data } => {
+                    this.handle_resp(
+                        cmd_id.clone(),
+                        this.hash(cmd_id, data).await,
+                    );
+                }
                 Tx5PipeRequest::SigReg { cmd_id, sig_url } => {
                     this.handle_resp(
                         cmd_id.clone(),
@@ -261,10 +307,29 @@ impl Tx5Pipe {
     }
 
     fn handle_resp(
-        &self,
+        self: &Arc<Self>,
         cmd_id: String,
         rsp: std::io::Result<Tx5PipeResponse>,
     ) {
+        struct OnDrop(Arc<Tx5Pipe>);
+
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                let count = self
+                    .0
+                    .req_count
+                    .fetch_add(-1, std::sync::atomic::Ordering::SeqCst)
+                    - 1;
+                if self.0.want_quit.load(std::sync::atomic::Ordering::SeqCst)
+                    && count <= 0
+                {
+                    self.0.hnd.quit();
+                }
+            }
+        }
+
+        let _on_drop = OnDrop(self.clone());
+
         let rsp = match rsp {
             Ok(rsp) => rsp,
             Err(err) => Tx5PipeResponse::Error {
@@ -276,6 +341,27 @@ impl Tx5Pipe {
         if !self.hnd.pipe(rsp) {
             todo!("handle pipe close in responder"); // TODO - FIXME
         }
+    }
+
+    async fn hash(
+        &self,
+        cmd_id: String,
+        mut data: Box<dyn bytes::Buf + 'static + Send>,
+    ) -> std::io::Result<Tx5PipeResponse> {
+        let mut state = blake2b_simd::Params::new().hash_length(32).to_state();
+
+        while data.has_remaining() {
+            let c = data.chunk();
+            state.update(c);
+            data.advance(c.len());
+        }
+
+        let hash_ref = state.finalize();
+
+        let mut hash = [0; 32];
+        hash.copy_from_slice(hash_ref.as_bytes());
+
+        Ok(Tx5PipeResponse::HashOk { cmd_id, hash })
     }
 
     async fn sig_reg(

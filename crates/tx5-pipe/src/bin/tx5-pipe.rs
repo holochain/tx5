@@ -3,6 +3,7 @@
 //! tx5-pipe binary.
 
 use bytes::*;
+use std::sync::Arc;
 use tx5_core::pipe_ipc::*;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -10,12 +11,21 @@ async fn main() {
     let snd = write_stdout();
     let mut rcv = read_stdin();
 
-    struct Handler(tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse>);
+    let quit_not = Arc::new(tokio::sync::Notify::new());
+
+    struct Handler(
+        tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse>,
+        Arc<tokio::sync::Notify>,
+    );
 
     impl tx5_pipe::Tx5PipeHandler for Handler {
         fn fatal(&self, error: std::io::Error) {
-            eprintln!("{error:?}");
+            eprintln!("Fatal: {error:?}");
             std::process::exit(127);
+        }
+
+        fn quit(&self) {
+            self.1.notify_waiters();
         }
 
         fn pipe(&self, response: Tx5PipeResponse) -> bool {
@@ -23,11 +33,11 @@ async fn main() {
         }
     }
 
-    let hnd = Handler(snd);
+    let hnd = Handler(snd, quit_not.clone());
 
     let pipe = match tx5_pipe::Tx5Pipe::new(hnd).await {
         Err(err) => {
-            eprintln!("{err:?}");
+            eprintln!("Constructor: {err:?}");
             std::process::exit(127);
         }
         Ok(pipe) => pipe,
@@ -36,8 +46,19 @@ async fn main() {
     {
         let pipe = pipe.clone();
         tokio::task::spawn(async move {
+            quit_not.notified().await;
+            let _ = pipe.shutdown().await;
+            eprintln!("Exiting on Quit");
+            std::process::exit(0);
+        });
+    }
+
+    {
+        let pipe = pipe.clone();
+        tokio::task::spawn(async move {
             let _ = tokio::signal::ctrl_c().await;
             let _ = pipe.shutdown().await;
+            eprintln!("Exiting on Ctrl-C");
             std::process::exit(0);
         });
     }
@@ -61,13 +82,13 @@ fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
 
         while let Some(res) = recv.blocking_recv() {
             if let Err(err) = res.encode(&mut enc) {
-                eprintln!("{err:?}");
+                eprintln!("Response Encode: {err:?}");
                 std::process::exit(127);
             }
 
             while let Ok(res) = recv.try_recv() {
                 if let Err(err) = res.encode(&mut enc) {
-                    eprintln!("{err:?}");
+                    eprintln!("Response Encode: {err:?}");
                     std::process::exit(127);
                 }
             }
@@ -76,7 +97,7 @@ fn write_stdout() -> tokio::sync::mpsc::UnboundedSender<Tx5PipeResponse> {
             while buf.has_remaining() {
                 let c = buf.chunk();
                 if let Err(err) = stdout.write_all(c) {
-                    eprintln!("{err:?}");
+                    eprintln!("Stdout Write: {err:?}");
                     std::process::exit(127);
                 }
                 buf.advance(c.len());
@@ -122,7 +143,7 @@ fn read_stdin() -> tokio::sync::mpsc::UnboundedReceiver<Tx5PipeRequest> {
                         let frozen = buf.split_to(buf.len()).freeze();
                         let res = match dec.parse(frozen) {
                             Err(err) => {
-                                eprintln!("{err:?}");
+                                eprintln!("Request Decode1: {err:?}");
                                 std::process::exit(127);
                             }
                             Ok(res) => res,
@@ -130,7 +151,7 @@ fn read_stdin() -> tokio::sync::mpsc::UnboundedReceiver<Tx5PipeRequest> {
                         for field_list in res {
                             let req = match Tx5PipeRequest::decode(field_list) {
                                 Err(err) => {
-                                    eprintln!("{err:?}");
+                                    eprintln!("Request Decode2: {err:?}");
                                     std::process::exit(127);
                                 }
                                 Ok(req) => req,
@@ -146,7 +167,7 @@ fn read_stdin() -> tokio::sync::mpsc::UnboundedReceiver<Tx5PipeRequest> {
                     unsafe {
                         buf.set_len(0);
                     }
-                    eprintln!("{err:?}");
+                    eprintln!("Stdin Read: {err:?}");
                     std::process::exit(127);
                 }
             }

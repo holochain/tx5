@@ -43,6 +43,7 @@ pub mod control_impl {
 
             match resp {
                 Tx5PipeResponse::Error { .. }
+                | Tx5PipeResponse::HashOk { .. }
                 | Tx5PipeResponse::SigRegOk { .. }
                 | Tx5PipeResponse::BootRegOk { .. }
                 | Tx5PipeResponse::BootQueryOk { .. }
@@ -296,11 +297,11 @@ impl Tx5PipeControl {
 
     fn make_request(
         &self,
+        cmd_id: String,
         req: Tx5PipeRequest,
     ) -> impl Future<Output = Result<(Tx5PipeResponse, Vec<Tx5PipeResponse>)>>
            + 'static
            + Send {
-        let cmd_id = req.get_cmd_id();
         let (s, r) = tokio::sync::oneshot::channel();
         self.resp_cache.lock().unwrap().reg(cmd_id, s);
         self.control_impl.request(req);
@@ -319,6 +320,12 @@ impl Tx5PipeControl {
         }
     }
 
+    /// A request to quit / shutdown the pipe. Once the pipe is
+    /// gracefully shutdown, the quit method in the handler will be called.
+    pub fn quit(&self) {
+        self.control_impl.request(Tx5PipeRequest::Quit);
+    }
+
     /// A request to register as addressable with a signal server.
     /// Returns the addressable control_url.
     pub fn sig_reg(
@@ -326,8 +333,11 @@ impl Tx5PipeControl {
         sig_url: String,
     ) -> impl Future<Output = Result<String>> + 'static + Send {
         let cmd_id = self.get_cmd_id();
-        let req = Tx5PipeRequest::SigReg { cmd_id, sig_url };
-        let fut = self.make_request(req);
+        let req = Tx5PipeRequest::SigReg {
+            cmd_id: cmd_id.clone(),
+            sig_url,
+        };
+        let fut = self.make_request(cmd_id, req);
         async move {
             match fut.await {
                 Ok((Tx5PipeResponse::SigRegOk { cli_url, .. }, _)) => {
@@ -349,13 +359,13 @@ impl Tx5PipeControl {
     ) -> impl Future<Output = Result<()>> + 'static + Send {
         let cmd_id = self.get_cmd_id();
         let req = Tx5PipeRequest::BootReg {
-            cmd_id,
+            cmd_id: cmd_id.clone(),
             boot_url,
             app_hash,
             cli_url,
             data,
         };
-        let fut = self.make_request(req);
+        let fut = self.make_request(cmd_id, req);
         async move {
             match fut.await {
                 Ok((Tx5PipeResponse::BootRegOk { .. }, _)) => Ok(()),
@@ -373,11 +383,11 @@ impl Tx5PipeControl {
     ) -> impl Future<Output = Result<Vec<BootQueryResp>>> + 'static + Send {
         let cmd_id = self.get_cmd_id();
         let req = Tx5PipeRequest::BootQuery {
-            cmd_id,
+            cmd_id: cmd_id.clone(),
             boot_url,
             app_hash,
         };
-        let fut = self.make_request(req);
+        let fut = self.make_request(cmd_id, req);
         async move {
             match fut.await {
                 Ok((Tx5PipeResponse::BootQueryOk { .. }, additional)) => {
@@ -414,11 +424,11 @@ impl Tx5PipeControl {
     ) -> impl Future<Output = Result<()>> + 'static + Send {
         let cmd_id = self.get_cmd_id();
         let req = Tx5PipeRequest::Send {
-            cmd_id,
+            cmd_id: cmd_id.clone(),
             rem_url,
             data,
         };
-        let fut = self.make_request(req);
+        let fut = self.make_request(cmd_id, req);
         async move {
             match fut.await {
                 Ok((Tx5PipeResponse::SendOk { .. }, _)) => Ok(()),

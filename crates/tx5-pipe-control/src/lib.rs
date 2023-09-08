@@ -326,6 +326,28 @@ impl Tx5PipeControl {
         self.control_impl.request(Tx5PipeRequest::Quit);
     }
 
+    /// Hash some data (blake2b_256).
+    pub fn hash(
+        &self,
+        data: Box<dyn bytes::Buf + Send>,
+    ) -> impl Future<Output = Result<[u8; 32]>> + 'static + Send {
+        let cmd_id = self.get_cmd_id();
+        let req = Tx5PipeRequest::Hash {
+            cmd_id: cmd_id.clone(),
+            data,
+        };
+        let fut = self.make_request(cmd_id, req);
+        async move {
+            match fut.await {
+                Ok((Tx5PipeResponse::HashOk { hash, .. }, _)) => {
+                    Ok(hash)
+                }
+                Err(err) => Err(err),
+                _ => Err(Error::id("InvalidSigRegResponse")),
+            }
+        }
+    }
+
     /// A request to register as addressable with a signal server.
     /// Returns the addressable control_url.
     pub fn sig_reg(

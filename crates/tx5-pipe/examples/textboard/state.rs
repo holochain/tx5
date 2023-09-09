@@ -156,12 +156,15 @@ impl Node {
 
 pub struct State {
     exit: atomic::AtomicBool,
+    dirty: atomic::AtomicBool,
+    ver: Mutex<i32>,
     hnd: DynStateHnd,
     cli_url: String,
     nick: Mutex<String>,
     rem_host: Mutex<Option<String>>,
     blocks: Mutex<HashMap<(i32, i32), Arc<Mutex<[[Node; BLOCK]; BLOCK]>>>>,
     overlay: Mutex<HashMap<(i32, i32), (Node, i32)>>,
+    this_cur: Mutex<(i32, i32)>,
 }
 
 impl std::fmt::Debug for State {
@@ -179,12 +182,15 @@ impl State {
 
         let this = Arc::new(Self {
             exit: atomic::AtomicBool::new(false),
+            dirty: atomic::AtomicBool::new(true),
+            ver: Mutex::new(0),
             hnd,
             cli_url,
             nick: Mutex::new("noname".to_string()),
             rem_host: Mutex::new(None),
             blocks: Mutex::new(HashMap::new()),
             overlay: Mutex::new(HashMap::new()),
+            this_cur: Mutex::new((0, 0)),
         });
 
         this.clone().prompt_nick();
@@ -198,24 +204,7 @@ impl State {
         offset_y: i32,
         block: &mut [[Node; BLOCK]; BLOCK],
     ) {
-        if (offset_x / BLOCK_I32) * BLOCK_I32 != offset_x {
-            panic!("invalid offset_x not divisible by block size");
-        }
-        if (offset_y / BLOCK_I32) * BLOCK_I32 != offset_y {
-            panic!("invalid offset_y not divisible by BLOCK");
-        }
-        {
-            let sblock = self
-                .blocks
-                .lock()
-                .unwrap()
-                .entry((offset_x, offset_y))
-                .or_insert_with(|| {
-                    Arc::new(Mutex::new([[Node::default(); BLOCK]; BLOCK]))
-                })
-                .clone();
-            *block = *sblock.lock().unwrap();
-        }
+        *block = *self.get_block(offset_x, offset_y).lock().unwrap();
         let overlay_lock = self.overlay.lock().unwrap();
         for x in 0..BLOCK_I32 {
             for y in 0..BLOCK_I32 {
@@ -223,9 +212,6 @@ impl State {
                     overlay_lock.get(&(x + offset_x, y + offset_y))
                 {
                     block[x as usize][y as usize] = *n;
-                }
-                if x == 0 || y == 0 {
-                    block[x as usize][y as usize].val = '.';
                 }
             }
         }
@@ -235,12 +221,89 @@ impl State {
         self.exit.load(atomic::Ordering::Relaxed)
     }
 
+    pub fn should_draw(&self) -> Option<Vec<(i32, i32, String)>> {
+        if self.dirty.swap(false, atomic::Ordering::Relaxed) {
+            let (x, y) = *self.this_cur.lock().unwrap();
+            let nick = self.nick.lock().unwrap().clone();
+            Some(vec![(x, y, nick)])
+        } else {
+            None
+        }
+    }
+
     pub fn quit(&self) {
         self.exit.store(true, atomic::Ordering::Relaxed);
         self.hnd.quit();
     }
 
+    pub fn write(&self, node: Node) {
+        let (x, y) = {
+            let mut c_lock = self.this_cur.lock().unwrap();
+            let out = *c_lock;
+            (*c_lock).0 += 1;
+            out
+        };
+        /*
+        let mut offset_x = (x / BLOCK_I32) * BLOCK_I32;
+        if offset_x > x {
+            offset_x -= BLOCK_I32;
+        }
+        let mut offset_y = (y / BLOCK_I32) * BLOCK_I32;
+        if offset_y > y {
+            offset_y -= BLOCK_I32;
+        }
+        let block = self.get_block(offset_x, offset_y);
+        let ix = x - offset_x;
+        let iy = y - offset_y;
+        block.lock().unwrap()[ix as usize][iy as usize] = node;
+        */
+        let ver = *self.ver.lock().unwrap();
+        self.overlay.lock().unwrap().insert((x, y), (node, ver));
+        self.set_dirty();
+    }
+
+    pub fn backspace(&self) {
+        let (x, y) = {
+            let mut c_lock = self.this_cur.lock().unwrap();
+            (*c_lock).0 -= 1;
+            *c_lock
+        };
+        let ver = *self.ver.lock().unwrap();
+        self.overlay.lock().unwrap().insert((x, y), (Node {
+            fg: WHITE as u32 as u8,
+            bg: BLACK as u32 as u8,
+            val: ' ',
+        }, ver));
+        self.set_dirty();
+    }
+
     // -- private -- //
+
+    fn set_dirty(&self) {
+        self.dirty.store(true, atomic::Ordering::Relaxed);
+    }
+
+    fn get_block(
+        &self,
+        offset_x: i32,
+        offset_y: i32,
+    ) -> Arc<Mutex<[[Node; BLOCK]; BLOCK]>> {
+        if (offset_x / BLOCK_I32) * BLOCK_I32 != offset_x {
+            panic!("invalid offset_x not divisible by block size");
+        }
+        if (offset_y / BLOCK_I32) * BLOCK_I32 != offset_y {
+            panic!("invalid offset_y not divisible by BLOCK");
+        }
+        self
+            .blocks
+            .lock()
+            .unwrap()
+            .entry((offset_x, offset_y))
+            .or_insert_with(|| {
+                Arc::new(Mutex::new([[Node::default(); BLOCK]; BLOCK]))
+            })
+            .clone()
+    }
 
     fn prompt_nick(self: Arc<Self>) {
         tokio::task::spawn(async move {

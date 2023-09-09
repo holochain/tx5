@@ -123,6 +123,14 @@ fn run_event(state: Arc<State>) -> std::io::Result<()> {
                             && event.modifiers.contains(KeyModifiers::CONTROL))
                     {
                         state.quit();
+                    } else if let KeyCode::Backspace = event.code {
+                        state.backspace();
+                    } else if let KeyCode::Char(c) = event.code {
+                        state.write(state::Node {
+                            fg: state::WHITE as u32 as u8,
+                            bg: state::BLACK as u32 as u8,
+                            val: c,
+                        });
                     }
                 }
                 _ => (),
@@ -173,7 +181,7 @@ fn run_board(
         crossterm::execute!(
             stdout,
             crossterm::terminal::EnterAlternateScreen,
-            //crossterm::terminal::DisableLineWrap,
+            crossterm::terminal::DisableLineWrap,
             crossterm::cursor::Hide,
         )?;
     }
@@ -192,8 +200,10 @@ fn run_board(
     let mut block = [[state::Node::default(); state::BLOCK]; state::BLOCK];
 
     loop {
-        {
+        if let Some(cursors) = state.should_draw() {
             let (width, height) = crossterm::terminal::size()?;
+            let width = width as i32;
+            let height = height as i32;
 
             let mut stdout = std::io::stdout().lock();
 
@@ -215,47 +225,61 @@ fn run_board(
                 cy -= state::BLOCK_I32;
             }
 
-            for x in (cx..offset_x + width as i32).step_by(state::BLOCK) {
-                for y in (cy..offset_y + height as i32).step_by(state::BLOCK) {
-                    /*
-                    crossterm::queue!(
-                        stdout,
-                        crossterm::style::Print(format!("(B{x},{y})")),
-                    )?;
-                    */
-
+            for x in (cx..offset_x + width).step_by(state::BLOCK) {
+                for y in (cy..offset_y + height).step_by(state::BLOCK) {
                     state.fill_block(x, y, &mut block);
 
                     for iy in 0..state::BLOCK_I32 {
-                        if iy - offset_y < 0 ||
-                            iy - offset_y > height as i32
-                        {
+                        let sy = y + iy - offset_y;
+                        if sy < 0 || sy >= height {
                             continue;
                         }
+
                         let mut set_pos = false;
                         for ix in 0..state::BLOCK_I32 {
-                            if ix - offset_x < 0 ||
-                                ix - offset_x > width as i32
-                            {
+                            let sx = x + ix - offset_x;
+                            if sx < 0 || sx >= width {
                                 continue;
                             }
+
                             if !set_pos {
                                 set_pos = true;
                                 crossterm::queue!(
                                     stdout,
-                                    crossterm::cursor::MoveTo(ix as u16, iy as u16),
+                                    crossterm::cursor::MoveTo(sx as u16, sy as u16),
                                 )?;
                             }
+
+                            let mut cursor = false;
+
+                            for (cur_x, cur_y, _nick) in cursors.iter() {
+                                let cur_x = cur_x - offset_x;
+                                let cur_y = cur_y - offset_y;
+                                if cur_x == sx && cur_y == sy {
+                                    cursor = true;
+                                    break;
+                                }
+                            }
+
+                            if cursor {
+                                crossterm::queue!(
+                                    stdout,
+                                    crossterm::style::SetForegroundColor(crossterm::style::Color::Black),
+                                    crossterm::style::SetBackgroundColor(crossterm::style::Color::White),
+                                )?;
+                            }
+
                             crossterm::queue!(
                                 stdout,
                                 crossterm::style::Print(block[ix as usize][iy as usize].val),
                             )?;
-                            /*
-                            crossterm::queue!(
-                                stdout,
-                                crossterm::style::Print(format!("(I{ix},{iy})")),
-                            )?;
-                            */
+
+                            if cursor {
+                                crossterm::queue!(
+                                    stdout,
+                                    crossterm::style::ResetColor,
+                                )?;
+                            }
                         }
                     }
                 }
@@ -267,7 +291,7 @@ fn run_board(
                 crossterm::style::SetForegroundColor(crossterm::style::Color::Black),
                 crossterm::style::SetBackgroundColor(crossterm::style::Color::White),
                 crossterm::style::Print("━".repeat(width as usize)),
-                crossterm::cursor::MoveTo(0, height - 1),
+                crossterm::cursor::MoveTo(0, (height - 1) as u16),
                 crossterm::style::Print("━".repeat(width as usize)),
                 crossterm::style::ResetColor,
                 crossterm::cursor::MoveTo(0, 0),

@@ -29,6 +29,7 @@ tx5 = { workspace = true, features = [ "pipe_ipc" ] }
 tx5-pipe-control = { workspace = true }
 
 [dev-dependencies]
+crossterm = "0.27.0"
 escargot = "0.5.8"
 kitsune_p2p_bootstrap = { workspace = true }
 tracing-subscriber = { workspace = true }

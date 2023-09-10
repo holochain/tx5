@@ -1,29 +1,52 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{atomic, Arc, Mutex};
+
+pub fn debug_write(s: String) {
+    static F: std::sync::OnceLock<Arc<tokio::sync::Mutex<tokio::fs::File>>> =
+        std::sync::OnceLock::new();
+
+    tokio::task::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+
+        let f = F.get_or_init(|| {
+            let f = std::fs::File::create("./textboard-debug.txt").unwrap();
+            let f = tokio::fs::File::from_std(f);
+            Arc::new(tokio::sync::Mutex::new(f))
+        });
+        let mut lock = f.lock().await;
+
+        lock.write_all(s.as_bytes()).await.unwrap();
+        lock.write_all(b"\n").await.unwrap();
+        lock.flush().await.unwrap();
+    });
+}
 
 /// The size of the text blocks
 pub const BLOCK_I32: i32 = 32;
 pub const BLOCK: usize = BLOCK_I32 as usize;
 
+#[derive(Debug)]
 enum Coms<'lt> {
     /// "joined" peers send this notifying of updates they've made
     /// and requesting blocks if they have changes > last recvd versions
     ClientUpdate {
-        want_blocks: Vec<(i32, i32, i32)>, // x, y, ver
-        cur_pos: (i32, i32),               // x, y
+        client_ver: i32, // this is returned in ServerUpdate
+        want_blocks: Vec<(i32, i32, i32)>,      // x, y, block ver
+        cursor: (i32, i32, String),        // x, y, nick
         updates: Vec<(i32, i32, Node)>,    // x, y, node
     },
 
     /// "host" peers send this info updating the clients about the state
     ServerUpdate {
+        client_ver: i32, // this is the version sent in the ClientUpdate
         cursors: Vec<(i32, i32, String)>, // x, y, nickname
         blocks: Vec<(
             i32, // x
             i32, // y
-            i32, // ver
+            i32, // block ver
             Cow<'lt, [[Node; BLOCK]; BLOCK]>,
         )>,
     },
@@ -33,14 +56,30 @@ impl<'lt> Coms<'lt> {
     pub fn encode(&self, out: &mut String) {
         match self {
             Self::ClientUpdate {
+                client_ver,
                 want_blocks,
-                cur_pos,
+                cursor,
                 updates,
             } => {
-                todo!()
+                out.push_str(&format!("C\0{client_ver}\0{}\0", want_blocks.len()));
+                for (x, y, ver) in want_blocks {
+                    out.push_str(&format!("{x}\0{y}\0{ver}\0"));
+                }
+                out.push_str(&format!(
+                    "{}\0{}\0{}\0{}\0",
+                    cursor.0,
+                    cursor.1,
+                    cursor.2,
+                    updates.len(),
+                ));
+                for (x, y, node) in updates {
+                    out.push_str(&format!("{x}\0{y}\0"));
+                    node.encode(out);
+                    out.push('\0');
+                }
             }
-            Self::ServerUpdate { cursors, blocks } => {
-                out.push_str(&format!("S\0{}\0", cursors.len()));
+            Self::ServerUpdate { client_ver, cursors, blocks } => {
+                out.push_str(&format!("S\0{client_ver}\0{}\0", cursors.len()));
                 for (x, y, nickname) in cursors {
                     out.push_str(&format!("{x}\0{y}\0{nickname}\0"));
                 }
@@ -65,6 +104,7 @@ impl<'lt> Coms<'lt> {
                 todo!()
             }
             "S" => {
+                let client_ver: i32 = input.next().unwrap().parse().unwrap();
                 let cursor_cnt: usize = input.next().unwrap().parse().unwrap();
                 let mut cursors = Vec::new();
                 for _ in 0..cursor_cnt {
@@ -95,7 +135,7 @@ impl<'lt> Coms<'lt> {
                     }
                     blocks.push((x, y, ver, Cow::Owned(out)));
                 }
-                Self::ServerUpdate { cursors, blocks }
+                Self::ServerUpdate { client_ver, cursors, blocks }
             }
             _ => panic!(),
         }
@@ -157,14 +197,14 @@ impl Node {
 pub struct State {
     exit: atomic::AtomicBool,
     dirty: atomic::AtomicBool,
-    ver: Mutex<i32>,
     hnd: DynStateHnd,
     cli_url: String,
     nick: Mutex<String>,
     rem_host: Mutex<Option<String>>,
-    blocks: Mutex<HashMap<(i32, i32), Arc<Mutex<[[Node; BLOCK]; BLOCK]>>>>,
+    blocks: Mutex<HashMap<(i32, i32), Arc<Mutex<([[Node; BLOCK]; BLOCK], i32)>>>>,
     overlay: Mutex<HashMap<(i32, i32), (Node, i32)>>,
     this_cur: Mutex<(i32, i32)>,
+    view_tracking: Mutex<HashSet<(i32, i32)>>,
 }
 
 impl std::fmt::Debug for State {
@@ -183,7 +223,6 @@ impl State {
         let this = Arc::new(Self {
             exit: atomic::AtomicBool::new(false),
             dirty: atomic::AtomicBool::new(true),
-            ver: Mutex::new(0),
             hnd,
             cli_url,
             nick: Mutex::new("noname".to_string()),
@@ -191,11 +230,35 @@ impl State {
             blocks: Mutex::new(HashMap::new()),
             overlay: Mutex::new(HashMap::new()),
             this_cur: Mutex::new((0, 0)),
+            view_tracking: Mutex::new(HashSet::new()),
         });
 
         this.clone().prompt_nick();
 
+        this.move_cur(0, -6);
+        this.enter();
+        for s in [
+            "Welcome to textboard.",
+            "[ESC] to exit.",
+            "[ENTER] does columns.",
+            "[SHIFT]+[ARROW] moves faster.",
+            "Have fun!",
+        ] {
+            for c in s.chars() {
+                this.write(Node {
+                    fg: CYAN as u32 as u8,
+                    bg: BLACK as u32 as u8,
+                    val: c,
+                });
+            }
+            this.enter();
+        }
+
         this
+    }
+
+    pub fn set_view_tracking(&self, mut tracking: HashSet<(i32, i32)>) {
+        std::mem::swap(&mut *self.view_tracking.lock().unwrap(), &mut tracking);
     }
 
     pub fn fill_block(
@@ -204,7 +267,7 @@ impl State {
         offset_y: i32,
         block: &mut [[Node; BLOCK]; BLOCK],
     ) {
-        *block = *self.get_block(offset_x, offset_y).lock().unwrap();
+        *block = self.get_block(offset_x, offset_y).lock().unwrap().0;
         let overlay_lock = self.overlay.lock().unwrap();
         for x in 0..BLOCK_I32 {
             for y in 0..BLOCK_I32 {
@@ -243,22 +306,7 @@ impl State {
             (*c_lock).0 += 1;
             out
         };
-        /*
-        let mut offset_x = (x / BLOCK_I32) * BLOCK_I32;
-        if offset_x > x {
-            offset_x -= BLOCK_I32;
-        }
-        let mut offset_y = (y / BLOCK_I32) * BLOCK_I32;
-        if offset_y > y {
-            offset_y -= BLOCK_I32;
-        }
-        let block = self.get_block(offset_x, offset_y);
-        let ix = x - offset_x;
-        let iy = y - offset_y;
-        block.lock().unwrap()[ix as usize][iy as usize] = node;
-        */
-        let ver = *self.ver.lock().unwrap();
-        self.overlay.lock().unwrap().insert((x, y), (node, ver));
+        self.overlay.lock().unwrap().insert((x, y), (node, 0));
         self.set_dirty();
     }
 
@@ -268,16 +316,69 @@ impl State {
             (*c_lock).0 -= 1;
             *c_lock
         };
-        let ver = *self.ver.lock().unwrap();
         self.overlay.lock().unwrap().insert((x, y), (Node {
             fg: WHITE as u32 as u8,
             bg: BLACK as u32 as u8,
             val: ' ',
-        }, ver));
+        }, 0));
+        self.set_dirty();
+    }
+
+    pub fn move_cur(&self, dx: i32, dy: i32) {
+        {
+            let mut c_lock = self.this_cur.lock().unwrap();
+            (*c_lock).0 += dx;
+            (*c_lock).1 += dy;
+        }
+        self.set_dirty();
+    }
+
+    pub fn enter(&self) {
+        let (x, y) = {
+            let mut c_lock = self.this_cur.lock().unwrap();
+            let x = (*c_lock).0;
+            let mut nx = (x / 32) * 32;
+            if nx > x {
+                nx -= 32;
+            }
+            (*c_lock).0 = nx;
+            (*c_lock).1 += 1;
+            *c_lock
+        };
+        {
+            let mut overlay = self.overlay.lock().unwrap();
+            overlay.insert((x - 2, y), (Node {
+                fg: DARK_GREY as u32 as u8,
+                bg: BLACK as u32 as u8,
+                val: '│',
+            }, 0));
+            overlay.insert((x + 30, y), (Node {
+                fg: DARK_GREY as u32 as u8,
+                bg: BLACK as u32 as u8,
+                val: '│',
+            }, 0));
+        }
         self.set_dirty();
     }
 
     // -- private -- //
+
+    fn write_block(&self, x: i32, y: i32, node: Node) {
+        let mut cx = (x / BLOCK_I32) * BLOCK_I32;
+        if cx > x {
+            cx -= BLOCK_I32;
+        }
+        let mut cy = (y / BLOCK_I32) * BLOCK_I32;
+        if cy > y {
+            cy -= BLOCK_I32;
+        }
+        let block = self.get_block(cx, cy);
+        let ix = x - cx;
+        let iy = y - cy;
+        let mut lock = block.lock().unwrap();
+        lock.0[ix as usize][iy as usize] = node;
+        lock.1 += 1;
+    }
 
     fn set_dirty(&self) {
         self.dirty.store(true, atomic::Ordering::Relaxed);
@@ -287,7 +388,7 @@ impl State {
         &self,
         offset_x: i32,
         offset_y: i32,
-    ) -> Arc<Mutex<[[Node; BLOCK]; BLOCK]>> {
+    ) -> Arc<Mutex<([[Node; BLOCK]; BLOCK], i32)>> {
         if (offset_x / BLOCK_I32) * BLOCK_I32 != offset_x {
             panic!("invalid offset_x not divisible by block size");
         }
@@ -300,7 +401,7 @@ impl State {
             .unwrap()
             .entry((offset_x, offset_y))
             .or_insert_with(|| {
-                Arc::new(Mutex::new([[Node::default(); BLOCK]; BLOCK]))
+                Arc::new(Mutex::new(([[Node::default(); BLOCK]; BLOCK], 1)))
             })
             .clone()
     }
@@ -357,5 +458,80 @@ join type> "#,
 
     fn start_board(self: Arc<Self>) {
         self.hnd.show_board(&self);
+
+        if !self.rem_host.lock().unwrap().is_none() {
+            tokio::task::spawn(self.manage_overlay_as_host());
+        } else {
+            tokio::task::spawn(self.manage_overlay_as_client());
+        }
+    }
+
+    async fn manage_overlay_as_host(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+            // todo - first integrate changes from clients
+            // the host gets priority so host changes come after
+
+            // now, integrate host changes so they overwrite
+            let overlay: Vec<((i32, i32), (Node, i32))> =
+                self.overlay.lock().unwrap().drain().collect();
+
+            for ((x, y), (node, _)) in overlay {
+                self.write_block(x, y, node);
+            }
+        }
+    }
+
+    async fn manage_overlay_as_client(self: Arc<Self>) {
+        let mut next_client_ver = 1;
+
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+            let client_ver = next_client_ver;
+            next_client_ver += 1;
+
+            let view_tracking: Vec<(i32, i32)> = self.view_tracking.lock().unwrap().iter().cloned().collect();
+
+            let mut want_blocks: Vec<(i32, i32, i32)> = Vec::new();
+
+            {
+                for (x, y) in view_tracking {
+                    let block = self.get_block(x, y);
+                    let block = block.lock().unwrap();
+                    want_blocks.push((x, y, block.1));
+                }
+            }
+
+            let (x, y) = *self.this_cur.lock().unwrap();
+            let nick = self.nick.lock().unwrap().clone();
+            let cursor: (i32, i32, String) = (x, y, nick);
+
+            let mut updates: Vec<(i32, i32, Node)> = Vec::new();
+
+            {
+                let mut lock = self.overlay.lock().unwrap();
+                for ((x, y), (node, ver)) in lock.iter_mut() {
+                    if *ver == 0 {
+                        *ver = client_ver;
+                        updates.push((*x, *y, *node));
+                    }
+                }
+            }
+
+            let com = Coms::ClientUpdate {
+                client_ver,
+                want_blocks,
+                cursor,
+                updates,
+            };
+
+            let mut enc = String::new();
+            com.encode(&mut enc);
+
+            debug_write(format!("{com:?}\n{enc}"));
+        }
     }
 }
+

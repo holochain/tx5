@@ -30,6 +30,9 @@ pub use crate::url::*;
 #[cfg(feature = "file_check")]
 pub mod file_check;
 
+#[cfg(feature = "pipe_ipc")]
+pub mod pipe_ipc;
+
 pub mod wire;
 
 /// Websocket configuration constants.

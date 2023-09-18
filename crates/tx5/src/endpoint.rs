@@ -71,10 +71,19 @@ impl std::fmt::Debug for EpEvt {
 }
 
 /// A tx5 endpoint representing an instance that can send and receive.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Ep {
     state: state::State,
+    config: DynConfig,
 }
+
+impl PartialEq for Ep {
+    fn eq(&self, oth: &Self) -> bool {
+        self.state == oth.state
+    }
+}
+
+impl Eq for Ep {}
 
 impl std::fmt::Debug for Ep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -95,16 +104,17 @@ impl Ep {
         let (ep_snd, ep_rcv) = tokio::sync::mpsc::unbounded_channel();
 
         let config = into_config.into_config().await?;
+        let config2 = config.clone();
         let (state, mut state_evt) = state::State::new(config.clone())?;
         tokio::task::spawn(async move {
             while let Some(evt) = state_evt.recv().await {
                 match evt {
                     Ok(state::StateEvt::NewSig(sig_url, seed)) => {
-                        config.on_new_sig(sig_url, seed);
+                        config2.on_new_sig(sig_url, seed);
                     }
                     Ok(state::StateEvt::Address(_cli_url)) => {}
                     Ok(state::StateEvt::NewConn(ice_servers, seed)) => {
-                        config.on_new_conn(ice_servers, seed);
+                        config2.on_new_conn(ice_servers, seed);
                     }
                     Ok(state::StateEvt::RcvData(url, buf, permit)) => {
                         let _ = ep_snd.send(Ok(EpEvt::Data {
@@ -135,8 +145,13 @@ impl Ep {
                 }
             }
         });
-        let ep = Self { state };
+        let ep = Self { state, config };
         Ok((ep, actor::ManyRcv(ep_rcv)))
+    }
+
+    /// Get the current endpoint configuration.
+    pub fn get_config(&self) -> &(dyn Config + Send + Sync) {
+        &*self.config
     }
 
     /// Establish a listening connection to a signal server,

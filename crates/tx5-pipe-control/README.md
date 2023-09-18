@@ -33,8 +33,8 @@
 
 <!-- cargo-rdme start -->
 
-#### tx5-go-pion
+#### tx5-pipe
 
-Higher level rust bindings to the go pion webrtc library.
+Holochain WebRTC P2P CLI Tool Controller.
 
 <!-- cargo-rdme end -->

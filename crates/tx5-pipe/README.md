@@ -33,8 +33,9 @@
 
 <!-- cargo-rdme start -->
 
-#### tx5-go-pion
+#### tx5-pipe
 
-Higher level rust bindings to the go pion webrtc library.
+The dirt simple way to include tx5 webrtc p2p networking in your project -
+pipe your messages to a child process.
 
 <!-- cargo-rdme end -->

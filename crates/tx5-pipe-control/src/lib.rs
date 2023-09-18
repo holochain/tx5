@@ -37,7 +37,7 @@ pub mod control_impl {
         /// Report a message from the server.
         pub fn handle_response(&self, resp: Tx5PipeResponse) {
             if let Some(cmd_id) = resp.get_cmd_id() {
-                self.resp_cache.lock().unwrap().resp(cmd_id.clone(), resp);
+                self.resp_cache.lock().unwrap().resp(cmd_id, resp);
                 return;
             }
 

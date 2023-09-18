@@ -25,40 +25,9 @@ const HELP_TEXT: &str = r#"
 #
 # send "my command id" wss://my.server/tx5-ws/rem.id `4|🙃`
 #
-# # Request Messages (received on stdin):
+# Use "help [cmd]" for help on a given command.
 #
-# * sig_reg           - connect to a signal server
-#   - cmd_id          - command identifier
-#   - sig_url         - signal server url (wss://...)
-#
-# * boot_reg          - register with a bootstrap server
-#   - cmd_id          - command identifier
-#   - boot_url        - bootstrap server url (https://...)
-#   - app_hash        - base64 encoded application hash
-#   - cli_url         - signal client url (wss://.../tx5-ws/...)
-#   - data            - any binary meta-data
-#
-# * boot_query        - request a list of peers from bootstrap
-#   - cmd_id          - command identifier
-#   - boot_url        - bootstrap server url (https://...)
-#   - app_hash        - base64 encoded application hash
-#
-# * send              - send outgoing data to a peer
-#   - cmd_id          - command identifier
-#   - rum_url         - signal client url (wss://.../tx5-ws/...)
-#   - data            - any data to send to remote peer
-#
-# # Response Messages (sent on stdout):
-#
-# * @help version info             - this help info
-# * @error cmd_id code text        - error response to a request
-# * @sig_reg_ok cmd_id cli_url     - okay response to a sig_reg
-# * @boot_reg_ok cmd_id            - okay response to a boot_reg
-# * @boot_query_resp cmd_id pub_key rem_url expires_at_unix_epoch_s data
-#                                  - bootstrap query peer response
-# * @boot_query_ok cmd_id          - okay response to a boot_reg
-# * @send_ok cmd_id                - okay response to a send
-# * @recv rem_url data             - receive incoming peer data
+# Command List: help quit hash sig_reg boot_reg boot_query send
 #
 # -- End Tx5Pipe Usage Info -- #"#;
 
@@ -66,7 +35,7 @@ pub mod boot;
 use boot::BootEntry;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tx5_core::pipe_ipc::*;
 use tx5_core::Tx5Url;
 
@@ -87,6 +56,42 @@ pub trait Tx5PipeHandler: 'static + Send + Sync {
 
 type DynTx5PipeHandler = Arc<dyn Tx5PipeHandler + 'static + Send + Sync>;
 
+#[derive(Clone)]
+struct WantQuit(DynTx5PipeHandler, Arc<Mutex<(bool, usize)>>);
+
+impl WantQuit {
+    fn new(hnd: DynTx5PipeHandler) -> Self {
+        Self(hnd, Arc::new(Mutex::new((false, 0))))
+    }
+
+    fn want_quit(&self) {
+        self.1.lock().unwrap().0 = true;
+        let _g = self.guard();
+    }
+
+    fn guard(&self) -> WantQuitGuard {
+        self.1.lock().unwrap().1 += 1;
+        WantQuitGuard(self.0.clone(), self.1.clone())
+    }
+}
+
+struct WantQuitGuard(DynTx5PipeHandler, Arc<Mutex<(bool, usize)>>);
+
+impl Drop for WantQuitGuard {
+    fn drop(&mut self) {
+        let should_quit = {
+            let mut l = self.1.lock().unwrap();
+            if l.1 > 0 {
+                l.1 -= 1;
+            }
+            l.0 && l.1 == 0
+        };
+        if should_quit {
+            self.0.quit();
+        }
+    }
+}
+
 /// The Tx5Pipe struct.
 pub struct Tx5Pipe {
     ep: tx5::Ep,
@@ -94,8 +99,7 @@ pub struct Tx5Pipe {
     recv_task: tokio::task::JoinHandle<()>,
     #[allow(clippy::type_complexity)]
     boot_reg: Arc<std::sync::Mutex<HashMap<[u8; 32], (String, Vec<u8>)>>>,
-    want_quit: Arc<std::sync::atomic::AtomicBool>,
-    req_count: Arc<std::sync::atomic::AtomicIsize>,
+    want_quit: WantQuit,
 }
 
 impl Drop for Tx5Pipe {
@@ -180,11 +184,10 @@ impl Tx5Pipe {
 
         Ok(Arc::new(Self {
             ep,
-            hnd,
+            hnd: hnd.clone(),
             recv_task,
             boot_reg: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            want_quit: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            req_count: Arc::new(std::sync::atomic::AtomicIsize::new(0)),
+            want_quit: WantQuit::new(hnd),
         }))
     }
 
@@ -266,31 +269,25 @@ impl Tx5Pipe {
 
     /// Send a pipe request into the Tx5Pipe instance.
     pub fn pipe(self: &Arc<Self>, req: Tx5PipeRequest) {
-        self.req_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let req_guard = self.want_quit.guard();
 
         let this = self.clone();
         tokio::task::spawn(async move {
             match req {
                 Tx5PipeRequest::Quit => {
-                    this.want_quit
-                        .store(true, std::sync::atomic::Ordering::SeqCst);
-                    let count = this
-                        .req_count
-                        .fetch_add(-1, std::sync::atomic::Ordering::SeqCst)
-                        - 1;
-                    if count < 1 {
-                        this.hnd.quit();
-                    }
+                    drop(req_guard);
+                    this.want_quit.want_quit();
                 }
                 Tx5PipeRequest::Hash { cmd_id, data } => {
                     this.handle_resp(
+                        req_guard,
                         cmd_id.clone(),
                         this.hash(cmd_id, data).await,
                     );
                 }
                 Tx5PipeRequest::SigReg { cmd_id, sig_url } => {
                     this.handle_resp(
+                        req_guard,
                         cmd_id.clone(),
                         this.sig_reg(cmd_id, sig_url).await,
                     );
@@ -303,6 +300,7 @@ impl Tx5Pipe {
                     data,
                 } => {
                     this.handle_resp(
+                        req_guard,
                         cmd_id.clone(),
                         this.boot_reg(
                             cmd_id, boot_url, app_hash, cli_url, data,
@@ -316,6 +314,7 @@ impl Tx5Pipe {
                     app_hash,
                 } => {
                     this.handle_resp(
+                        req_guard,
                         cmd_id.clone(),
                         this.boot_query(cmd_id, boot_url, app_hash).await,
                     );
@@ -326,6 +325,7 @@ impl Tx5Pipe {
                     data,
                 } => {
                     this.handle_resp(
+                        req_guard,
                         cmd_id.clone(),
                         this.send(cmd_id, rem_url, data).await,
                     );
@@ -336,28 +336,10 @@ impl Tx5Pipe {
 
     fn handle_resp(
         self: &Arc<Self>,
+        _req_guard: WantQuitGuard,
         cmd_id: String,
         rsp: std::io::Result<Tx5PipeResponse>,
     ) {
-        struct OnDrop(Arc<Tx5Pipe>);
-
-        impl Drop for OnDrop {
-            fn drop(&mut self) {
-                let count = self
-                    .0
-                    .req_count
-                    .fetch_add(-1, std::sync::atomic::Ordering::SeqCst)
-                    - 1;
-                if self.0.want_quit.load(std::sync::atomic::Ordering::SeqCst)
-                    && count <= 0
-                {
-                    self.0.hnd.quit();
-                }
-            }
-        }
-
-        let _on_drop = OnDrop(self.clone());
-
         let rsp = match rsp {
             Ok(rsp) => rsp,
             Err(err) => Tx5PipeResponse::Error {

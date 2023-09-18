@@ -16,9 +16,11 @@
 ### Tx5
 
 - [ tx5 ](https://github.com/holochain/tx5/tree/main/crates/tx5-core) - [ ![crates.io](https://img.shields.io/crates/v/tx5) ](https://crates.io/crates/tx5) - The main holochain tx5 webrtc networking crate integrating the other code in this monorepo.
+- [ tx5-pipe ](https://github.com/holochain/tx5/tree/main/crates/tx5-pipe) - [ ![crates.io](https://img.shields.io/crates/v/tx5-pipe) ](https://crates.io/crates/tx5-pipe) - The dirt simple way to include tx5 webrtc p2p networking in your project - pipe your messages to a child process.
 
 ### Tx5 Support Crates
 
+- [ asv ](https://github.com/holochain/tx5/tree/main/crates/asv) - [ ![crates.io](https://img.shields.io/crates/v/asv) ](https://crates.io/crates/asv) - A separated value encoder and parser.
 - [ tx5-core ](https://github.com/holochain/tx5/tree/main/crates/tx5-core) - [ ![crates.io](https://img.shields.io/crates/v/tx5-core) ](https://crates.io/crates/tx5-core) - Core types used in other tx5 crates.
 - [ tx5-online ](https://github.com/holochain/tx5/tree/main/crates/tx5-online) - [ ![crates.io](https://img.shields.io/crates/v/tx5-online) ](https://crates.io/crates/tx5-online) - Network online connectivity status events.
 - [ tx5-go-pion-turn ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion-turn) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion-turn) ](https://crates.io/crates/tx5-go-pion-turn) - Rust process wrapper around tx5-go-pion-turn executable.
@@ -27,7 +29,6 @@
 - [ tx5-signal ](https://github.com/holochain/tx5/tree/main/crates/tx5-signal) - [ ![crates.io](https://img.shields.io/crates/v/tx5-signal) ](https://crates.io/crates/tx5-signal) - Holochain webrtc signal client.
 - [ tx5-signal-srv ](https://github.com/holochain/tx5/tree/main/crates/tx5-signal-srv) - [ ![crates.io](https://img.shields.io/crates/v/tx5-signal-srv) ](https://crates.io/crates/tx5-signal-srv) - Holochain webrtc signal server.
 - [ tx5-pipe-control ](https://github.com/holochain/tx5/tree/main/crates/tx5-pipe-control) - [ ![crates.io](https://img.shields.io/crates/v/tx5-pipe-control) ](https://crates.io/crates/tx5-pipe-control) - Holochain WebRTC P2P CLI Tool Controller.
-- [ tx5-pipe ](https://github.com/holochain/tx5/tree/main/crates/tx5-pipe) - [ ![crates.io](https://img.shields.io/crates/v/tx5-pipe) ](https://crates.io/crates/tx5-pipe) - Holochain WebRTC P2P CLI Tool.
 - [ tx5-demo ](https://github.com/holochain/tx5/tree/main/crates/tx5-demo) - [ ![crates.io](https://img.shields.io/crates/v/tx5-demo) ](https://crates.io/crates/tx5-demo) - Demo showing off tx5 p2p connectivity.
 
 <!-- cargo-rdme start -->

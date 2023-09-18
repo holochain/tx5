@@ -339,9 +339,7 @@ impl Tx5PipeControl {
         let fut = self.make_request(cmd_id, req);
         async move {
             match fut.await {
-                Ok((Tx5PipeResponse::HashOk { hash, .. }, _)) => {
-                    Ok(hash)
-                }
+                Ok((Tx5PipeResponse::HashOk { hash, .. }, _)) => Ok(hash),
                 Err(err) => Err(err),
                 _ => Err(Error::id("InvalidSigRegResponse")),
             }

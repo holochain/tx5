@@ -2,7 +2,7 @@
 name = "tx5-pipe"
 version = "0.0.2-alpha"
 edition = "2021"
-description = "Holochain WebRTC P2P CLI Tool"
+description = "The dirt simple way to include tx5 webrtc p2p networking in your project - pipe your messages to a child process"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/holochain/tx5"
 documentation = "https://docs.rs/tx5-pipe"

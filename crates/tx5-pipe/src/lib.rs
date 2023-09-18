@@ -4,7 +4,8 @@
 #![doc = tx5_core::__doc_header!()]
 //! # tx5-pipe
 //!
-//! Holochain WebRTC p2p cli tool.
+//! The dirt simple way to include tx5 webrtc p2p networking in your project -
+//! pipe your messages to a child process.
 
 use lair_keystore_api::prelude::*;
 

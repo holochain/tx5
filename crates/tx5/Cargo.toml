@@ -42,6 +42,7 @@ webrtc = { workspace = true, optional = true }
 criterion = { workspace = true }
 influxive-child-svc = { workspace = true }
 influxive = { workspace = true }
+openssl-sys = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
 tracing-subscriber = { workspace = true }

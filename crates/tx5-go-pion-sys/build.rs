@@ -63,17 +63,19 @@ fn go_build() {
 
     let mut lib_path = out_dir.clone();
 
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
-    lib_path.push("go-pion-webrtc.dylib");
-    #[cfg(target_os = "windows")]
-    lib_path.push("go-pion-webrtc.dll");
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "windows"
-    )))]
-    lib_path.push("go-pion-webrtc.so");
+    let tgt_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+
+    match tgt_os.as_str() {
+        "macos" | "ios" | "tvos" => {
+            lib_path.push("go-pion-webrtc.dylib");
+        }
+        "windows" => {
+            lib_path.push("go-pion-webrtc.dll");
+        }
+        _ => {
+            lib_path.push("go-pion-webrtc.so");
+        }
+    }
 
     let mut cache = out_dir.clone();
     cache.push("go-build");
@@ -101,14 +103,61 @@ fn go_build() {
     let mut cmd = Command::new("go");
 
     // add some cross-compilation translators:
-    #[cfg(target_arch = "arm")]
-    cmd.env("GOARCH", "arm");
-    #[cfg(target_arch = "aarch64")]
-    cmd.env("GOARCH", "arm64");
-    #[cfg(target_arch = "x86_64")]
-    cmd.env("GOARCH", "amd64");
-    #[cfg(target_arch = "x86")]
-    cmd.env("GOARCH", "386");
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
+        "arm" => {
+            cmd.env("GOARCH", "arm");
+        }
+        "aarch64" => {
+            cmd.env("GOARCH", "arm64");
+        }
+        "x86_64" => {
+            cmd.env("GOARCH", "amd64");
+        }
+        "x86" => {
+            cmd.env("GOARCH", "386");
+        }
+        _ => (),
+    }
+
+    // and for the os
+    match tgt_os.as_str() {
+        "windows" => {
+            cmd.env("GOOS", "windows");
+        }
+        "macos" => {
+            cmd.env("GOOS", "darwin");
+        }
+        "ios" => {
+            cmd.env("GOOS", "ios");
+        }
+        "linux" => {
+            cmd.env("GOOS", "linux");
+        }
+        "android" => {
+            cmd.env("GOOS", "android");
+        }
+        "dragonfly" => {
+            cmd.env("GOOS", "dragonfly");
+        }
+        "freebsd" => {
+            cmd.env("GOOS", "freebsd");
+        }
+        "openbsd" => {
+            cmd.env("GOOS", "openbsd");
+        }
+        "netbsd" => {
+            cmd.env("GOOS", "netbsd");
+        }
+        _ => (),
+    }
+
+    if tgt_os == "android" {
+        let linker = std::env::var("RUSTC_LINKER").unwrap();
+        println!("cargo:warning=LINKER: {linker:?}");
+        cmd.env("CC_FOR_TARGET", &linker);
+        cmd.env("CC", &linker);
+        cmd.env("CGO_ENABLED", "1");
+    }
 
     // grr, clippy, the debug symbols belong in one arg
     #[allow(clippy::suspicious_command_arg_space)]

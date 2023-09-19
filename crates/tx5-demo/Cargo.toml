@@ -16,6 +16,7 @@ bytes = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }
 influxive = { workspace = true }
+openssl-sys = { workspace = true }
 opentelemetry_api = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }

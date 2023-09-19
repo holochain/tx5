@@ -15,6 +15,10 @@ if [[ "x${ANDROID_ARCH}" == "x" ]]; then
   exit 127
 fi
 
+if [[ "${ANDROID_ARCH}" == "arm64-v8a" ]]; then
+  export ANDROID_ARCH="aarch64"
+fi
+
 if [[ "x${ANDROID_SDK_ROOT}" == "x" ]]; then
   echo "ANDROID_SDK_ROOT required"
   exit 127
@@ -34,3 +38,5 @@ export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include"
 
 cargo test --no-run --release --target ${ANDROID_ARCH}-linux-android --config target.${ANDROID_ARCH}-linux-android.linker="\"${_ndk_root}/bin/${ANDROID_ARCH}-linux-android34-clang\"" --config target.${ANDROID_ARCH}-linux-android.ar="\"${_ndk_root}/bin/llvm-ar\"" 2>&1 | tee output-cargo-test
 cat output-cargo-test | grep Executable | sed -E 's/[^(]*\(([^)]*)\)/\1/' > output-test-executables
+echo "BUILD TESTS:"
+cat output-test-executables

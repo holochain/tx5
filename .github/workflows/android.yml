@@ -13,7 +13,7 @@ jobs:
       matrix:
         android-api-level: [34]
         android-ndk-version: ["26.0.10792818"]
-        android-arch: ["aarch64", "x86_64"]
+        android-arch: ["arm64-v8a", "x86_64"]
     steps:
       - name: checkout
         uses: actions/checkout@v3

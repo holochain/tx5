@@ -27,12 +27,12 @@ jobs:
             ~/.android/adb*
           key: avd-${{ matrix.android-api-level }}
 
-      - name: create AVD and generate snapshot for caching
-        if: steps.avd-cache.outputs.cache-hit != 'true'
+      - name: run tests
         env:
           ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
           ANDROID_NDK_VERSION: ${{ matrix.android-ndk-version }}
           ANDROID_ARCH: ${{ matrix.android-arch }}
+          #ANDROID_SDK_ROOT: ~/Android/Sdk
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.android-api-level }}
@@ -40,21 +40,5 @@ jobs:
           arch: ${{ matrix.android-arch }}
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: false
-          script: echo "Generated AVD snapshot for caching." && /usr/bin/env
-
-      - name: run tests
-        env:
-          ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
-          ANDROID_NDK_VERSION: ${{ matrix.android-ndk-version }}
-          ANDROID_ARCH: ${{ matrix.android-arch }}
-          ANDROID_SDK_ROOT: ~/Android/Sdk
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ matrix.android-api-level }}
-          ndk: ${{ matrix.android-ndk-version }}
-          arch: ${{ matrix.android-arch }}
-          force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: which adb; ./android-build-tests.bash
+          script: /usr/bin/env; which adb; ./android-build-tests.bash

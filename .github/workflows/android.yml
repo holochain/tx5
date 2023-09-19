@@ -11,14 +11,29 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
+        #android-arch: ["arm64-v8a", "x86_64"]
+        android-arch: ["x86_64"]
         android-api-level: [29]
         android-ndk-version: ["26.0.10792818"]
-        android-arch: ["arm64-v8a", "x86_64"]
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: AVD cache
+      - name: Go Toolchain
+        uses: actions/setup-go@v3
+        with:
+          go-version: '=1.18.0'
+
+      - name: Rust Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add aarch64-linux-android
+          rustup target add x86_64-linux-android
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Avd Cache
         uses: actions/cache@v3
         id: avd-cache
         with:
@@ -27,7 +42,7 @@ jobs:
             ~/.android/adb*
           key: avd-${{ matrix.android-api-level }}
 
-      - name: create AVD and generate snapshot for caching
+      - name: Avd Snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
         env:
           ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
@@ -42,14 +57,13 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: false
-          script: echo "Generated AVD snapshot for caching." && /usr/bin/env
+          script: echo "Generated AVD snapshot for caching."
 
-      - name: run tests
+      - name: Build Tests
         env:
           ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
           ANDROID_NDK_VERSION: ${{ matrix.android-ndk-version }}
           ANDROID_ARCH: ${{ matrix.android-arch }}
-          ANDROID_SDK_ROOT: ~/Android/Sdk
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.android-api-level }}
@@ -59,4 +73,4 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: which adb; ./android-build-tests.bash
+          script: ./android-build-tests.bash

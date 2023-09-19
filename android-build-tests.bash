@@ -32,12 +32,10 @@ EOF
 
 export PKG_CONFIG_SYSROOT_DIR="${_ndk_root}/sysroot"
 export CC="${_ndk_root}/bin/${ANDROID_ARCH}-linux-android${ANDROID_API_LEVEL}-clang"
-export CFLAGS="-I${_ndk_root}/sysroot/usr/include"
-export CFLAGS="-I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
+export CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
 export AR="${_ndk_root}/bin/llvm-ar"
 export RANLIB="${_ndk_root}/bin/llvm-ranlib"
-export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include"
-export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
+export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
 
 cargo test --no-run --release --target ${ANDROID_ARCH}-linux-android --config target.${ANDROID_ARCH}-linux-android.linker="\"${_ndk_root}/bin/${ANDROID_ARCH}-linux-android34-clang\"" --config target.${ANDROID_ARCH}-linux-android.ar="\"${_ndk_root}/bin/llvm-ar\"" 2>&1 | tee output-cargo-test
 cat output-cargo-test | grep Executable | sed -E 's/[^(]*\(([^)]*)\)/\1/' > output-test-executables

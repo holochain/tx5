@@ -26,9 +26,9 @@ fi
 
 _ndk_root=(${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/*)
 
-cat << EOF > ${_ndk_root}/lib/clang/17/lib/linux/${ANDROID_ARCH}/libgcc.a
-INPUT(-lunwind)
-EOF
+#cat << EOF > ${_ndk_root}/lib/clang/17/lib/linux/${ANDROID_ARCH}/libgcc.a
+#INPUT(-lunwind)
+#EOF
 
 export PKG_CONFIG_SYSROOT_DIR="${_ndk_root}/sysroot"
 export CC="${_ndk_root}/bin/${ANDROID_ARCH}-linux-android${ANDROID_API_LEVEL}-clang"

@@ -59,7 +59,7 @@ jobs:
           disable-animations: false
           script: echo "Generated AVD snapshot for caching."
 
-      - name: Build Tests
+      - name: Build and Run Tests
         env:
           ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
           ANDROID_NDK_VERSION: ${{ matrix.android-ndk-version }}
@@ -73,4 +73,4 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./android-build-tests.bash
+          script: ./android-build-tests.bash && ./android-run-tests.bash

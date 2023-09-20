@@ -31,10 +31,10 @@ _ndk_root=(${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebui
 #EOF
 
 export PKG_CONFIG_SYSROOT_DIR="${_ndk_root}/sysroot"
-export CC="${_ndk_root}/bin/${ANDROID_ARCH}-linux-android${ANDROID_API_LEVEL}-clang"
-export CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
-export AR="${_ndk_root}/bin/llvm-ar"
-export RANLIB="${_ndk_root}/bin/llvm-ranlib"
+export TARGET_CC="${_ndk_root}/bin/${ANDROID_ARCH}-linux-android${ANDROID_API_LEVEL}-clang"
+export TARGET_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
+export TARGET_AR="${_ndk_root}/bin/llvm-ar"
+export TARGET_RANLIB="${_ndk_root}/bin/llvm-ranlib"
 export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
 
 cargo test --no-run --release --target ${ANDROID_ARCH}-linux-android --config target.${ANDROID_ARCH}-linux-android.linker="\"${_ndk_root}/bin/${ANDROID_ARCH}-linux-android34-clang\"" --config target.${ANDROID_ARCH}-linux-android.ar="\"${_ndk_root}/bin/llvm-ar\"" 2>&1 | tee output-cargo-test

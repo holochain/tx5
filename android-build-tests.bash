@@ -1,31 +1,35 @@
 #!/bin/bash
 
-if [[ "x${ANDROID_API_LEVEL}" == "x" ]]; then
+set -eEuxo pipefail
+
+if [[ "${ANDROID_API_LEVEL:-x}" == "x" ]]; then
   echo "ANDROID_API_LEVEL required"
   exit 127
 fi
 
-if [[ "x${ANDROID_NDK_VERSION}" == "x" ]]; then
+if [[ "${ANDROID_NDK_VERSION:-x}" == "x" ]]; then
   echo "ANDROID_NDK_VERSION required"
   exit 127
 fi
 
-if [[ "x${ANDROID_ARCH}" == "x" ]]; then
+if [[ "${ANDROID_ARCH:-x}" == "x" ]]; then
   echo "ANDROID_ARCH required"
   exit 127
+else
+  if [[ "${ANDROID_ARCH}" == "arm64-v8a" ]]; then
+    export ANDROID_ARCH="aarch64"
+  fi
 fi
 
-if [[ "${ANDROID_ARCH}" == "arm64-v8a" ]]; then
-  export ANDROID_ARCH="aarch64"
-fi
 
-if [[ "x${ANDROID_SDK_ROOT}" == "x" ]]; then
+if [[ "${ANDROID_SDK_ROOT:-x}" == "x" ]]; then
   echo "ANDROID_SDK_ROOT required"
   exit 127
 fi
 
 _ndk_root=(${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/*)
 
+# This workaround may be needed if upgrading android api level
 #cat << EOF > ${_ndk_root}/lib/clang/17/lib/linux/${ANDROID_ARCH}/libgcc.a
 #INPUT(-lunwind)
 #EOF

@@ -366,6 +366,7 @@ async fn new_conn_task(
     use tx5_go_pion::DataChannelEvent as DataEvt;
     use tx5_go_pion::PeerConnectionEvent as PeerEvt;
     use tx5_go_pion::PeerConnectionState as PeerState;
+    use tx5_go_pion::Tx5InitConfig;
 
     enum MultiEvt {
         OneSec,
@@ -383,12 +384,19 @@ async fn new_conn_task(
     let peer_snd2 = peer_snd.clone();
     let mut peer = match async {
         let peer_config = BackBuf::from_json(ice_servers)?;
+        let tx5_init_config = Tx5InitConfig {
+            ephemeral_udp_port_min: config.min_ephemeral_udp_port(),
+            ephemeral_udp_port_max: config.max_ephemeral_udp_port(),
+        };
 
-        let peer =
-            tx5_go_pion::PeerConnection::new(peer_config.imp.buf, move |evt| {
+        let peer = tx5_go_pion::PeerConnection::new(
+            peer_config.imp.buf,
+            tx5_init_config,
+            move |evt| {
                 let _ = peer_snd2.send(MultiEvt::Peer(evt));
-            })
-            .await?;
+            },
+        )
+        .await?;
 
         Result::Ok(peer)
     }

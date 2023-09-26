@@ -53,16 +53,12 @@ impl Tx5InitConfig {
             .set(*self)
             .map_err(|_| Error::id("Tx5InitAlreadySet"))
     }
-
-    fn get() -> Self {
-        *TX5_INIT_CONFIG.get_or_init(Tx5InitConfig::default)
-    }
 }
 
 static TX5_INIT_CONFIG: once_cell::sync::OnceCell<Tx5InitConfig> =
     once_cell::sync::OnceCell::new();
 
-async fn tx5_init() -> Result<()> {
+async fn tx5_init(tx5_init_config: Tx5InitConfig) -> Result<()> {
     static ALREADY_INIT: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
 
@@ -70,8 +66,10 @@ async fn tx5_init() -> Result<()> {
         ALREADY_INIT.swap(true, std::sync::atomic::Ordering::SeqCst);
 
     if !already_init {
+        tx5_init_config.set_as_global_default()?;
+
         tokio::task::spawn_blocking(move || unsafe {
-            let mut config = GoBufRef::json(Tx5InitConfig::get());
+            let mut config = GoBufRef::json(tx5_init_config);
             let config = config.as_mut_ref()?;
             let config = config.0;
             tx5_go_pion_sys::API.tx5_init(config)?;
@@ -124,6 +122,10 @@ mod tests {
         let config: PeerConnectionConfig =
             serde_json::from_str(&format!("{{\"iceServers\":[{ice}]}}"))
                 .unwrap();
+        let tx5_init_config = Tx5InitConfig {
+            ephemeral_udp_port_min: 1,
+            ephemeral_udp_port_max: 65535,
+        };
 
         let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));
@@ -161,28 +163,34 @@ mod tests {
             tokio::task::spawn(async move {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
-                    PeerConnection::new(&config, move |evt| match evt {
-                        PeerConnectionEvent::Error(err) => {
-                            panic!("{:?}", err);
-                        }
-                        PeerConnectionEvent::State(state) => {
-                            println!("peer1 state: {state:?}");
-                        }
-                        PeerConnectionEvent::ICECandidate(mut candidate) => {
-                            println!(
-                                "peer1 in-ice: {}",
-                                String::from_utf8_lossy(
-                                    &candidate.to_vec().unwrap()
-                                )
-                            );
-                            ice1.lock().push(candidate.mut_clone());
-                            // ok if these are lost during test shutdown
-                            let _ = cmd_send_2.send(Cmd::ICE(candidate));
-                        }
-                        PeerConnectionEvent::DataChannel(chan) => {
-                            println!("peer1 in-chan: {:?}", chan);
-                        }
-                    })
+                    PeerConnection::new(
+                        &config,
+                        tx5_init_config,
+                        move |evt| match evt {
+                            PeerConnectionEvent::Error(err) => {
+                                panic!("{:?}", err);
+                            }
+                            PeerConnectionEvent::State(state) => {
+                                println!("peer1 state: {state:?}");
+                            }
+                            PeerConnectionEvent::ICECandidate(
+                                mut candidate,
+                            ) => {
+                                println!(
+                                    "peer1 in-ice: {}",
+                                    String::from_utf8_lossy(
+                                        &candidate.to_vec().unwrap()
+                                    )
+                                );
+                                ice1.lock().push(candidate.mut_clone());
+                                // ok if these are lost during test shutdown
+                                let _ = cmd_send_2.send(Cmd::ICE(candidate));
+                            }
+                            PeerConnectionEvent::DataChannel(chan) => {
+                                println!("peer1 in-chan: {:?}", chan);
+                            }
+                        },
+                    )
                     .await
                     .unwrap()
                 };
@@ -238,29 +246,35 @@ mod tests {
             tokio::task::spawn(async move {
                 let mut peer2 = {
                     let cmd_send_1 = cmd_send_1.clone();
-                    PeerConnection::new(&config, move |evt| match evt {
-                        PeerConnectionEvent::Error(err) => {
-                            panic!("{:?}", err);
-                        }
-                        PeerConnectionEvent::State(state) => {
-                            println!("peer2 state: {state:?}");
-                        }
-                        PeerConnectionEvent::ICECandidate(mut candidate) => {
-                            println!(
-                                "peer2 in-ice: {}",
-                                String::from_utf8_lossy(
-                                    &candidate.to_vec().unwrap()
-                                )
-                            );
-                            ice2.lock().push(candidate.mut_clone());
-                            // ok if these are lost during test shutdown
-                            let _ = cmd_send_1.send(Cmd::ICE(candidate));
-                        }
-                        PeerConnectionEvent::DataChannel(chan) => {
-                            println!("peer2 in-chan: {:?}", chan);
-                            res_send.send(Res::Chan2(chan)).unwrap();
-                        }
-                    })
+                    PeerConnection::new(
+                        &config,
+                        tx5_init_config,
+                        move |evt| match evt {
+                            PeerConnectionEvent::Error(err) => {
+                                panic!("{:?}", err);
+                            }
+                            PeerConnectionEvent::State(state) => {
+                                println!("peer2 state: {state:?}");
+                            }
+                            PeerConnectionEvent::ICECandidate(
+                                mut candidate,
+                            ) => {
+                                println!(
+                                    "peer2 in-ice: {}",
+                                    String::from_utf8_lossy(
+                                        &candidate.to_vec().unwrap()
+                                    )
+                                );
+                                ice2.lock().push(candidate.mut_clone());
+                                // ok if these are lost during test shutdown
+                                let _ = cmd_send_1.send(Cmd::ICE(candidate));
+                            }
+                            PeerConnectionEvent::DataChannel(chan) => {
+                                println!("peer2 in-chan: {:?}", chan);
+                                res_send.send(Res::Chan2(chan)).unwrap();
+                            }
+                        },
+                    )
                     .await
                     .unwrap()
                 };

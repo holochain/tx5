@@ -49,8 +49,12 @@ async fn main() {
     let config = PeerConnectionConfig {
         ice_servers: vec![ice],
     };
+    let tx5_init_config = Tx5InitConfig {
+        ephemeral_udp_port_min: 1,
+        ephemeral_udp_port_max: 65535,
+    };
 
-    println!("running with: {config:?}");
+    println!("running with: peer config {config:?} and tx5 init config {tx5_init_config:?}");
 
     #[derive(Debug)]
     enum Cmd {
@@ -68,7 +72,8 @@ async fn main() {
 
     let start = std::time::Instant::now();
 
-    let (mut c1, mut evt1) = spawn_peer(config.clone()).await;
+    let (mut c1, mut evt1) =
+        spawn_peer(tx5_init_config, config.clone()).await;
     tokio::task::spawn(async move {
         while let Some(evt) = evt1.recv().await {
             o2o_snd.send(Cmd::PeerEvt(evt)).unwrap();
@@ -139,7 +144,8 @@ async fn main() {
 
     let mut ice_buf = Some(Vec::new());
 
-    let (mut c2, mut evt2) = spawn_peer(config.clone()).await;
+    let (mut c2, mut evt2) =
+        spawn_peer(tx5_init_config, config.clone()).await;
     tokio::task::spawn(async move {
         while let Some(evt) = evt2.recv().await {
             t2t_snd.send(Cmd::PeerEvt(evt)).unwrap();
@@ -196,17 +202,19 @@ async fn main() {
 }
 
 async fn spawn_peer(
-    config: PeerConnectionConfig,
+    tx5_init_config: Tx5InitConfig,
+    peer_con_config: PeerConnectionConfig,
 ) -> (
     PeerConnection,
     tokio::sync::mpsc::UnboundedReceiver<PeerConnectionEvent>,
 ) {
     let (snd, rcv) = tokio::sync::mpsc::unbounded_channel();
-    let con = PeerConnection::new(config, move |evt| {
-        let _ = snd.send(evt);
-    })
-    .await
-    .unwrap();
+    let con =
+        PeerConnection::new(peer_con_config, tx5_init_config, move |evt| {
+            let _ = snd.send(evt);
+        })
+        .await
+        .unwrap();
     (con, rcv)
 }
 

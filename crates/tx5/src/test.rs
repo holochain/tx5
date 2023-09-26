@@ -23,9 +23,9 @@ async fn check_send_backpressure() {
 
     let sig_url = Tx5Url::new("ws://fake:1").unwrap();
 
-    let this_url = sig_url.to_client(this_id.clone());
+    let this_url = sig_url.to_client(*this_id);
     let this_url = &this_url;
-    let other_url = sig_url.to_client(other_id.clone());
+    let other_url = sig_url.to_client(*other_id);
     let other_url = &other_url;
 
     let send_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -33,7 +33,7 @@ async fn check_send_backpressure() {
     let notify = Arc::new(tokio::sync::Notify::new());
 
     let this_url_sig = this_url.clone();
-    let other_id_sig = other_id.clone();
+    let other_id_sig = *other_id;
     let send_count_conn = send_count.clone();
     let notify_conn = notify.clone();
     let config = DefConfig::default()
@@ -46,7 +46,7 @@ async fn check_send_backpressure() {
                     Arc::new(serde_json::json!([])),
                 )
                 .unwrap();
-            let other_id = other_id_sig.clone();
+            let other_id = other_id_sig;
             tokio::task::spawn(async move {
                 while let Some(Ok(evt)) = sig_evt.recv().await {
                     match evt {
@@ -54,8 +54,8 @@ async fn check_send_backpressure() {
                             r.send(Ok(()));
                             sig_state
                                 .answer(
-                                    other_id.clone(),
-                                    BackBuf::from_slice(&[]).unwrap(),
+                                    other_id,
+                                    BackBuf::from_slice([]).unwrap(),
                                 )
                                 .unwrap();
                         }
@@ -72,7 +72,7 @@ async fn check_send_backpressure() {
                 while let Some(Ok(evt)) = conn_evt.recv().await {
                     match evt {
                         state::ConnStateEvt::CreateOffer(mut r) => {
-                            r.send(BackBuf::from_slice(&[]));
+                            r.send(BackBuf::from_slice([]));
                         }
                         state::ConnStateEvt::SetLoc(_, mut r) => {
                             r.send(Ok(()));

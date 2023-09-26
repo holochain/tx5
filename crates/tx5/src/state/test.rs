@@ -163,7 +163,7 @@ impl Test {
             Some(Err(err)) if &err.to_string() == "Dropped",
         ));
 
-        assert!(matches!(self.state_evt.recv().await, None));
+        assert!(self.state_evt.recv().await.is_none());
     }
 }
 

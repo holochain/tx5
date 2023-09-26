@@ -108,17 +108,21 @@ impl Drop for PeerConnection {
 
 impl PeerConnection {
     /// Construct a new PeerConnection.
-    pub async fn new<'a, B, Cb>(config: B, cb: Cb) -> Result<Self>
+    pub async fn new<'a, B, Cb>(
+        peer_con_config: B,
+        tx5_init_config: Tx5InitConfig,
+        cb: Cb,
+    ) -> Result<Self>
     where
         B: Into<GoBufRef<'a>>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
-        tx5_init().await?;
+        tx5_init(tx5_init_config).await?;
         init_evt_manager();
-        r2id!(config);
+        r2id!(peer_con_config);
         let cb: PeerConEvtCb = Arc::new(cb);
         tokio::task::spawn_blocking(move || unsafe {
-            let peer_con_id = API.peer_con_alloc(config)?;
+            let peer_con_id = API.peer_con_alloc(peer_con_config)?;
             register_peer_con_evt_cb(peer_con_id, cb);
             Ok(Self(peer_con_id))
         })

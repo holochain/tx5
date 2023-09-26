@@ -22,6 +22,12 @@ pub trait Config: 'static + Send + Sync {
     /// Get the max init (connect) time for a connection.
     fn max_conn_init(&self) -> std::time::Duration;
 
+    /// Get the min ephemeral udp port.
+    fn min_ephemeral_udp_port(&self) -> u16;
+
+    /// Get the min ephemeral udp port.
+    fn max_ephemeral_udp_port(&self) -> u16;
+
     /// Request the lair client associated with this config.
     fn lair_client(&self) -> &LairClient;
 
@@ -69,6 +75,8 @@ impl std::fmt::Debug for dyn Config + 'static + Send + Sync {
             .field("max_recv_bytes", &self.max_recv_bytes())
             .field("max_conn_count", &self.max_conn_count())
             .field("max_conn_init", &self.max_conn_init())
+            .field("min_ephemeral_udp_port", &self.min_ephemeral_udp_port())
+            .field("max_ephemeral_udp_port", &self.max_ephemeral_udp_port())
             .finish()
     }
 }
@@ -92,6 +100,8 @@ struct DefConfigBuilt {
     max_recv_bytes: u32,
     max_conn_count: u32,
     max_conn_init: std::time::Duration,
+    min_ephemeral_udp_port: u16,
+    max_ephemeral_udp_port: u16,
     _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     lair_tag: Arc<str>,
@@ -146,6 +156,14 @@ impl Config for DefConfigBuilt {
 
     fn max_conn_init(&self) -> std::time::Duration {
         self.max_conn_init
+    }
+
+    fn min_ephemeral_udp_port(&self) -> u16 {
+        self.min_ephemeral_udp_port
+    }
+
+    fn max_ephemeral_udp_port(&self) -> u16 {
+        self.max_ephemeral_udp_port
     }
 
     fn lair_client(&self) -> &LairClient {
@@ -205,6 +223,8 @@ pub struct DefConfig {
     max_recv_bytes: Option<u32>,
     max_conn_count: Option<u32>,
     max_conn_init: Option<std::time::Duration>,
+    min_ephemeral_udp_port: Option<u16>,
+    max_ephemeral_udp_port: Option<u16>,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
     on_new_sig_cb: Option<
@@ -262,6 +282,12 @@ impl IntoConfig for DefConfig {
             let max_conn_init = self
                 .max_conn_init
                 .unwrap_or(std::time::Duration::from_secs(60));
+            let min_ephemeral_udp_port = self
+                .min_ephemeral_udp_port
+                .unwrap_or(1);
+            let max_ephemeral_udp_port = self
+                .max_ephemeral_udp_port
+                .unwrap_or(65535);
             let mut lair_keystore = None;
 
             let lair_tag = self.lair_tag.unwrap_or_else(|| {
@@ -337,6 +363,8 @@ impl IntoConfig for DefConfig {
                 max_recv_bytes,
                 max_conn_count,
                 max_conn_init,
+                min_ephemeral_udp_port,
+                max_ephemeral_udp_port,
                 _lair_keystore: lair_keystore,
                 lair_client,
                 lair_tag,
@@ -402,6 +430,31 @@ impl DefConfig {
         self.set_max_conn_count(max_conn_count);
         self
     }
+
+    /// Set the min ephemeral udp port.
+    /// The default is `1`.
+    pub fn set_min_ephemeral_udp_port(&mut self, min_ephemeral_udp_port: u16) {
+        self.min_ephemeral_udp_port = Some(min_ephemeral_udp_port);
+    }
+
+    /// See `set_min_ephemeral_udp_port()`, this is the builder version.
+    pub fn with_min_ephemeral_udp_port(mut self, min_ephemeral_udp_port: u16) -> Self {
+        self.set_min_ephemeral_udp_port(min_ephemeral_udp_port);
+        self
+    }
+
+    /// Set the max ephemeral udp port.
+    /// The default is `1`.
+    pub fn set_max_ephemeral_udp_port(&mut self, max_ephemeral_udp_port: u16) {
+        self.max_ephemeral_udp_port = Some(max_ephemeral_udp_port);
+    }
+
+    /// See `set_max_ephemeral_udp_port()`, this is the builder version.
+    pub fn with_max_ephemeral_udp_port(mut self, max_ephemeral_udp_port: u16) -> Self {
+        self.set_max_ephemeral_udp_port(max_ephemeral_udp_port);
+        self
+    }
+
 
     /// Set the max connection init (connect) time.
     /// The default is `60` seconds.

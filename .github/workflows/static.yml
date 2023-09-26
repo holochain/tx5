@@ -1,5 +1,8 @@
 name: Static Analysis
 on:
+  merge_group:
+    branches:
+      - main
   push:
     branches:
       - main

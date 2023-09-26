@@ -111,7 +111,29 @@ func (c customLoggerFactory) NewLogger(subsystem string) logging.LeveledLogger {
 	return customLogger{}
 }
 
-var webrtc_api *webrtc.API
+var webrtcApiMu sync.Mutex
+var webrtcApi *webrtc.API
+
+func setWebrtcApi(api *webrtc.API) {
+	if api == nil {
+		panic("CannotSetWebrtcApiToNil")
+	}
+	webrtcApiMu.Lock()
+	defer webrtcApiMu.Unlock()
+	if webrtcApi != nil {
+		panic("CannotSetWebrtcApiMultipleTimes")
+	}
+	webrtcApi = api
+}
+
+func getWebrtcApi() *webrtc.API {
+	webrtcApiMu.Lock()
+	defer webrtcApiMu.Unlock()
+	if webrtcApi == nil {
+		panic("WebrtcApiIsUnset:CallTx5Init")
+	}
+	return webrtcApi
+}
 
 func MessageCbInvoke(
 	cb MessageCb,
@@ -205,7 +227,7 @@ func CallTx5Init(
 
 	setting_engine.SetEphemeralUDPPortRange(port_min, port_max)
 
-	webrtc_api = webrtc.NewAPI(webrtc.WithSettingEngine(setting_engine))
+	setWebrtcApi(webrtc.NewAPI(webrtc.WithSettingEngine(setting_engine)))
 
 	MessageCbInvoke(
 		response_cb,

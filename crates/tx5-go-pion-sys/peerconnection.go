@@ -87,11 +87,9 @@ func CallPeerConAlloc(
 		config_parsed.Certificates = append(config_parsed.Certificates, *cert)
 	}
 
-	if webrtc_api == nil {
-		panic("Please Call Tx5Init")
-	}
+	webrtcApi := getWebrtcApi()
 
-	con, err := webrtc_api.NewPeerConnection(config_parsed)
+	con, err := webrtcApi.NewPeerConnection(config_parsed)
 	if err != nil {
 		panic(err)
 	}

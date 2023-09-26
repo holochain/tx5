@@ -16,6 +16,11 @@ const (
 	// - msg slot_c: utf8 info len
 	TyOnTrace UintPtrT = 0xfffe
 
+	// Init MUST be called EXACTLY once before a peer con is created.
+	// - allowed contexts: Call, Response
+	// - msg slot_a: config buffer id
+	TyTx5Init UintPtrT = 0x7001
+
 	// Request a go buffer be created / giving access to said buffer in resp.
 	// - allowed contexts: Call, Response
 	// - msg slot_a: buffer id

@@ -361,6 +361,19 @@ impl Api {
         );
     }
 
+    /// Initialize the library with some optional configuration.
+    /// You MUST call this exactly ONCE before opening any peer connections.
+    #[inline]
+    pub unsafe fn tx5_init(
+        &self,
+        config_buf_id: BufferId,
+    ) -> Result<PeerConId> {
+        self.call(TY_TX_5_INIT, config_buf_id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
+    }
+
     /// Create a new buffer in go memory with given length,
     /// access the buffer's memory in the callback.
     #[inline]

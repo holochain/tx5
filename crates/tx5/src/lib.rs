@@ -40,7 +40,7 @@ pub mod deps {
 use deps::{serde, serde_json};
 
 use tx5_core::Uniq;
-pub use tx5_core::{Error, ErrorExt, Id, Result, Tx5Url};
+pub use tx5_core::{Error, ErrorExt, Id, Result, Tx5InitConfig, Tx5Url};
 
 pub mod actor;
 

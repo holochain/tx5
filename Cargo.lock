@@ -3860,10 +3860,12 @@ dependencies = [
 name = "tx5-go-pion"
 version = "0.0.2-alpha"
 dependencies = [
+ "futures",
  "parking_lot",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "tx5-core",
  "tx5-go-pion-sys",
  "tx5-go-pion-turn",
  "url",

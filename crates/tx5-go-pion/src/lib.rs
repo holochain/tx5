@@ -25,25 +25,35 @@ macro_rules! r2id {
 
 pub use tx5_core::Tx5InitConfig;
 
-async fn tx5_init() -> Result<()> {
-    static ALREADY_INIT: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
-
-    let already_init =
-        ALREADY_INIT.swap(true, std::sync::atomic::Ordering::SeqCst);
-
-    if !already_init {
-        tokio::task::spawn_blocking(move || unsafe {
+#[allow(clippy::type_complexity)]
+async fn tx5_init() -> std::result::Result<(), String> {
+    static SHARED: once_cell::sync::Lazy<
+        futures::future::Shared<
+            std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = std::result::Result<(), String>,
+                        >
+                        + 'static
+                        + Send,
+                >,
+            >,
+        >,
+    > = once_cell::sync::Lazy::new(|| {
+        futures::FutureExt::shared(Box::pin(async move {
             let mut config = GoBufRef::json(Tx5InitConfig::get());
-            let config = config.as_mut_ref()?;
+            let config = config.as_mut_ref().map_err(|e| format!("{e:?}"))?;
             let config = config.0;
-            tx5_go_pion_sys::API.tx5_init(config)?;
-            Result::Ok(())
-        })
-        .await??;
-    }
+            unsafe {
+                tx5_go_pion_sys::API
+                    .tx5_init(config)
+                    .map_err(|e| format!("{e:?}"))?;
+            }
+            <std::result::Result<(), String>>::Ok(())
+        }))
+    });
 
-    Ok(())
+    SHARED.clone().await
 }
 
 use deps::*;

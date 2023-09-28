@@ -113,7 +113,7 @@ impl PeerConnection {
         B: Into<GoBufRef<'a>>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
-        tx5_init().await?;
+        tx5_init().await.map_err(Error::err)?;
         init_evt_manager();
         r2id!(config);
         let cb: PeerConEvtCb = Arc::new(cb);

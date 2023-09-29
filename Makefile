@@ -1,6 +1,6 @@
 # tx5 Makefile
 
-.PHONY: all publish test static docs tools tool_rust tool_fmt tool_readme
+.PHONY: all publish-all publish bump test static docs tools tool_rust tool_fmt tool_readme
 
 SHELL = /usr/bin/env sh -eu
 
@@ -65,6 +65,13 @@ publish:
 	cargo publish --manifest-path $${MANIFEST}; \
 	git tag -a "$(crate)-$${VER}" -m "$(crate)-$${VER}"; \
 	git push --tags;
+
+bump:
+	@if [ "$(ver)x" = "x" ]; then \
+		echo "USAGE: make bump ver=0.0.2-alpha"; \
+		exit 1; \
+	fi
+	sed -i 's/^\(tx5[^=]*= { \|\)version = "[^"]*"/\1version = "$(ver)"/g' $$(find . -name Cargo.toml)
 
 test: static tools
 	cargo build --all-targets

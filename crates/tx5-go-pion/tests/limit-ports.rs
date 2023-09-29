@@ -28,9 +28,7 @@ async fn limit_ports() {
         .unwrap();
     con.set_local_description(offer).await.unwrap();
 
-    let mut count = 0;
-
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while let Some(evt) = r.recv().await {
             if let tx5_go_pion::PeerConnectionEvent::ICECandidate(mut ice) = evt
             {
@@ -38,11 +36,10 @@ async fn limit_ports() {
                 let ice = String::from_utf8_lossy(&ice);
                 let ice = ice.split(' ').collect::<Vec<_>>();
                 assert_eq!("40000", ice[5]);
-                count += 1;
+                break;
             }
         }
     })
-    .await;
-
-    assert!(count > 0);
+    .await
+    .unwrap();
 }

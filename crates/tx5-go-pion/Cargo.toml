@@ -11,13 +11,15 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
-tx5-go-pion-sys = { workspace = true }
+futures = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = [ "rt" ] }
+tx5-go-pion-sys = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+tx5-core = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing-subscriber = { workspace = true }
 tx5-go-pion-turn = { workspace = true }

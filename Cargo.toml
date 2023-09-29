@@ -10,6 +10,7 @@ members = [
   "crates/tx5-demo",
   "crates/tx5-go-pion-turn",
 ]
+resolver = "2"
 
 [profile.release]
 strip = true

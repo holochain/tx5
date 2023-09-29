@@ -37,6 +37,7 @@ import "C"
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"unsafe"
@@ -110,12 +111,28 @@ func (c customLoggerFactory) NewLogger(subsystem string) logging.LeveledLogger {
 	return customLogger{}
 }
 
-var webrtc_api *webrtc.API
+var webrtcApiMu sync.Mutex
+var webrtcApi *webrtc.API
 
-func init() {
-	webrtc_api = webrtc.NewAPI(webrtc.WithSettingEngine(webrtc.SettingEngine{
-		LoggerFactory: customLoggerFactory{},
-	}))
+func setWebrtcApi(api *webrtc.API) {
+	if api == nil {
+		panic("CannotSetWebrtcApiToNil")
+	}
+	webrtcApiMu.Lock()
+	defer webrtcApiMu.Unlock()
+	if webrtcApi != nil {
+		panic("CannotSetWebrtcApiMultipleTimes")
+	}
+	webrtcApi = api
+}
+
+func getWebrtcApi() *webrtc.API {
+	webrtcApiMu.Lock()
+	defer webrtcApiMu.Unlock()
+	if webrtcApi == nil {
+		panic("WebrtcApiIsUnset:CallTx5Init")
+	}
+	return webrtcApi
 }
 
 func MessageCbInvoke(
@@ -164,6 +181,62 @@ func EmitEvent(
 		slot_b,
 		slot_c,
 		slot_d,
+	)
+}
+
+type Tx5InitConfig struct {
+	EphemeralUdpPortMin *uint16 `json:"ephemeralUdpPortMin,omitempty"`
+	EphemeralUdpPortMax *uint16 `json:"ephemeralUdpPortMax,omitempty"`
+}
+
+// Initialize the library with some optional configuration.
+// You MUST call this exactly ONCE before opening any peer connections.
+func CallTx5Init(
+	config_buf_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	buf := BufferFromPtr(config_buf_id)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
+
+	var tmpConfig Tx5InitConfig
+	if err := json.Unmarshal(buf.buf.Bytes(), &tmpConfig); err != nil {
+		errStr := fmt.Sprintf("%s: %s", err, buf.buf.Bytes())
+		panic(errStr)
+	}
+
+	setting_engine := webrtc.SettingEngine{
+		LoggerFactory: customLoggerFactory{},
+	}
+
+	var port_min uint16 = 1
+	var port_max uint16 = 65535
+
+	if tmpConfig.EphemeralUdpPortMin != nil {
+		port_min = *tmpConfig.EphemeralUdpPortMin
+	}
+
+	if tmpConfig.EphemeralUdpPortMax != nil {
+		port_max = *tmpConfig.EphemeralUdpPortMax
+	}
+
+	setting_engine.SetEphemeralUDPPortRange(port_min, port_max)
+
+	setWebrtcApi(webrtc.NewAPI(webrtc.WithSettingEngine(setting_engine)))
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyTx5Init,
+		0,
+		0,
+		0,
+		0,
 	)
 }
 
@@ -297,6 +370,8 @@ func callInner(
 	}
 
 	switch call_type {
+	case TyTx5Init:
+		CallTx5Init(slot_a, response_cb, response_usr)
 	case TyBufferAlloc:
 		CallBufferAlloc(response_cb, response_usr)
 	case TyBufferAccess:

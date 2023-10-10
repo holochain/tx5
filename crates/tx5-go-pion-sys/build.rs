@@ -167,6 +167,7 @@ fn go_build() {
             .arg("build")
             .arg("-ldflags") // strip debug symbols
             .arg("-s -w") // strip debug symbols
+            .arg("-buildvcs=false") // disable version control stamping binary
             .arg("-o")
             .arg(lib_path.clone())
             .arg("-mod=vendor")

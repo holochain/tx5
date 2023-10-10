@@ -35,6 +35,7 @@ enum ProtoVer {
 }
 
 /// The main entrypoint tx5-signal-server logic task.
+#[allow(deprecated)]
 pub fn exec_tx5_signal_srv(
     config: Config,
 ) -> Result<(ServerDriver, Vec<SocketAddr>, Vec<std::io::Error>)> {

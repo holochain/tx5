@@ -1,4 +1,159 @@
 //! Connect to a signal server, and run diagnostics on the TURN info.
+//!
+//! ## Results if run vs xirsys setup:
+//!
+//! ```text
+//! SIG_URL: ws://127.0.0.1:8443/
+//! SIG_ICE: PeerConnectionConfig {
+//!     ice_servers: [
+//!         IceServer {
+//!             urls: [
+//!                 "stun:ws-turn6.xirsys.com:80",
+//!                 "turn:ws-turn6.xirsys.com:80",
+//!                 "turn:ws-turn6.xirsys.com:80?transport=tcp",
+//!                 "turns:ws-turn6.xirsys.com:443?transport=tcp",
+//!             ],
+//!             username: Some(
+//!                 "<snip>",
+//!             ),
+//!             credential: Some(
+//!                 "<snip>",
+//!             ),
+//!         },
+//!     ],
+//! }
+//! TURN_CHECK: TurnCheck {
+//!     host: "ws-turn6.xirsys.com",
+//!     user: "<snip>",
+//!     cred: "<snip>",
+//!     stun_port: 80,
+//!     udp_port: 80,
+//!     tcp_plain_port: 80,
+//!     tcp_tls_port: 443,
+//! }
+//! CHECK_STUN: PeerConnectionConfig { ice_servers: [IceServer { urls: ["stun:ws-turn6.xirsys.com:80"], username: Some("<snip>"), credential: Some("<snip>") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_STUN
+//! CHECK_UDP: PeerConnectionConfig { ice_servers: [IceServer { urls: ["turn:ws-turn6.xirsys.com:80"], username: Some("<snip>"), credential: Some("<snip>") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//!     (
+//!         "relay",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_UDP
+//! CHECK_TCP_PLAIN: PeerConnectionConfig { ice_servers: [IceServer { urls: ["turn:ws-turn6.xirsys.com:80?transport=tcp"], username: Some("<snip>"), credential: Some("<snip>") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//!     (
+//!         "relay",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_TCP_PLAIN
+//! CHECK_TCP_TLS: PeerConnectionConfig { ice_servers: [IceServer { urls: ["turns:ws-turn6.xirsys.com:80?transport=tcp"], username: Some("<snip>"), credential: Some("<snip>") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//!     (
+//!         "relay",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_TCP_TLS
+//! ```
+//!
+//! Results if run vs holochain setup:
+//!
+//! ```text
+//! SIG_URL: wss://signal.holo.host/
+//! SIG_ICE: PeerConnectionConfig {
+//!     ice_servers: [
+//!         IceServer {
+//!             urls: [
+//!                 "turn:turn.holo.host:443",
+//!             ],
+//!             username: Some(
+//!                 "test",
+//!             ),
+//!             credential: Some(
+//!                 "test",
+//!             ),
+//!         },
+//!     ],
+//! }
+//! WARN: stun not found (e.g. stun:my.stun:80) - this could be okay if your turn server is handling stun traffic
+//! WARN: udp plain port is 443, recommended to be 80
+//! WARN: tcp plain not found (e.g. turn:my.turn:80?transport=tcp) - this could be okay if you want to jump straight to tcp tls
+//! ERROR: tpc tls not found (e.g. turns:my.turn:443?transport=tcp) - this is the most firewall pass-able transport and is recommended to be enabled
+//! TURN_CHECK: TurnCheck {
+//!     host: "turn.holo.host",
+//!     user: "test",
+//!     cred: "test",
+//!     stun_port: 443,
+//!     udp_port: 443,
+//!     tcp_plain_port: 443,
+//!     tcp_tls_port: 443,
+//! }
+//! CHECK_STUN: PeerConnectionConfig { ice_servers: [IceServer { urls: ["stun:turn.holo.host:443"], username: Some("test"), credential: Some("test") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_STUN
+//! CHECK_UDP: PeerConnectionConfig { ice_servers: [IceServer { urls: ["turn:turn.holo.host:443"], username: Some("test"), credential: Some("test") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//!     (
+//!         "relay",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_UDP
+//! CHECK_TCP_PLAIN: PeerConnectionConfig { ice_servers: [IceServer { urls: ["turn:turn.holo.host:443?transport=tcp"], username: Some("test"), credential: Some("test") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//!     (
+//!         "relay",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_TCP_PLAIN
+//! CHECK_TCP_TLS: PeerConnectionConfig { ice_servers: [IceServer { urls: ["turns:turn.holo.host:443?transport=tcp"], username: Some("test"), credential: Some("test") }] }
+//! ICE: [
+//!     (
+//!         "srflx",
+//!         "<snip>",
+//!     ),
+//!     (
+//!         "relay",
+//!         "<snip>",
+//!     ),
+//! ]
+//! OKAY: CHECK_TCP_TLS
+//! ```
 
 fn init_tracing() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()

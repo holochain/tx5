@@ -102,11 +102,18 @@ fn check_ice(ice: &tx5_go_pion::PeerConnectionConfig) -> TurnCheck {
                     tcp_tls_port: port,
                 });
             } else {
-                let r = turn_check.as_ref().unwrap();
+                let r = turn_check.as_mut().unwrap();
                 if r.host != host || &r.user != user || &r.cred != cred {
                     panic!(
                         "doctor doesn't support multiple host/user/cred yet"
                     );
+                }
+                match (scheme.as_str(), transport.as_str()) {
+                    ("stun", _) => r.stun_port = port,
+                    ("turn", "udp") => r.udp_port = port,
+                    ("turn", "tcp") => r.tcp_plain_port = port,
+                    ("turns", "tcp") => r.tcp_tls_port = port,
+                    _ => (),
                 }
             }
         }

@@ -392,11 +392,13 @@ async fn preflight_small() {
 
     match ep_rcv1.recv().await {
         Some(Ok(EpEvt::Connected { .. })) => (),
+        Some(Ok(EpEvt::Disconnected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
     }
 
     match ep_rcv2.recv().await {
         Some(Ok(EpEvt::Connected { .. })) => (),
+        Some(Ok(EpEvt::Disconnected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
     }
 
@@ -467,6 +469,7 @@ async fn preflight_huge() {
                         let _ = s1.send(());
                     }
                 }
+                Some(Ok(EpEvt::Disconnected { .. })) => (),
                 oth => panic!("unexpected: {:?}", oth),
             }
         }
@@ -490,6 +493,7 @@ async fn preflight_huge() {
         loop {
             match ep_rcv2.recv().await {
                 Some(Ok(EpEvt::Connected { .. })) => check(),
+                Some(Ok(EpEvt::Disconnected { .. })) => (),
                 Some(Ok(EpEvt::Data { .. })) => check(),
                 oth => panic!("unexpected: {:?}", oth),
             }

@@ -19,7 +19,7 @@ jobs:
         ]
         toolchain: [
           stable,
-          1.66.1
+          1.71.1
         ]
     steps:
       - name: Checkout

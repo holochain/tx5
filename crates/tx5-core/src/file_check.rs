@@ -18,12 +18,18 @@ impl FileCheck {
 }
 
 #[cfg(not(target_os = "android"))]
-fn tmp_persist<F, P: AsRef<std::path::Path>>(tmp: tempfile::NamedTempFile<F>, p: P) -> std::result::Result<F, tempfile::PersistError<F>> {
+fn tmp_persist<F, P: AsRef<std::path::Path>>(
+    tmp: tempfile::NamedTempFile<F>,
+    p: P,
+) -> std::result::Result<F, tempfile::PersistError<F>> {
     tmp.persist_noclobber(p)
 }
 
 #[cfg(target_os = "android")]
-fn tmp_persist<F, P: AsRef<std::path::Path>>(tmp: tempfile::NamedTempFile<F>, p: P) -> std::result::Result<F, tempfile::PersistError<F>> {
+fn tmp_persist<F, P: AsRef<std::path::Path>>(
+    tmp: tempfile::NamedTempFile<F>,
+    p: P,
+) -> std::result::Result<F, tempfile::PersistError<F>> {
     // this is even less atomic...
     if std::fs::metadata(&p).is_ok() {
         // file might exist, error out

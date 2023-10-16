@@ -11,9 +11,9 @@ fn init_tracing() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
+#[allow(dead_code)]
 struct Test {
     shutdown: bool,
-    influxive: Arc<influxive_child_svc::InfluxiveChildSvc>,
     cli_a: Tx5Url,
     id_a: Id,
     cli_b: Tx5Url,
@@ -37,21 +37,6 @@ impl Drop for Test {
 impl Test {
     pub async fn new(as_a: bool) -> Self {
         init_tracing();
-
-        let tmp = tempfile::tempdir().unwrap();
-
-        let (influxive, meter_provider) =
-            influxive::influxive_child_process_meter_provider(
-                influxive::InfluxiveChildSvcConfig::default()
-                    .with_database_path(Some(tmp.path().to_owned())),
-                influxive::InfluxiveMeterProviderConfig::default()
-                    .with_observable_report_interval(Some(
-                        std::time::Duration::from_millis(1),
-                    )),
-            )
-            .await
-            .unwrap();
-        opentelemetry_api::global::set_meter_provider(meter_provider);
 
         let sig: Tx5Url = Tx5Url::new("wss://s").unwrap();
         let cli_a: Tx5Url = Tx5Url::new(
@@ -109,7 +94,6 @@ impl Test {
 
         Self {
             shutdown: false,
-            influxive,
             cli_a,
             id_a,
             cli_b,
@@ -123,20 +107,6 @@ impl Test {
 
     pub async fn shutdown(mut self) {
         self.shutdown = true;
-
-        let result = self
-            .influxive
-            .query(
-                r#"from(bucket: "influxive")
-    |> range(start: -15m, stop: now())
-    "#,
-            )
-            .await
-            .unwrap();
-
-        println!("{result}");
-
-        self.influxive.shutdown();
 
         self.state.close(Error::id("TestShutdown"));
 
@@ -169,6 +139,8 @@ impl Test {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn extended_outgoing() {
+    better_panic::install();
+
     let mut test = Test::new(true).await;
 
     // -- send data to a "peer" (causes connecting to that peer) -- //
@@ -327,6 +299,8 @@ async fn extended_outgoing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn short_incoming() {
+    better_panic::install();
+
     let mut test = Test::new(true).await;
 
     // -- receive an incoming offer -- //
@@ -391,6 +365,8 @@ async fn short_incoming() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn polite_in_offer() {
+    better_panic::install();
+
     let mut test = Test::new(true).await;
 
     // -- send data to a "peer" (causes connecting to that peer) -- //
@@ -554,6 +530,8 @@ async fn polite_in_offer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn impolite_in_offer() {
+    better_panic::install();
+
     let mut test = Test::new(false).await;
 
     // -- send data to a "peer" (causes connecting to that peer) -- //

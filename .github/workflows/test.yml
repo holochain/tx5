@@ -46,4 +46,4 @@ jobs:
       - name: Cargo Test
         env:
           RUST_BACKTRACE: 1
-        run: cargo test -- --test-threads 1 --nocapture
+        run: cargo test -- --nocapture

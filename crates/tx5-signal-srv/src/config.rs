@@ -6,7 +6,8 @@ use crate::*;
 #[clap(
     name = "tx5-signal-srv",
     version,
-    about = "Holochain Webrtc Signal Server"
+    about = "Holochain Webrtc Signal Server",
+    max_term_width = 80
 )]
 #[non_exhaustive]
 pub struct Opt {

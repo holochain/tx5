@@ -17,6 +17,30 @@ impl FileCheck {
     }
 }
 
+#[cfg(not(target_os = "android"))]
+fn tmp_persist<F, P: AsRef<std::path::Path>>(
+    tmp: tempfile::NamedTempFile<F>,
+    p: P,
+) -> std::result::Result<F, tempfile::PersistError<F>> {
+    tmp.persist_noclobber(p)
+}
+
+#[cfg(target_os = "android")]
+fn tmp_persist<F, P: AsRef<std::path::Path>>(
+    tmp: tempfile::NamedTempFile<F>,
+    p: P,
+) -> std::result::Result<F, tempfile::PersistError<F>> {
+    // this is even less atomic...
+    if std::fs::metadata(&p).is_ok() {
+        // file might exist, error out
+        return Err(tempfile::PersistError {
+            error: Error::id("FileExists"),
+            file: tmp,
+        });
+    }
+    tmp.persist(p)
+}
+
 /// Write a file if needed, verify the file, and return a handle to that file.
 pub fn file_check(
     file_data: &[u8],
@@ -42,7 +66,7 @@ pub fn file_check(
     // NOTE: This is NOT atomic, nor secure, but being able to validate the
     //       file hash post-op mitigates this a bit. And we can let the os
     //       clean up a dangling tmp file if it failed to unlink.
-    match tmp.persist_noclobber(&pref_path) {
+    match tmp_persist(tmp, &pref_path) {
         Ok(mut file) => {
             set_perms(&mut file)?;
 

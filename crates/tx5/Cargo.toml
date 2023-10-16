@@ -39,6 +39,8 @@ url = { workspace = true }
 webrtc = { workspace = true, optional = true }
 
 [dev-dependencies]
+backtrace = { workspace = true }
+better-panic = { workspace = true }
 criterion = { workspace = true }
 influxive-child-svc = { workspace = true }
 influxive = { workspace = true }

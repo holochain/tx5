@@ -36,3 +36,14 @@ Inflector = { workspace = true }
 once_cell = { workspace = true }
 sha2 = { workspace = true }
 zip = { workspace = true }
+
+[features]
+# only one of force_dynamic_link or force_static_link may be active at a time
+# forces the code to run through the dynamic linking process
+# even if that may not be supported by the target platform
+force_dynamic_link = []
+
+# only one of force_dynamic_link or force_static_link may be active at a time
+# forces the code to run through the static linking process
+# even if that may not be supported by the target platform
+force_static_link = []

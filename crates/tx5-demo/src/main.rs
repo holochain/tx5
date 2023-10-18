@@ -3,30 +3,33 @@
 #![allow(clippy::needless_range_loop)]
 //! tx5-demo
 
+const DASH_TX5: &[u8] = include_bytes!("influxive-dashboards/tx5.json");
+
+use bytes::Buf;
 use clap::Parser;
-use std::collections::hash_map::Entry::*;
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
-use tx5::{BytesBufExt, Error, Id, Result, Tx5Url};
+use std::collections::HashMap;
+use tx5::{Ep, EpEvt, Result, Tx5Url};
 
 #[derive(Debug, Parser)]
 #[clap(name = "tx5-demo", version, about = "Holochain Tx5 WebRTC Demo Cli")]
-pub struct Opt {
-    /// Use a custom shoutout. Must be <= 16 utf8 bytes.
-    #[clap(short, long, default_value = "Holochain rocks!")]
-    pub shoutout: String,
-
-    /// If specified, tracing logs will be written to the given file.
+struct Args {
+    /// Tracing logs will be written to the given file.
+    /// Any existing file will be deleted first.
     /// You can use the environment variable `RUST_LOG` to control
-    /// and filter the output. Defaults to INFO level.
+    /// and filter the output. Defaults to INFO level if specified.
     #[clap(short, long)]
-    pub trace_file: Option<String>,
+    pub trace_file: Option<std::path::PathBuf>,
 
-    /// Specify a display name. Must be <= 16 utf8 bytes.
-    pub name: String,
+    /// This node's address will be written to the given file.
+    /// Any existing data will be truncated during write.
+    #[clap(short, long)]
+    pub addr_file: Option<std::path::PathBuf>,
 
     /// Signal server URL.
     pub sig_url: String,
+
+    /// List of bootstrap peer client urls to connnect.
+    pub peer_urls: Vec<String>,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -37,28 +40,236 @@ async fn main() {
     }
 }
 
-enum TermEvt {
-    Resize { x: u16, y: u16 },
-    Backspace,
-    Enter,
-    Input(char),
-    Output(String),
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+enum Message {
+    Hello { known_peers: Vec<String> },
+    Big(String),
+}
+
+impl Message {
+    pub fn encode(&self) -> Result<bytes::Bytes> {
+        let b = serde_json::to_vec(self)?;
+        let mut o = bytes::BytesMut::with_capacity(b.len());
+        o.extend_from_slice(&b);
+        Ok(o.freeze())
+    }
+
+    pub fn decode(data: bytes::Bytes) -> Result<Self> {
+        Ok(serde_json::from_slice(&data)?)
+    }
+
+    pub fn hello(known_peers: &HashMap<Tx5Url, PeerInfo>) -> Self {
+        Message::Hello {
+            known_peers: known_peers.keys().map(|u| u.to_string()).collect(),
+        }
+    }
+
+    pub fn big() -> Self {
+        use rand::Rng;
+        let mut big = vec![0; (1024 * 1024 * 15 * 3) / 4]; // 15 MiB but base64
+        rand::thread_rng().fill(&mut big[..]);
+        let big = base64::encode(&big);
+        Message::Big(big)
+    }
+}
+
+enum Lvl {
+    Info,
+    Error,
+}
+
+macro_rules! d {
+    (info, $tag:literal) => {
+        d!(@ (Lvl::Info) $tag "")
+    };
+    (info, $tag:literal, $($arg:tt)*) => {
+        d!(@ (Lvl::Info) $tag format!($($arg)*))
+    };
+    (error, $tag:literal) => {
+        d!(@ (Lvl::Error) $tag "")
+    };
+    (error, $tag:literal, $($arg:tt)*) => {
+        d!(@ (Lvl::Error) $tag format!($($arg)*))
+    };
+    (@ ($lvl:path) $tag:literal $log:expr) => {{
+        match $lvl {
+            Lvl::Info => {
+                tracing::info!("# {} # {} #", $tag, $log);
+                println!(
+                    "# tx5-demo # INFO # {} # {}:{} # {} #",
+                    $tag,
+                    file!(),
+                    line!(),
+                    $log,
+                );
+            }
+            Lvl::Error => {
+                tracing::error!("# {} # {} #", $tag, $log);
+                println!(
+                    "# tx5-demo # ERROR # {} # {}:{} # {} #",
+                    $tag,
+                    file!(),
+                    line!(),
+                    $log,
+                );
+            }
+        }
+    }};
+}
+
+struct PeerInfo {
+    last_seen: std::time::Instant,
+    last_sent: std::time::Instant,
+}
+
+impl std::fmt::Debug for PeerInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PeerInfo")
+            .field("last_seen", &self.last_seen.elapsed().as_secs_f64())
+            .field("last_sent", &self.last_sent.elapsed().as_secs_f64())
+            .finish()
+    }
+}
+
+impl PeerInfo {
+    pub fn new() -> Self {
+        Self {
+            last_seen: std::time::Instant::now(),
+            last_sent: std::time::Instant::now(),
+        }
+    }
+}
+
+struct Node {
+    this_url: Tx5Url,
+    known_peers: HashMap<Tx5Url, PeerInfo>,
+}
+
+impl std::fmt::Debug for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut dbg = f.debug_struct("Node");
+        dbg.field("this_id", &self.this_url.id().unwrap());
+        for (url, i) in self.known_peers.iter() {
+            dbg.field(&format!("{:?}", url.id().unwrap()), i);
+        }
+        dbg.finish()
+    }
+}
+
+impl Node {
+    pub fn new(this_url: Tx5Url, peer_urls: Vec<String>) -> Self {
+        let known_peers = peer_urls
+            .into_iter()
+            .map(|u| (Tx5Url::new(u).unwrap(), PeerInfo::new()))
+            .collect::<HashMap<_, _>>();
+        Self {
+            this_url,
+            known_peers,
+        }
+    }
+
+    pub fn add_known_peer(&mut self, url: Tx5Url) {
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.known_peers.entry(url.clone())
+        {
+            e.insert(PeerInfo::new());
+            d!(info, "DISCOVER", "{url}");
+        }
+    }
+
+    pub fn send(&self, ep: &Ep, rem_url: &Tx5Url, data: bytes::Bytes) {
+        let ep = ep.clone();
+        let rem_url = rem_url.clone();
+        tokio::task::spawn(async move {
+            let len = data.remaining();
+            let id = rem_url.id().unwrap();
+            if let Err(err) = ep.send(rem_url, data).await {
+                d!(
+                    error,
+                    "SEND_ERROR",
+                    "len: {len}, dest: {id:?}, err: {err:?}"
+                );
+            } else {
+                d!(info, "SEND_OK", "len: {len}, dest: {id:?}");
+            }
+        });
+    }
+
+    pub fn broadcast_hello(&self, ep: &Ep) -> Result<()> {
+        let hello = Message::hello(&self.known_peers).encode()?;
+        for url in self.known_peers.keys() {
+            if url == &self.this_url {
+                continue;
+            }
+            self.send(ep, url, hello.clone());
+        }
+        Ok(())
+    }
+
+    pub fn recv_hello(&mut self, url: Tx5Url) -> Result<()> {
+        self.known_peers.get_mut(&url).unwrap().last_seen =
+            std::time::Instant::now();
+        d!(info, "RECV_HELLO", "{:?}", url.id().unwrap());
+        Ok(())
+    }
+
+    pub fn five_sec(&mut self, ep: &Ep) -> Result<()> {
+        {
+            let this = self.known_peers.get_mut(&self.this_url).unwrap();
+            this.last_seen = std::time::Instant::now();
+            this.last_sent = std::time::Instant::now();
+        }
+
+        let mut v = self
+            .known_peers
+            .iter()
+            .map(|(url, PeerInfo { last_sent, .. })| (url.clone(), last_sent))
+            .collect::<Vec<_>>();
+        v.sort_by(|a, b| a.1.cmp(b.1));
+        let url = v.remove(0).0;
+        if url == self.this_url {
+            return Ok(());
+        }
+        self.known_peers.get_mut(&url).unwrap().last_sent =
+            std::time::Instant::now();
+        let hello = Message::hello(&self.known_peers).encode()?;
+        self.send(ep, &url, hello);
+
+        Ok(())
+    }
+
+    pub fn thirty_sec(&mut self, ep: &Ep) -> Result<()> {
+        let mut v = Vec::new();
+
+        for peer in self.known_peers.keys() {
+            if peer != &self.this_url {
+                v.push(peer);
+            }
+        }
+
+        if v.is_empty() {
+            return Ok(());
+        }
+
+        rand::seq::SliceRandom::shuffle(&mut v[..], &mut rand::thread_rng());
+        let big = Message::big().encode()?;
+        self.send(ep, v.get(0).unwrap(), big);
+
+        Ok(())
+    }
 }
 
 async fn main_err() -> Result<()> {
-    let (t_send, mut t_recv) = tokio::sync::mpsc::unbounded_channel();
-    let _ = t_send.send(TermEvt::Backspace);
-
-    let Opt {
-        shoutout,
+    let Args {
         trace_file,
-        name,
+        addr_file,
         sig_url,
-    } = Opt::parse();
-
-    let mut _app_guard = None;
+        peer_urls,
+    } = Args::parse();
 
     if let Some(trace_file) = trace_file {
+        let _ = std::fs::remove_file(&trace_file);
+
         let trace_file = std::path::Path::new(&trace_file);
         let app = tracing_appender::rolling::never(
             trace_file
@@ -68,12 +279,10 @@ async fn main_err() -> Result<()> {
                 .file_name()
                 .expect("failed to get filename from trace_file"),
         );
-        let (app, g) =
+        let (app, _app_guard) =
             tracing_appender::non_blocking::NonBlockingBuilder::default()
                 .lossy(false)
                 .finish(app);
-
-        _app_guard = Some(g);
 
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(
@@ -89,499 +298,155 @@ async fn main_err() -> Result<()> {
             .init();
     }
 
-    if name.as_bytes().len() > 16 {
-        return Err(Error::id("NameTooLong"));
-    }
+    let tmp = tempfile::tempdir()?;
 
-    if shoutout.as_bytes().len() > 16 {
-        return Err(Error::id("ShoutoutTooLong"));
+    let (i, meter_provider) =
+        influxive::influxive_child_process_meter_provider(
+            influxive::InfluxiveChildSvcConfig::default()
+                .with_database_path(Some(tmp.path().to_owned())),
+            influxive::InfluxiveMeterProviderConfig::default(),
+        )
+        .await?;
+    if let Ok(cur) = i.list_dashboards().await {
+        if cur.contains("\"dashboards\": []") {
+            let _ = i.apply(DASH_TX5).await;
+        }
     }
+    opentelemetry_api::global::set_meter_provider(meter_provider);
+    d!(info, "METRICS", "{}", i.get_host());
+
     let sig_url = Tx5Url::new(sig_url)?;
 
-    tracing::info!(%name, %shoutout, %sig_url);
-
-    let shoutout = Arc::new(parking_lot::Mutex::new(shoutout));
-
     let (ep, mut evt) = tx5::Ep::new().await?;
+    let this_addr = ep.listen(sig_url.clone()).await?;
 
-    let addr = ep.listen(sig_url).await?;
-    let this_id = addr.id().ok_or_else(|| Error::id("NoId"))?;
+    let mut node = Node::new(this_addr.clone(), peer_urls);
 
-    tracing::info!(%addr);
+    node.add_known_peer(this_addr.clone());
 
-    let state = State::new(this_id, t_send.clone());
+    node.broadcast_hello(&ep)?;
 
-    // demo broadcast every 5 secs
+    if let Some(addr_file) = addr_file {
+        let mut addr_file = AddrFile::new(&addr_file).await?;
+        addr_file.write(&this_addr).await?;
+        drop(addr_file);
+    }
+
+    d!(info, "STARTED", "{this_addr} {node:?}");
+
+    enum Cmd {
+        FiveSec,
+        ThirtySec,
+        EpEvt(Result<EpEvt>),
+    }
+
+    let (cmd_s, mut cmd_r) = tokio::sync::mpsc::unbounded_channel();
+
     {
-        let ep = ep.clone();
+        let cmd_s = cmd_s.clone();
         tokio::task::spawn(async move {
             loop {
-                if ep.demo().is_err() {
-                    break;
-                }
-
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                if cmd_s.send(Cmd::FiveSec).is_err() {
+                    return;
+                }
             }
         });
     }
 
-    // event receiver
     {
-        let ep = ep.clone();
-        let state = state.clone();
+        let cmd_s = cmd_s.clone();
+        tokio::task::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if cmd_s.send(Cmd::ThirtySec).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+
+    {
+        let cmd_s = cmd_s.clone();
         tokio::task::spawn(async move {
             while let Some(evt) = evt.recv().await {
-                match evt {
-                    Err(err) => tracing::error!(?err),
-                    Ok(evt) => match evt {
-                        tx5::EpEvt::Connected { rem_cli_url: _ }
-                        | tx5::EpEvt::Disconnected { rem_cli_url: _ } => (),
-                        tx5::EpEvt::Data {
-                            rem_cli_url, data, ..
-                        } => {
-                            let data = data.to_vec().unwrap();
-                            if data.len() < 3 {
-                                continue;
-                            }
-                            if data[0] == 2 {
-                                state.recv(rem_cli_url);
-                                continue;
-                            }
-                            if data[0] != 1 {
-                                continue;
-                            }
-
-                            if data[1] != 0 {
-                                continue;
-                            }
-
-                            let mut idx = 2;
-                            for i in 2..data.len() {
-                                if data[i] == 0 {
-                                    idx = i;
-                                    break;
-                                }
-                            }
-
-                            let name = String::from_utf8_lossy(&data[2..idx])
-                                .to_string();
-                            let shoutout =
-                                String::from_utf8_lossy(&data[idx + 1..])
-                                    .to_string();
-
-                            state.handle(rem_cli_url.clone(), name, shoutout);
-
-                            // task this out so we don't backlog responses
-                            let ep = ep.clone();
-                            tokio::task::spawn(async move {
-                                if let Err(err) =
-                                    ep.send(rem_cli_url, &[2, 0][..]).await
-                                {
-                                    tracing::error!(?err);
-                                }
-                            });
-                        }
-                        tx5::EpEvt::Demo { rem_cli_url } => {
-                            state.demo(rem_cli_url);
-                        }
-                    },
+                if cmd_s.send(Cmd::EpEvt(evt)).is_err() {
+                    return;
                 }
             }
         });
     }
 
-    // outgoing connections
-    {
-        let name = name.clone();
-        let shoutout = shoutout.clone();
-        let state = state.clone();
-        let t_send = t_send.clone();
-        tokio::task::spawn(async move {
-            loop {
-                match state.get_next_send() {
-                    None => {
-                        tokio::time::sleep(std::time::Duration::from_secs(1))
-                            .await;
+    while let Some(cmd) = cmd_r.recv().await {
+        match cmd {
+            Cmd::FiveSec => {
+                node.five_sec(&ep)?;
+                d!(info, "FIVE_SEC", "{node:?}");
+                tracing::info!(
+                    "{}",
+                    serde_json::to_string(&ep.get_stats().await.unwrap())
+                        .unwrap()
+                );
+            }
+            Cmd::ThirtySec => node.thirty_sec(&ep)?,
+            Cmd::EpEvt(Err(err)) => panic!("{err:?}"),
+            Cmd::EpEvt(Ok(EpEvt::Connected { rem_cli_url })) => {
+                node.add_known_peer(rem_cli_url);
+            }
+            Cmd::EpEvt(Ok(EpEvt::Disconnected { rem_cli_url })) => {
+                d!(info, "DISCONNECTED", "{:?}", rem_cli_url.id().unwrap());
+            }
+            Cmd::EpEvt(Ok(EpEvt::Data {
+                rem_cli_url,
+                mut data,
+                ..
+            })) => {
+                node.add_known_peer(rem_cli_url.clone());
+                match Message::decode(data.copy_to_bytes(data.remaining())) {
+                    Err(err) => d!(error, "RECV_ERROR", "{err:?}"),
+                    Ok(Message::Hello { known_peers: kp }) => {
+                        for peer in kp {
+                            node.add_known_peer(Tx5Url::new(peer).unwrap());
+                        }
+                        node.recv_hello(rem_cli_url)?;
                     }
-                    Some(url) => {
-                        let so = shoutout.lock().clone();
-                        let mut one_msg = Vec::with_capacity(
-                            name.as_bytes().len() + so.as_bytes().len() + 3,
+                    Ok(Message::Big(d)) => {
+                        d!(
+                            info,
+                            "RECV_BIG",
+                            "len:{} {:?}",
+                            d.as_bytes().len(),
+                            rem_cli_url.id().unwrap()
                         );
-                        one_msg.push(1);
-                        one_msg.push(0);
-                        one_msg.extend_from_slice(name.as_bytes());
-                        one_msg.push(0);
-                        one_msg.extend_from_slice(so.as_bytes());
-                        if let Err(err) =
-                            ep.send(url.clone(), one_msg.as_slice()).await
-                        {
-                            let _ = t_send.send(TermEvt::Output(format!(
-                                "[ERR] ({:?}): {}",
-                                url.id().unwrap(),
-                                err,
-                            )));
-                            tracing::warn!(%url, ?err, "Send Error");
-                        }
                     }
                 }
             }
-        });
+            Cmd::EpEvt(_) => (),
+        }
     }
 
-    use std::io::Write;
-    let mut stdout = std::io::stdout();
-
-    crossterm::terminal::enable_raw_mode()?;
-    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
-    crossterm::execute!(
-        stdout,
-        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
-    )?;
-
-    let (mut term_x, mut term_y) = crossterm::terminal::size()?;
-
-    let res = tokio::select! {
-        r = async move {
-            tokio::task::spawn_blocking(move || {
-                loop {
-                    let evt = crossterm::event::read()?;
-                    match evt {
-                        crossterm::event::Event::Resize(x, y) => {
-                            if t_send.send(TermEvt::Resize { x, y }).is_err() {
-                                break;
-                            }
-                        }
-                        crossterm::event::Event::Key(crossterm::event::KeyEvent {
-                            code,
-                            modifiers,
-                            ..
-                        }) => {
-                            match code {
-                                crossterm::event::KeyCode::Esc => {
-                                    break;
-                                }
-                                crossterm::event::KeyCode::Enter => {
-                                    if t_send.send(TermEvt::Enter).is_err() {
-                                        break;
-                                    }
-                                }
-                                crossterm::event::KeyCode::Backspace => {
-                                    if t_send.send(TermEvt::Backspace).is_err() {
-                                        break;
-                                    }
-                                }
-                                crossterm::event::KeyCode::Char(c) => {
-                                    use crossterm::event::KeyModifiers;
-
-                                    if c == 'c' && modifiers.contains(KeyModifiers::CONTROL) {
-                                        break;
-                                    }
-
-                                    if c == 'd' && modifiers.contains(KeyModifiers::CONTROL) {
-                                        break;
-                                    }
-
-                                    if t_send.send(TermEvt::Input(c)).is_err() {
-                                        break;
-                                    }
-                                }
-                                _ => (),
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-                Ok(())
-            }).await?
-        } => r,
-        r = async move {
-            let mut input = String::with_capacity(16);
-
-            while let Some(evt) = t_recv.recv().await {
-                match evt {
-                    TermEvt::Resize { x, y } => {
-                        term_x = x;
-                        term_y = y;
-                    }
-                    TermEvt::Backspace => {
-                        input.pop();
-                    }
-                    TermEvt::Enter => {
-                        *shoutout.lock() = std::mem::take(&mut input);
-                    }
-                    TermEvt::Input(c) => {
-                        input.push(c);
-                        if input.as_bytes().len() > 16 {
-                            input.pop();
-                        }
-                    }
-                    TermEvt::Output(o) => {
-                        crossterm::queue!(
-                            stdout,
-                            crossterm::cursor::MoveTo(0, term_y - 5),
-                        )?;
-                        crossterm::queue!(
-                            stdout,
-                            crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
-                        )?;
-                        write!(stdout, "{o}")?;
-                        crossterm::queue!(
-                            stdout,
-                            crossterm::terminal::ScrollUp(1),
-                        )?;
-                    }
-                }
-
-                crossterm::queue!(
-                    stdout,
-                    crossterm::cursor::MoveTo(0, term_y - 5),
-                )?;
-                for _ in 0..term_x {
-                    write!(stdout, "-")?;
-                }
-                crossterm::queue!(
-                    stdout,
-                    crossterm::cursor::MoveTo(0, term_y - 4),
-                )?;
-                crossterm::queue!(
-                    stdout,
-                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
-                )?;
-                write!(stdout, "## Holochain Tx5 WebRTC Demo Cli ##")?;
-                crossterm::queue!(
-                    stdout,
-                    crossterm::cursor::MoveTo(0, term_y - 3),
-                )?;
-                crossterm::queue!(
-                    stdout,
-                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
-                )?;
-                write!(
-                    stdout,
-                    "this: {} ({:?}): {}",
-                    name,
-                    this_id,
-                    shoutout.lock(),
-                )?;
-                crossterm::queue!(
-                    stdout,
-                    crossterm::cursor::MoveTo(0, term_y - 2),
-                )?;
-                crossterm::queue!(
-                    stdout,
-                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
-                )?;
-                write!(
-                    stdout,
-                    "Active Connection Count: {}",
-                    state.count(),
-                )?;
-                crossterm::queue!(
-                    stdout,
-                    crossterm::cursor::MoveTo(0, term_y - 1),
-                )?;
-                crossterm::queue!(
-                    stdout,
-                    crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
-                )?;
-                write!(stdout, "new shoutout> {input}")?;
-
-                stdout.flush()?;
-            }
-            Ok(())
-        } => r,
-    };
-
-    crossterm::execute!(
-        std::io::stdout(),
-        crossterm::terminal::LeaveAlternateScreen,
-    )?;
-    crossterm::terminal::disable_raw_mode()?;
-
-    res
+    Ok(())
 }
 
-#[derive(Clone)]
-struct State(Arc<parking_lot::Mutex<StateInner>>);
+struct AddrFile(tokio::fs::File);
 
-impl State {
-    pub fn new(
-        this_id: Id,
-        t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
-    ) -> Self {
-        Self(Arc::new(parking_lot::Mutex::new(StateInner {
-            this_id,
-            map: HashMap::new(),
-            queue: VecDeque::new(),
-            t_send,
-        })))
+impl AddrFile {
+    pub async fn new(path: &std::path::Path) -> Result<Self> {
+        Ok(Self(tokio::fs::File::create(path).await?))
     }
 
-    pub fn count(&self) -> usize {
-        self.0.lock().map.len()
+    pub async fn write(&mut self, this_addr: &Tx5Url) -> Result<()> {
+        use tokio::io::AsyncSeekExt;
+        use tokio::io::AsyncWriteExt;
+
+        self.0.seek(std::io::SeekFrom::Start(0)).await?;
+        self.0.set_len(0).await?;
+
+        self.0
+            .write_all(<Tx5Url as AsRef<str>>::as_ref(this_addr).as_bytes())
+            .await?;
+        self.0.write_all(b"\n").await?;
+        self.0.sync_all().await?;
+        Ok(())
     }
-
-    pub fn get_next_send(&self) -> Option<Tx5Url> {
-        let mut inner = self.0.lock();
-
-        inner.map.retain(|_, item| {
-            item.last_recv.elapsed() <= std::time::Duration::from_secs(20)
-        });
-
-        let count = inner.queue.len();
-        for _ in 0..count {
-            let url = match inner.queue.pop_front() {
-                None => return None,
-                Some(url) => url,
-            };
-
-            let StateInner { map, queue, .. } = &mut *inner;
-
-            if let Some(item) = map.get_mut(&url) {
-                queue.push_back(url.clone());
-                if item.last_send.elapsed() > std::time::Duration::from_secs(5)
-                {
-                    item.last_send = std::time::Instant::now();
-                    return Some(url);
-                }
-            }
-        }
-
-        None
-    }
-
-    pub fn handle(&self, url: Tx5Url, name: String, shoutout: String) {
-        let id = match url.id() {
-            None => return,
-            Some(id) => id,
-        };
-
-        let mut inner = self.0.lock();
-
-        if id == inner.this_id {
-            return;
-        }
-
-        let StateInner {
-            map, queue, t_send, ..
-        } = &mut *inner;
-
-        match map.entry(url.clone()) {
-            Occupied(mut e) => {
-                let item = e.get_mut();
-                if item.name != Some(name.clone())
-                    || item.shoutout != Some(shoutout.clone())
-                {
-                    tracing::info!(%name, %shoutout, "Updated Info");
-                    let _ = t_send.send(TermEvt::Output(format!(
-                        "[UPD] {name} ({id:?}): {shoutout}",
-                    )));
-                    item.name = Some(name);
-                    item.shoutout = Some(shoutout);
-                }
-            }
-            Vacant(e) => {
-                tracing::info!(%name, %shoutout, "New Peer");
-                let _ = t_send.send(TermEvt::Output(format!(
-                    "[NEW] {name} ({id:?}): {shoutout}",
-                )));
-                let mut item = Item::new(url.clone(), t_send.clone());
-                item.name = Some(name);
-                item.shoutout = Some(shoutout);
-                e.insert(item);
-                queue.push_back(url);
-            }
-        }
-    }
-
-    pub fn recv(&self, url: Tx5Url) {
-        let id = match url.id() {
-            None => return,
-            Some(id) => id,
-        };
-
-        let mut inner = self.0.lock();
-
-        if id == inner.this_id {
-            return;
-        }
-
-        if let Some(item) = inner.map.get_mut(&url) {
-            item.last_recv = std::time::Instant::now();
-        }
-    }
-
-    pub fn demo(&self, url: Tx5Url) {
-        let id = match url.id() {
-            None => return,
-            Some(id) => id,
-        };
-
-        let mut inner = self.0.lock();
-
-        if id == inner.this_id {
-            return;
-        }
-
-        if inner.map.contains_key(&url) {
-            return;
-        }
-
-        let t_send = inner.t_send.clone();
-
-        let _ = t_send.send(TermEvt::Output(format!("[NEW] ({id:?})")));
-
-        tracing::info!(%url, "demo");
-        inner
-            .map
-            .insert(url.clone(), Item::new(url.clone(), t_send));
-        inner.queue.push_back(url);
-    }
-}
-
-struct Item {
-    url: Tx5Url,
-    last_send: std::time::Instant,
-    last_recv: std::time::Instant,
-    name: Option<String>,
-    shoutout: Option<String>,
-    t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
-}
-
-impl Drop for Item {
-    fn drop(&mut self) {
-        tracing::info!(url = %self.url, name = ?self.name, shoutout = ?self.shoutout, "Dropping Peer");
-        let name = self.name.as_deref().unwrap_or("");
-        let shoutout = self.shoutout.as_deref().unwrap_or("");
-        let _ = self.t_send.send(TermEvt::Output(format!(
-            "[DRP] {} ({:?}): {}",
-            name,
-            self.url.id().unwrap(),
-            shoutout,
-        )));
-    }
-}
-
-impl Item {
-    pub fn new(
-        url: Tx5Url,
-        t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
-    ) -> Self {
-        Self {
-            url,
-            last_send: std::time::Instant::now(),
-            last_recv: std::time::Instant::now(),
-            name: None,
-            shoutout: None,
-            t_send,
-        }
-    }
-}
-
-struct StateInner {
-    this_id: Id,
-    map: HashMap<Tx5Url, Item>,
-    queue: VecDeque<Tx5Url>,
-    t_send: tokio::sync::mpsc::UnboundedSender<TermEvt>,
 }

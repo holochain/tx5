@@ -1,10 +1,21 @@
 # tx5 Makefile
 
-.PHONY: all publish test static docs tools tool_rust tool_fmt tool_readme
+.PHONY: all publish-all publish bump test static docs tools tool_rust tool_fmt tool_readme
 
 SHELL = /usr/bin/env sh -eu
 
 all: test
+
+publish-all:
+	$(MAKE) publish crate=tx5-core
+	$(MAKE) publish crate=tx5-online
+	$(MAKE) publish crate=tx5-go-pion-turn
+	$(MAKE) publish crate=tx5-go-pion-sys
+	$(MAKE) publish crate=tx5-go-pion
+	$(MAKE) publish crate=tx5-signal-srv
+	$(MAKE) publish crate=tx5-signal
+	$(MAKE) publish crate=tx5
+	$(MAKE) publish crate=tx5-demo
 
 publish:
 	@case "$(crate)" in \
@@ -55,7 +66,15 @@ publish:
 	git tag -a "$(crate)-$${VER}" -m "$(crate)-$${VER}"; \
 	git push --tags;
 
+bump:
+	@if [ "$(ver)x" = "x" ]; then \
+		echo "USAGE: make bump ver=0.0.2-alpha"; \
+		exit 1; \
+	fi
+	sed -i 's/^\(tx5[^=]*= { \|\)version = "[^"]*"/\1version = "$(ver)"/g' $$(find . -name Cargo.toml)
+
 test: static tools
+	cargo build --all-targets
 	RUST_BACKTRACE=1 cargo test -- --nocapture
 
 static: docs tools
@@ -94,10 +113,7 @@ docs: tools
 tools: tool_rust tool_fmt tool_clippy tool_readme
 
 tool_rust:
-	@if rustup --version >/dev/null 2>&1; then \
-		echo "# Makefile # found rustup, setting override stable"; \
-		rustup override set stable; \
-	else \
+	@if ! rustup --version >/dev/null 2>&1; then \
 		echo "# Makefile # rustup not found, hopefully we're on stable"; \
 	fi;
 
@@ -132,7 +148,7 @@ tool_clippy: tool_rust
 tool_readme: tool_rust
 	@if ! (cargo rdme --version); \
 	then \
-		cargo install cargo-rdme; \
+		cargo install cargo-rdme --version 1.4.0 --locked; \
 	else \
 		echo "# Makefile # readme ok"; \
 	fi;

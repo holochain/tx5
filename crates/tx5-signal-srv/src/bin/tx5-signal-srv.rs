@@ -46,19 +46,14 @@ async fn main_err() -> Result<()> {
         ConfigPerOpt::ConfigLoaded(config) => config,
     };
 
-    let (addr, driver) = exec_tx5_signal_srv(config)?;
+    let (driver, addr_list, err_list) = exec_tx5_signal_srv(config)?;
 
-    let port = addr.port();
+    for err in err_list {
+        println!("# tx5-signal-srv ERR {err:?}");
+    }
 
-    for iface in get_if_addrs::get_if_addrs()? {
-        let ip = if iface.ip().is_ipv6() {
-            // TODO - re-enable ipv6 when we're binding to v6 ifaces
-            //format!("[{}]", iface.ip())
-            continue;
-        } else {
-            iface.ip().to_string()
-        };
-        println!("# tx5-signal-srv ADDR ws://{ip}:{port}");
+    for addr in addr_list {
+        println!("# tx5-signal-srv ADDR ws://{addr}");
     }
 
     println!("# tx5-signal-srv START");

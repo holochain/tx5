@@ -72,8 +72,27 @@ impl DataChannel {
         unsafe { API.data_chan_ready_state(self.0) }
     }
 
+    /// Set the buffered amount low threshold.
+    /// Returns the current BufferedAmount.
+    #[inline]
+    pub fn set_buffered_amount_low_threshold(
+        &mut self,
+        threshold: usize,
+    ) -> Result<usize> {
+        unsafe {
+            API.data_chan_set_buffered_amount_low_threshold(self.0, threshold)
+        }
+    }
+
+    /// Returns the current BufferedAmount.
+    #[inline]
+    pub fn buffered_amount(&mut self) -> Result<usize> {
+        unsafe { API.data_chan_buffered_amount(self.0) }
+    }
+
     /// Send data to the remote peer on this DataChannel.
-    pub async fn send<'a, B>(&mut self, data: B) -> Result<()>
+    /// Returns the current BufferedAmount.
+    pub async fn send<'a, B>(&mut self, data: B) -> Result<usize>
     where
         B: Into<GoBufRef<'a>>,
     {

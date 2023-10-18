@@ -106,6 +106,12 @@ async fn main() {
 
         while let Some(cmd) = o_rcv.recv().await {
             match cmd {
+                Cmd::PeerEvt(PeerConnectionEvent::State(
+                    PeerConnectionState::Connecting,
+                )) => (),
+                Cmd::PeerEvt(PeerConnectionEvent::State(
+                    PeerConnectionState::Connected,
+                )) => (),
                 Cmd::PeerEvt(PeerConnectionEvent::ICECandidate(mut ice)) => {
                     if is_ice_relay(&mut ice) {
                         o2t_snd.send(Cmd::Ice(ice)).unwrap();
@@ -126,7 +132,7 @@ async fn main() {
                         c1.add_ice_candidate(ice).await.unwrap();
                     }
                 }
-                _ => panic!("unexpected"),
+                oth => panic!("unexpected: {oth:?}"),
             }
         }
     });
@@ -142,6 +148,12 @@ async fn main() {
 
     while let Some(cmd) = t_rcv.recv().await {
         match cmd {
+            Cmd::PeerEvt(PeerConnectionEvent::State(
+                PeerConnectionState::Connecting,
+            )) => (),
+            Cmd::PeerEvt(PeerConnectionEvent::State(
+                PeerConnectionState::Connected,
+            )) => (),
             Cmd::PeerEvt(PeerConnectionEvent::ICECandidate(mut ice)) => {
                 if is_ice_relay(&mut ice) {
                     t2o_snd.send(Cmd::Ice(ice)).unwrap();
@@ -178,7 +190,7 @@ async fn main() {
                     c2.add_ice_candidate(ice).await.unwrap();
                 }
             }
-            _ => panic!("unexpected"),
+            oth => panic!("unexpected: {oth:?}"),
         }
     }
 }
@@ -210,7 +222,7 @@ async fn spawn_chan(
     let s_d = std::sync::Mutex::new(Some(s_d));
     let c = std::sync::atomic::AtomicUsize::new(1);
     let mut chan = seed.handle(move |evt| match evt {
-        DataChannelEvent::Close => (),
+        DataChannelEvent::Close | DataChannelEvent::BufferedAmountLow => (),
         DataChannelEvent::Open => {
             if let Some(s_o) = s_o.lock().unwrap().take() {
                 let _ = s_o.send(());

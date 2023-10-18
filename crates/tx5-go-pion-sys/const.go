@@ -16,6 +16,11 @@ const (
 	// - msg slot_c: utf8 info len
 	TyOnTrace UintPtrT = 0xfffe
 
+	// Init MUST be called EXACTLY once before a peer con is created.
+	// - allowed contexts: Call, Response
+	// - msg slot_a: config buffer id
+	TyTx5Init UintPtrT = 0x7001
+
 	// Request a go buffer be created / giving access to said buffer in resp.
 	// - allowed contexts: Call, Response
 	// - msg slot_a: buffer id
@@ -105,6 +110,12 @@ const (
 	// - call slot_b: config buffer id
 	TyPeerConCreateDataChan UintPtrT = 0x9008
 
+	// Request an existing peer con be closed and released.
+	// - allowed contexts: Call, Response
+	// - call slot_a: peer_con id
+	// - msg slot_a: stats buffer id
+	TyPeerConStats UintPtrT = 0x9009
+
 	// OnICECandidate event on an existing peer con.
 	// - allowed contexts: Event
 	// - msg slot_a: peer_con id
@@ -138,13 +149,27 @@ const (
 	// - allowed contexts: Call, Response
 	// - call slot_a: data_chan id
 	// - call slot_b: buffer id
+	// - msg slot_a: cur buffer amount
 	TyDataChanSend UintPtrT = 0xa004
 
-	// Request the label of an existing data channel..
+	// Request the label of an existing data channel.
 	// - allowed contexts: Call, Response
 	// - call slot_a: data_chan id
 	// - msg slot_a: label buffer id
 	TyDataChanLabel UintPtrT = 0xa005
+
+	// Set the buffered amount low threshold on an existing data channel.
+	// - allowed contexts: Call, Response
+	// - call slot_a: data_chan id
+	// - call slot_b: threshold
+	// - msg slot_a: cur buffer amount
+	TyDataChanSetBufferedAmountLowThreshold UintPtrT = 0xa006
+
+	// Get the amount of send data currently buffered on an existing data channel.
+	// - allowed contexts: Call, Response
+	// - call slot_a: data_chan id
+	// - msg slot_a: cur buffer amount
+	TyDataChanBufferedAmount UintPtrT = 0xa007
 
 	// OnClose event on an existing data chan.
 	// - allowed contexts: Event
@@ -169,4 +194,9 @@ const (
 	// - msg slot_b: data ptr
 	// - msg slot_c: data len
 	TyDataChanOnMessage UintPtrT = 0xa804
+
+	// OnBufferedAmountLow event on an existing data chan.
+	// - allowed contexts: Event
+	// - msg slot_a: data_chan id
+	TyDataChanOnBufferedAmountLow UintPtrT = 0xa805
 )

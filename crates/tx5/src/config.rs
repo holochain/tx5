@@ -10,6 +10,9 @@ pub trait Config: 'static + Send + Sync {
     /// Get the max pending send byte count limit.
     fn max_send_bytes(&self) -> u32;
 
+    /// The per-data-channel buffer low threshold.
+    fn per_data_chan_buf_low(&self) -> usize;
+
     /// Get the max queued recv byte count limit.
     fn max_recv_bytes(&self) -> u32;
 
@@ -18,9 +21,6 @@ pub trait Config: 'static + Send + Sync {
 
     /// Get the max init (connect) time for a connection.
     fn max_conn_init(&self) -> std::time::Duration;
-
-    /// Request the prometheus registry used by this config.
-    fn metrics(&self) -> &prometheus::Registry;
 
     /// Request the lair client associated with this config.
     fn lair_client(&self) -> &LairClient;
@@ -37,6 +37,25 @@ pub trait Config: 'static + Send + Sync {
         ice_servers: Arc<serde_json::Value>,
         seed: state::ConnStateSeed,
     );
+
+    /// Provide a chance to send preflight handshake data to be received
+    /// in the `on_conn_validate` hook on the remote side.
+    /// You may also return any `Err(_)` to cancel the connection even
+    /// before sending preflight data.
+    fn on_conn_preflight(
+        &self,
+        rem_url: Tx5Url,
+    ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>;
+
+    /// Provide as async chance to validate/accept/reject a connection before
+    /// any events related to that connection are published.
+    /// This hook is triggered for both outgoing and incoming connections.
+    /// Return `Ok(())` to accept the connection, or any `Err(_)` to reject.
+    fn on_conn_validate(
+        &self,
+        rem_url: Tx5Url,
+        preflight_data: Option<bytes::Bytes>,
+    ) -> BoxFut<'static, Result<()>>;
 }
 
 /// Dynamic config type alias.
@@ -46,8 +65,10 @@ impl std::fmt::Debug for dyn Config + 'static + Send + Sync {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("max_send_bytes", &self.max_send_bytes())
+            .field("per_data_chan_buf_low", &self.per_data_chan_buf_low())
             .field("max_recv_bytes", &self.max_recv_bytes())
             .field("max_conn_count", &self.max_conn_count())
+            .field("max_conn_init", &self.max_conn_init())
             .finish()
     }
 }
@@ -58,13 +79,19 @@ pub trait IntoConfig: 'static + Send + Sync {
     fn into_config(self) -> BoxFut<'static, Result<DynConfig>>;
 }
 
+impl IntoConfig for DynConfig {
+    fn into_config(self) -> BoxFut<'static, Result<DynConfig>> {
+        Box::pin(async move { Ok(self) })
+    }
+}
+
 struct DefConfigBuilt {
     this: Weak<Self>,
     max_send_bytes: u32,
+    per_data_chan_buf_low: usize,
     max_recv_bytes: u32,
     max_conn_count: u32,
     max_conn_init: std::time::Duration,
-    metrics: prometheus::Registry,
     _lair_keystore: Option<lair_keystore_api::in_proc_keystore::InProcKeystore>,
     lair_client: LairClient,
     lair_tag: Arc<str>,
@@ -77,11 +104,36 @@ struct DefConfigBuilt {
             + Send
             + Sync,
     >,
+    #[allow(clippy::type_complexity)]
+    on_conn_preflight_cb: Arc<
+        dyn Fn(
+                DynConfig,
+                Tx5Url,
+            ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+            + 'static
+            + Send
+            + Sync,
+    >,
+    #[allow(clippy::type_complexity)]
+    on_conn_validate_cb: Arc<
+        dyn Fn(
+                DynConfig,
+                Tx5Url,
+                Option<bytes::Bytes>,
+            ) -> BoxFut<'static, Result<()>>
+            + 'static
+            + Send
+            + Sync,
+    >,
 }
 
 impl Config for DefConfigBuilt {
     fn max_send_bytes(&self) -> u32 {
         self.max_send_bytes
+    }
+
+    fn per_data_chan_buf_low(&self) -> usize {
+        self.per_data_chan_buf_low
     }
 
     fn max_recv_bytes(&self) -> u32 {
@@ -94,10 +146,6 @@ impl Config for DefConfigBuilt {
 
     fn max_conn_init(&self) -> std::time::Duration {
         self.max_conn_init
-    }
-
-    fn metrics(&self) -> &prometheus::Registry {
-        &self.metrics
     }
 
     fn lair_client(&self) -> &LairClient {
@@ -123,6 +171,29 @@ impl Config for DefConfigBuilt {
             (self.on_new_conn_cb)(this, ice_servers, seed);
         }
     }
+
+    fn on_conn_preflight(
+        &self,
+        rem_url: Tx5Url,
+    ) -> BoxFut<'static, Result<Option<bytes::Bytes>>> {
+        if let Some(this) = self.this.upgrade() {
+            (self.on_conn_preflight_cb)(this, rem_url)
+        } else {
+            Box::pin(async move { Ok(None) })
+        }
+    }
+
+    fn on_conn_validate(
+        &self,
+        rem_url: Tx5Url,
+        preflight_data: Option<bytes::Bytes>,
+    ) -> BoxFut<'static, Result<()>> {
+        if let Some(this) = self.this.upgrade() {
+            (self.on_conn_validate_cb)(this, rem_url, preflight_data)
+        } else {
+            Box::pin(async move { Ok(()) })
+        }
+    }
 }
 
 /// Builder type for constructing a DefConfig for a Tx5 endpoint.
@@ -130,10 +201,10 @@ impl Config for DefConfigBuilt {
 #[allow(clippy::type_complexity)]
 pub struct DefConfig {
     max_send_bytes: Option<u32>,
+    per_data_chan_buf_low: Option<usize>,
     max_recv_bytes: Option<u32>,
     max_conn_count: Option<u32>,
     max_conn_init: Option<std::time::Duration>,
-    metrics: Option<prometheus::Registry>,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
     on_new_sig_cb: Option<
@@ -152,6 +223,30 @@ pub struct DefConfig {
                 + Sync,
         >,
     >,
+    on_conn_preflight_cb: Option<
+        Arc<
+            dyn Fn(
+                    DynConfig,
+                    Tx5Url,
+                )
+                    -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+                + 'static
+                + Send
+                + Sync,
+        >,
+    >,
+    on_conn_validate_cb: Option<
+        Arc<
+            dyn Fn(
+                    DynConfig,
+                    Tx5Url,
+                    Option<bytes::Bytes>,
+                ) -> BoxFut<'static, Result<()>>
+                + 'static
+                + Send
+                + Sync,
+        >,
+    >,
 }
 
 impl IntoConfig for DefConfig {
@@ -159,15 +254,14 @@ impl IntoConfig for DefConfig {
         Box::pin(async move {
             let max_send_bytes =
                 self.max_send_bytes.unwrap_or(16 * 1024 * 1024);
+            let per_data_chan_buf_low =
+                self.per_data_chan_buf_low.unwrap_or(64 * 1024);
             let max_recv_bytes =
                 self.max_recv_bytes.unwrap_or(16 * 1024 * 1024);
             let max_conn_count = self.max_conn_count.unwrap_or(255);
             let max_conn_init = self
                 .max_conn_init
                 .unwrap_or(std::time::Duration::from_secs(60));
-            let metrics = self
-                .metrics
-                .unwrap_or_else(|| prometheus::default_registry().clone());
             let mut lair_keystore = None;
 
             let lair_tag = self.lair_tag.unwrap_or_else(|| {
@@ -226,18 +320,30 @@ impl IntoConfig for DefConfig {
                 .on_new_conn_cb
                 .unwrap_or_else(|| Arc::new(endpoint::on_new_conn));
 
+            let on_conn_preflight_cb =
+                self.on_conn_preflight_cb.unwrap_or_else(|| {
+                    Arc::new(|_, _| Box::pin(async move { Ok(None) }))
+                });
+
+            let on_conn_validate_cb =
+                self.on_conn_validate_cb.unwrap_or_else(|| {
+                    Arc::new(|_, _, _| Box::pin(async move { Ok(()) }))
+                });
+
             let out: DynConfig = Arc::new_cyclic(|this| DefConfigBuilt {
                 this: this.clone(),
                 max_send_bytes,
+                per_data_chan_buf_low,
                 max_recv_bytes,
                 max_conn_count,
                 max_conn_init,
-                metrics,
                 _lair_keystore: lair_keystore,
                 lair_client,
                 lair_tag,
                 on_new_sig_cb,
                 on_new_conn_cb,
+                on_conn_preflight_cb,
+                on_conn_validate_cb,
             });
 
             Ok(out)
@@ -255,6 +361,21 @@ impl DefConfig {
     /// See `set_max_send_bytes()`, this is the builder version.
     pub fn with_max_send_bytes(mut self, max_send_bytes: u32) -> Self {
         self.set_max_send_bytes(max_send_bytes);
+        self
+    }
+
+    /// Set the per-data-channel buffer low threshold.
+    /// The default is `64 * 1024`.
+    pub fn set_per_data_chan_buf_low(&mut self, per_data_chan_buf_low: usize) {
+        self.per_data_chan_buf_low = Some(per_data_chan_buf_low);
+    }
+
+    /// See `set_per_data_chan_buf_low()`, this is the builder version.
+    pub fn with_per_data_chan_buf_low(
+        mut self,
+        per_data_chan_buf_low: usize,
+    ) -> Self {
+        self.set_per_data_chan_buf_low(per_data_chan_buf_low);
         self
     }
 
@@ -294,18 +415,6 @@ impl DefConfig {
         max_conn_init: std::time::Duration,
     ) -> Self {
         self.set_max_conn_init(max_conn_init);
-        self
-    }
-
-    /// Set the prometheus metrics registry to use.
-    /// The default is the global static default registry.
-    pub fn set_metrics(&mut self, metrics: prometheus::Registry) {
-        self.metrics = Some(metrics);
-    }
-
-    /// See `set_metrics()`, this is the builder version.
-    pub fn with_metrics(mut self, metrics: prometheus::Registry) -> Self {
-        self.set_metrics(metrics);
         self
     }
 
@@ -373,6 +482,66 @@ impl DefConfig {
             + Sync,
     {
         self.set_new_conn_cb(cb);
+        self
+    }
+
+    /// Override the default no-op conn preflight hook.
+    pub fn set_conn_preflight<Cb>(&mut self, cb: Cb)
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+            ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.on_conn_preflight_cb = Some(Arc::new(cb));
+    }
+
+    /// See `set_conn_preflight()`, this is the builder version.
+    pub fn with_conn_preflight<Cb>(mut self, cb: Cb) -> Self
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+            ) -> BoxFut<'static, Result<Option<bytes::Bytes>>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.set_conn_preflight(cb);
+        self
+    }
+
+    /// Override the default no-op conn validate hook.
+    pub fn set_conn_validate<Cb>(&mut self, cb: Cb)
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+                Option<bytes::Bytes>,
+            ) -> BoxFut<'static, Result<()>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.on_conn_validate_cb = Some(Arc::new(cb));
+    }
+
+    /// See `set_conn_validate()`, this is the builder version.
+    pub fn with_conn_validate<Cb>(mut self, cb: Cb) -> Self
+    where
+        Cb: Fn(
+                DynConfig,
+                Tx5Url,
+                Option<bytes::Bytes>,
+            ) -> BoxFut<'static, Result<()>>
+            + 'static
+            + Send
+            + Sync,
+    {
+        self.set_conn_validate(cb);
         self
     }
 }

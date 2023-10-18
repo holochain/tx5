@@ -11,6 +11,7 @@ fn init_tracing() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
+#[allow(dead_code)]
 struct Test {
     shutdown: bool,
     cli_a: Tx5Url,
@@ -35,6 +36,8 @@ impl Drop for Test {
 
 impl Test {
     pub async fn new(as_a: bool) -> Self {
+        init_tracing();
+
         let sig: Tx5Url = Tx5Url::new("wss://s").unwrap();
         let cli_a: Tx5Url = Tx5Url::new(
             "wss://s/tx5-ws/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -105,13 +108,6 @@ impl Test {
     pub async fn shutdown(mut self) {
         self.shutdown = true;
 
-        let enc = prometheus::TextEncoder::new();
-        let mut buf = Vec::new();
-        use prometheus::Encoder;
-        enc.encode(&prometheus::default_registry().gather(), &mut buf)
-            .unwrap();
-        println!("{}", String::from_utf8_lossy(&buf));
-
         self.state.close(Error::id("TestShutdown"));
 
         let res = self.state_evt.recv().await;
@@ -143,7 +139,7 @@ impl Test {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn extended_outgoing() {
-    init_tracing();
+    better_panic::install();
 
     let mut test = Test::new(true).await;
 
@@ -248,6 +244,20 @@ async fn extended_outgoing() {
 
     println!("ready");
 
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            // blank message for preflight data
+            assert_eq!(8, data.to_vec().unwrap().len());
+            resp.send(Ok(BufState::Low));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
+    // receive the empty preflight
+    conn_state
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .unwrap();
+
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
@@ -269,12 +279,9 @@ async fn extended_outgoing() {
 
     println!("about to rcv");
 
+    // now, receive the actual message
     conn_state
-        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\0world").unwrap())
-        .unwrap();
-
-    conn_state
-        .rcv_data(BackBuf::from_slice(b"\x01\0\0\0\0\0\0\0").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\x2a\0\0\0\0\0\0\x80world").unwrap())
         .unwrap();
 
     match test.state_evt.recv().await {
@@ -292,6 +299,8 @@ async fn extended_outgoing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn short_incoming() {
+    better_panic::install();
+
     let mut test = Test::new(true).await;
 
     // -- receive an incoming offer -- //
@@ -356,6 +365,8 @@ async fn short_incoming() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn polite_in_offer() {
+    better_panic::install();
+
     let mut test = Test::new(true).await;
 
     // -- send data to a "peer" (causes connecting to that peer) -- //
@@ -482,6 +493,20 @@ async fn polite_in_offer() {
 
     println!("ready");
 
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            // blank message for preflight data
+            assert_eq!(8, data.to_vec().unwrap().len());
+            resp.send(Ok(BufState::Low));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
+    // receive the empty preflight
+    conn_state
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .unwrap();
+
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),
         oth => panic!("unexpected: {:?}", oth),
@@ -505,6 +530,8 @@ async fn polite_in_offer() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn impolite_in_offer() {
+    better_panic::install();
+
     let mut test = Test::new(false).await;
 
     // -- send data to a "peer" (causes connecting to that peer) -- //
@@ -586,6 +613,20 @@ async fn impolite_in_offer() {
     conn_state.ready().unwrap();
 
     println!("ready");
+
+    match conn_evt.recv().await {
+        Some(Ok(ConnStateEvt::SndData(mut data, mut resp))) => {
+            // blank message for preflight data
+            assert_eq!(8, data.to_vec().unwrap().len());
+            resp.send(Ok(BufState::Low));
+        }
+        oth => panic!("unexpected: {:?}", oth),
+    };
+
+    // receive the empty preflight
+    conn_state
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .unwrap();
 
     match test.state_evt.recv().await {
         Some(Ok(StateEvt::Connected { .. })) => (),

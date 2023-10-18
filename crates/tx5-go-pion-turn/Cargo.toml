@@ -1,6 +1,6 @@
 [package]
 name = "tx5-go-pion-turn"
-version = "0.0.1-alpha.4"
+version = "0.0.3-alpha"
 edition = "2021"
 description = "Rust process wrapper around tx5-go-pion-turn executable"
 license = "MIT OR Apache-2.0"
@@ -20,12 +20,12 @@ exclude = [
 base64 = { workspace = true }
 dirs = { workspace = true }
 dunce = { workspace = true }
-get_if_addrs = { workspace = true }
+if-addrs = { workspace = true }
 once_cell = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = [ "process", "io-util" ] }
 tracing = { workspace = true }
-tx5-core = { workspace = true }
+tx5-core = { workspace = true, features = [ "file_check" ] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = [ "full" ] }

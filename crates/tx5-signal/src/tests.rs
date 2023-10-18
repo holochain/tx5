@@ -77,10 +77,10 @@ async fn wrong_version() {
     srv_config.ice_servers = serde_json::json!([]);
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
 
-    let srv_port = addr.port();
+    let srv_port = addr_list.get(0).unwrap().port();
 
     tracing::info!(%srv_port);
 
@@ -105,10 +105,10 @@ async fn sanity() {
     srv_config.ice_servers = serde_json::json!([]);
     srv_config.demo = true;
 
-    let (addr, srv_driver) =
+    let (srv_driver, addr_list, _) =
         tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
 
-    let srv_port = addr.port();
+    let srv_port = addr_list.get(0).unwrap().port();
 
     tracing::info!(%srv_port);
 

@@ -8,6 +8,9 @@ use std::collections::{hash_map, HashMap};
 use std::future::Future;
 use std::sync::Arc;
 
+use influxive_otel_atomic_obs::*;
+use opentelemetry_api::metrics::MeterProvider;
+
 use tx5_core::{Id, Tx5Url};
 
 mod sig;
@@ -32,64 +35,6 @@ const MAX_CON_TIME: std::time::Duration =
 /// Similar to MAX_CON_TIME, this has to be hard-coded for now.
 const CON_CLOSE_SEND_GRACE: std::time::Duration =
     std::time::Duration::from_secs(30);
-
-// TODO - creates too many time series, just aggregate the full counts
-pub(crate) fn bad_uniq() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static UNIQ: AtomicU64 = AtomicU64::new(1);
-    UNIQ.fetch_add(1, Ordering::Relaxed)
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MetricTimestamp(
-    Arc<parking_lot::Mutex<std::time::Instant>>,
-    prometheus::IntGauge,
-);
-
-impl MetricTimestamp {
-    pub fn new<S1: Into<String>, S2: Into<String>>(
-        name: S1,
-        help: S2,
-    ) -> Result<Self> {
-        let now = Arc::new(parking_lot::Mutex::new(std::time::Instant::now()));
-        let metric =
-            prometheus::IntGauge::new(name, help).map_err(Error::err)?;
-        Ok(Self(now, metric))
-    }
-
-    pub fn reset(&self) {
-        let now = std::time::Instant::now();
-        *self.0.lock() = now;
-        self.1.set(0);
-    }
-
-    pub fn elapsed(&self) -> std::time::Duration {
-        self.0.lock().elapsed()
-    }
-
-    fn priv_update(&self) {
-        let elapsed = self.elapsed().as_micros();
-        self.1.set(elapsed as i64);
-    }
-}
-
-impl prometheus::core::Collector for MetricTimestamp {
-    fn desc(&self) -> Vec<&prometheus::core::Desc> {
-        self.1.desc()
-    }
-
-    fn collect(&self) -> Vec<prometheus::proto::MetricFamily> {
-        self.priv_update();
-        self.1.collect()
-    }
-}
-
-impl prometheus::core::Metric for MetricTimestamp {
-    fn metric(&self) -> prometheus::proto::Metric {
-        self.priv_update();
-        self.1.metric()
-    }
-}
 
 /// Respond type.
 #[must_use]
@@ -241,11 +186,10 @@ struct StateData {
     state_uniq: Uniq,
     this_id: Option<Id>,
     this: StateWeak,
-    state_prefix: Arc<str>,
-    metrics: prometheus::Registry,
     meta: StateMeta,
     evt: StateEvtSnd,
     signal_map: HashMap<Tx5Url, SigStateWeak>,
+    ban_map: HashMap<Id, std::time::Instant>,
     conn_map: HashMap<Id, (ConnStateWeak, RmConn)>,
     send_map: HashMap<Id, VecDeque<SendData>>,
     ice_cache: HashMap<Id, VecDeque<IceData>>,
@@ -261,9 +205,6 @@ impl Drop for StateData {
 impl StateData {
     fn shutdown(&mut self, err: std::io::Error) {
         tracing::trace!(state_uniq = %self.state_uniq, this_id = ?self.this_id, "StateShutdown");
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_conn_count.clone()));
         for (_, sig) in self.signal_map.drain() {
             if let Some(sig) = sig.upgrade() {
                 sig.close(err.err_clone());
@@ -279,9 +220,18 @@ impl StateData {
     }
 
     async fn exec(&mut self, cmd: StateCmd) -> Result<()> {
+        // TODO - any errors returned by these fn calls will shut down
+        //        the entire endpoint... probably not what we want.
+        //        Instead, maybe shutting down the whole endpoint should
+        //        require a special call, and otherwise errors can be
+        //        logged / ignored OR just not allow returning errors.
         match cmd {
             StateCmd::Tick1s => self.tick_1s().await,
+            StateCmd::TrackSig { rem_id, ty, bytes } => {
+                self.track_sig(rem_id, ty, bytes).await
+            }
             StateCmd::SndDemo => self.snd_demo().await,
+            StateCmd::ListConnected(resp) => self.list_connected(resp).await,
             StateCmd::AssertListenerSig { sig_url, resp } => {
                 self.assert_listener_sig(sig_url, resp).await
             }
@@ -289,6 +239,7 @@ impl StateData {
                 msg_uniq,
                 rem_id,
                 data,
+                timestamp,
                 send_permit,
                 resp,
                 cli_url,
@@ -297,12 +248,15 @@ impl StateData {
                     msg_uniq,
                     rem_id,
                     data,
+                    timestamp,
                     send_permit,
                     resp,
                     cli_url,
                 )
                 .await
             }
+            StateCmd::Ban { rem_id, span } => self.ban(rem_id, span).await,
+            StateCmd::Stats(resp) => self.stats(resp).await,
             StateCmd::Publish { evt } => self.publish(evt).await,
             StateCmd::SigConnected { cli_url } => {
                 self.sig_connected(cli_url).await
@@ -335,17 +289,16 @@ impl StateData {
     }
 
     async fn tick_1s(&mut self) -> Result<()> {
+        let timeout = self.meta.config.max_conn_init();
+
         self.ice_cache.retain(|_, list| {
-            list.retain_mut(|data| {
-                data.timestamp.elapsed() < std::time::Duration::from_secs(20)
-            });
+            list.retain_mut(|data| data.timestamp.elapsed() < timeout);
             !list.is_empty()
         });
 
         self.send_map.retain(|_, list| {
             list.retain_mut(|info| {
-                if info.timestamp.elapsed() < std::time::Duration::from_secs(20)
-                {
+                if info.timestamp.elapsed() < timeout {
                     true
                 } else {
                     tracing::trace!(msg_uniq = %info.msg_uniq, "dropping msg due to timeout");
@@ -369,7 +322,7 @@ impl StateData {
             let meta = conn.meta();
             tot_snd_bytes += meta.metric_bytes_snd.get();
             tot_rcv_bytes += meta.metric_bytes_rcv.get();
-            tot_age += meta.metric_age.elapsed().as_secs_f64();
+            tot_age += meta.created_at.elapsed().as_secs_f64();
             age_cnt += 1.0;
         }
 
@@ -395,11 +348,8 @@ impl StateData {
                     .load(std::sync::atomic::Ordering::SeqCst),
                 this_snd_bytes: meta.metric_bytes_snd.get(),
                 this_rcv_bytes: meta.metric_bytes_rcv.get(),
-                this_age_s: meta.metric_age.elapsed().as_secs_f64(),
-                this_last_active_s: meta
-                    .metric_last_active
-                    .elapsed()
-                    .as_secs_f64(),
+                this_age_s: meta.created_at.elapsed().as_secs_f64(),
+                this_last_active_s: meta.last_active_at.elapsed().as_secs_f64(),
             };
 
             if let drop_consider::DropConsiderResult::MustDrop =
@@ -417,6 +367,20 @@ impl StateData {
         Ok(())
     }
 
+    async fn track_sig(
+        &mut self,
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize,
+    ) -> Result<()> {
+        if let Some((conn, _)) = self.conn_map.get(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.track_sig(ty, bytes);
+            }
+        }
+        Ok(())
+    }
+
     async fn snd_demo(&mut self) -> Result<()> {
         for (_, sig) in self.signal_map.iter() {
             if let Some(sig) = sig.upgrade() {
@@ -425,6 +389,19 @@ impl StateData {
         }
 
         Ok(())
+    }
+
+    async fn list_connected(
+        &mut self,
+        resp: tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>,
+    ) -> Result<()> {
+        let mut urls = Vec::new();
+        for (_, (con, _)) in self.conn_map.iter() {
+            if let Some(con) = con.upgrade() {
+                urls.push(con.rem_url());
+            }
+        }
+        resp.send(Ok(urls)).map_err(|_| Error::id("Closed"))
     }
 
     async fn assert_listener_sig(
@@ -460,6 +437,12 @@ impl StateData {
         Ok(())
     }
 
+    fn is_banned(&mut self, rem_id: Id) -> bool {
+        let now = std::time::Instant::now();
+        self.ban_map.retain(|_id, expires_at| *expires_at > now);
+        self.ban_map.contains_key(&rem_id)
+    }
+
     async fn create_new_conn(
         &mut self,
         sig_url: Tx5Url,
@@ -467,8 +450,20 @@ impl StateData {
         maybe_offer: Option<BackBuf>,
         maybe_msg_uniq: Option<Uniq>,
     ) -> Result<()> {
+        if self.is_banned(rem_id) {
+            tracing::warn!(
+                ?rem_id,
+                "Ignoring request to create con to banned remote"
+            );
+            return Ok(());
+            //return Err(Error::id("Ban"));
+        }
+
         let (s, r) = tokio::sync::oneshot::channel();
-        self.assert_listener_sig(sig_url.clone(), s).await?;
+        if let Err(err) = self.assert_listener_sig(sig_url.clone(), s).await {
+            tracing::warn!(?err, "failed to assert signal listener");
+            return Ok(());
+        }
 
         let sig = self.signal_map.get(&sig_url).unwrap().clone();
 
@@ -477,14 +472,13 @@ impl StateData {
         tracing::trace!(?maybe_msg_uniq, %conn_uniq, "create_new_conn");
 
         let cli_url = sig_url.to_client(rem_id);
-        let conn = ConnState::new_and_publish(
+        let conn = match ConnState::new_and_publish(
             self.meta.config.clone(),
             self.meta.conn_limit.clone(),
-            self.state_prefix.clone(),
-            self.metrics.clone(),
             self.meta.metric_conn_count.clone(),
             self.this.clone(),
             sig,
+            self.state_uniq.clone(),
             conn_uniq,
             self.this_id.unwrap(),
             cli_url.clone(),
@@ -492,29 +486,48 @@ impl StateData {
             self.recv_limit.clone(),
             r,
             maybe_offer,
-        )?;
+            self.meta.snd_ident.clone(),
+        ) {
+            Err(err) => {
+                tracing::warn!(?err, "failed to create conn state");
+                return Ok(());
+            }
+            Ok(conn) => conn,
+        };
+
         self.conn_map
             .insert(rem_id, (conn, RmConn(self.evt.clone(), cli_url)));
 
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn send_data(
         &mut self,
         msg_uniq: Uniq,
         rem_id: Id,
         data: BackBuf,
+        timestamp: std::time::Instant,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         data_sent: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
     ) -> Result<()> {
+        if self.is_banned(rem_id) {
+            tracing::warn!(
+                ?rem_id,
+                "Ignoring request to send data to banned remote"
+            );
+            let _ = data_sent.send(Err(Error::id("Ban")));
+            return Ok(());
+        }
+
         self.send_map
             .entry(rem_id)
             .or_default()
             .push_back(SendData {
                 msg_uniq: msg_uniq.clone(),
                 data,
-                timestamp: std::time::Instant::now(),
+                timestamp,
                 resp: Some(data_sent),
                 send_permit,
             });
@@ -523,7 +536,7 @@ impl StateData {
 
         if let Some((e, _)) = self.conn_map.get(&rem_id) {
             if let Some(conn) = e.upgrade() {
-                conn.notify_send_waiting().await;
+                conn.check_send_waiting(None).await;
                 return Ok(());
             } else {
                 self.conn_map.remove(&rem_id);
@@ -533,6 +546,67 @@ impl StateData {
         let sig_url = cli_url.to_server();
         self.create_new_conn(sig_url, rem_id, None, Some(msg_uniq))
             .await
+    }
+
+    async fn ban(
+        &mut self,
+        rem_id: Id,
+        span: std::time::Duration,
+    ) -> Result<()> {
+        let expires_at = std::time::Instant::now() + span;
+        self.ban_map.insert(rem_id, expires_at);
+        self.send_map.remove(&rem_id);
+        self.ice_cache.remove(&rem_id);
+        if let Some((conn, _)) = self.conn_map.remove(&rem_id) {
+            if let Some(conn) = conn.upgrade() {
+                conn.close(Error::id("Ban"));
+            }
+        }
+        Ok(())
+    }
+
+    fn stats(
+        &mut self,
+        resp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+    ) -> impl std::future::Future<Output = Result<()>> + 'static + Send {
+        let this_id = self
+            .this_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "".into());
+        let conn_list = self
+            .conn_map
+            .iter()
+            .map(|(id, (c, _))| (*id, c.clone()))
+            .collect::<Vec<_>>();
+        let now = std::time::Instant::now();
+        let mut ban_map = serde_json::Map::new();
+        for (id, until) in self.ban_map.iter() {
+            ban_map.insert(id.to_string(), (*until - now).as_secs_f64().into());
+        }
+        async move {
+            let mut map = serde_json::Map::new();
+
+            #[cfg(feature = "backend-go-pion")]
+            const BACKEND: &str = "go-pion";
+            #[cfg(feature = "backend-webrtc-rs")]
+            const BACKEND: &str = "webrtc-rs";
+
+            map.insert("backend".into(), BACKEND.into());
+            map.insert("thisId".into(), this_id.into());
+            map.insert("banned".into(), ban_map.into());
+
+            for (id, conn) in conn_list {
+                if let Some(conn) = conn.upgrade() {
+                    if let Ok(stats) = conn.stats().await {
+                        map.insert(id.to_string(), stats);
+                    }
+                }
+            }
+
+            let _ = resp.send(Ok(map.into()));
+
+            Ok(())
+        }
     }
 
     async fn publish(&mut self, evt: StateEvt) -> Result<()> {
@@ -618,7 +692,10 @@ impl StateData {
                         return Ok(());
                     }
                     std::cmp::Ordering::Equal => {
-                        return Err(Error::err("Invalid incoming webrtc offer with id matching our local id. Please don't share lair connections"));
+                        tracing::warn!("Invalid incoming webrtc offer with id matching our local id. Please don't share lair connections");
+                        self.conn_map.remove(&rem_id);
+                        return Ok(());
+                        //return Err(Error::err("Invalid incoming webrtc offer with id matching our local id. Please don't share lair connections"));
                     }
                 }
             } else {
@@ -707,7 +784,13 @@ impl StateData {
 
 enum StateCmd {
     Tick1s,
+    TrackSig {
+        rem_id: Id,
+        ty: &'static str,
+        bytes: usize,
+    },
     SndDemo,
+    ListConnected(tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>),
     AssertListenerSig {
         sig_url: Tx5Url,
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
@@ -716,10 +799,16 @@ enum StateCmd {
         msg_uniq: Uniq,
         rem_id: Id,
         data: BackBuf,
+        timestamp: std::time::Instant,
         send_permit: tokio::sync::OwnedSemaphorePermit,
         resp: tokio::sync::oneshot::Sender<Result<()>>,
         cli_url: Tx5Url,
     },
+    Ban {
+        rem_id: Id,
+        span: std::time::Duration,
+    },
+    Stats(tokio::sync::oneshot::Sender<Result<serde_json::Value>>),
     Publish {
         evt: StateEvt,
     },
@@ -766,8 +855,6 @@ async fn state_task(
     mut rcv: ManyRcv<StateCmd>,
     state_uniq: Uniq,
     this: StateWeak,
-    state_prefix: Arc<str>,
-    metrics: prometheus::Registry,
     meta: StateMeta,
     evt: StateEvtSnd,
     recv_limit: Arc<tokio::sync::Semaphore>,
@@ -776,11 +863,10 @@ async fn state_task(
         state_uniq,
         this_id: None,
         this,
-        state_prefix,
-        metrics,
         meta,
         evt,
         signal_map: HashMap::new(),
+        ban_map: HashMap::new(),
         conn_map: HashMap::new(),
         send_map: HashMap::new(),
         ice_cache: HashMap::new(),
@@ -807,7 +893,7 @@ pub(crate) struct StateMeta {
     pub(crate) config: DynConfig,
     pub(crate) conn_limit: Arc<tokio::sync::Semaphore>,
     pub(crate) snd_limit: Arc<tokio::sync::Semaphore>,
-    pub(crate) metric_conn_count: prometheus::IntGauge,
+    pub(crate) metric_conn_count: AtomicObservableUpDownCounterI64,
     pub(crate) snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -837,8 +923,6 @@ impl Eq for State {}
 impl State {
     /// Construct a new state instance.
     pub fn new(config: DynConfig) -> Result<(Self, ManyRcv<StateEvt>)> {
-        let metrics = config.metrics().clone();
-
         let conn_limit = Arc::new(tokio::sync::Semaphore::new(
             config.max_conn_count() as usize,
         ));
@@ -852,17 +936,20 @@ impl State {
 
         let state_uniq = Uniq::default();
 
-        let bad_uniq = bad_uniq();
-        let state_prefix = format!("tx5_ep_{bad_uniq}").into_boxed_str().into();
-
-        let metric_conn_count = prometheus::IntGauge::new(
-            format!("{state_prefix}_conn_count"),
-            "active connection count",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_conn_count.clone()))
-            .map_err(Error::err)?;
+        let metric_conn_count = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![opentelemetry_api::KeyValue::new(
+                    "state_uniq",
+                    state_uniq.to_string(),
+                )]),
+            )
+            .i64_observable_up_down_counter_atomic("tx5.endpoint.conn.count", 0)
+            .with_description("Count of open connections managed by endpoint")
+            .init()
+            .0;
 
         let meta = StateMeta {
             state_uniq: state_uniq.clone(),
@@ -881,8 +968,6 @@ impl State {
                     rcv,
                     state_uniq,
                     StateWeak(this, meta.clone()),
-                    state_prefix,
-                    metrics,
                     meta,
                     StateEvtSnd(state_snd),
                     rcv_limit,
@@ -913,14 +998,26 @@ impl State {
         StateWeak(self.0.weak(), self.1.clone())
     }
 
-    /// Returns `true` if this SigState is closed.
+    /// Returns `true` if this State is closed.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
     }
 
-    /// Shutdown the signal client with an error.
+    /// Shutdown the state management with an error.
     pub fn close(&self, err: std::io::Error) {
         self.0.close(err);
+    }
+
+    /// List the ids of current open connections.
+    pub fn list_connected(
+        &self,
+    ) -> impl Future<Output = Result<Vec<Tx5Url>>> + 'static + Send {
+        let this = self.clone();
+        async move {
+            let (s, r) = tokio::sync::oneshot::channel();
+            this.0.send(Ok(StateCmd::ListConnected(s)))?;
+            r.await.map_err(|_| Error::id("Closed"))?
+        }
     }
 
     /// Establish a new listening connection through given signal server.
@@ -942,117 +1039,105 @@ impl State {
         }
     }
 
+    /// Close down all connections to, fail all outgoing messages to,
+    /// and drop all incoming messages from, the given remote id,
+    /// for the specified ban time period.
+    pub fn ban(&self, rem_id: Id, span: std::time::Duration) {
+        let _ = self.0.send(Ok(StateCmd::Ban { rem_id, span }));
+    }
+
     /// Schedule data to be sent out over a channel managed by the state system.
     /// The future will resolve immediately if there is still space
     /// in the outgoing buffer, or once there is again space in the buffer.
     pub fn snd_data<B: bytes::Buf>(
         &self,
         cli_url: Tx5Url,
-        mut data: B,
+        data: B,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
-        use std::io::Write;
+        let timestamp = std::time::Instant::now();
 
-        let max_send_bytes = self.1.config.max_send_bytes();
-        let meta = self.1.clone();
-
-        let buf_list = if bytes::Buf::remaining(&data) > max_send_bytes as usize
-        {
-            Err(Error::id("DataTooLarge"))
-        } else if !cli_url.is_client() {
+        let buf_list = if !cli_url.is_client() {
             Err(Error::err(
                 "Invalid tx5 signal server url, expect client url",
             ))
         } else {
-            (|| {
-                let ident = meta
-                    .snd_ident
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                let mut buf_list = Vec::new();
-
-                const MAX_MSG: usize = (16 * 1024) - 8;
-                while data.has_remaining() {
-                    let loc_len = std::cmp::min(data.remaining(), MAX_MSG);
-                    let ident = if data.remaining() <= loc_len {
-                        ident.set_finish()
-                    } else {
-                        ident.unset_finish()
-                    };
-
-                    tracing::trace!(ident=%ident.unset_finish(), is_finish=%ident.is_finish(), %loc_len, "prepare send");
-
-                    let mut tmp =
-                        bytes::Buf::reader(bytes::Buf::take(data, loc_len));
-
-                    // TODO - reserve the bytes before writing
-                    let mut buf = BackBuf::from_writer()?;
-                    buf.write_all(&ident.to_le_bytes())?;
-                    std::io::copy(&mut tmp, &mut buf)?;
-
-                    buf_list.push(buf.finish());
-
-                    data = tmp.into_inner().into_inner();
-                }
-
-                Ok(buf_list)
-            })()
+            divide_send(&*self.1.config, &self.1.snd_ident, data)
         };
+
+        let meta = self.1.clone();
 
         let this = self.clone();
         async move {
-            let cli_url = &cli_url;
-            let msg_uniq = meta.state_uniq.sub();
+            tokio::time::timeout(meta.config.max_conn_init(), async move {
+                let cli_url = &cli_url;
+                let msg_uniq = meta.state_uniq.sub();
+                let msg_uniq = &msg_uniq;
 
-            let buf_list = buf_list?;
+                let buf_list = buf_list?;
 
-            for (idx, mut buf) in buf_list.into_iter().enumerate() {
-                let len = buf.len()?;
+                let mut resp_list = Vec::with_capacity(buf_list.len());
 
-                tracing::trace!(%msg_uniq, %len, "snd_data");
+                for (idx, mut buf) in buf_list.into_iter().enumerate() {
+                    let len = buf.len()?;
 
-                let send_permit = meta
-                    .snd_limit
-                    .clone()
-                    .acquire_many_owned(len as u32)
-                    .await
-                    .map_err(Error::err)?;
+                    tracing::trace!(%msg_uniq, %len, "snd_data");
 
-                tracing::trace!(%msg_uniq, %idx, %len, "snd_data:got permit");
+                    if meta.snd_limit.available_permits() < len {
+                        tracing::warn!(%msg_uniq, %len, "send queue full, waiting for permits");
+                    }
 
-                let rem_id = cli_url.id().unwrap();
+                    let send_permit = meta
+                        .snd_limit
+                        .clone()
+                        .acquire_many_owned(len as u32)
+                        .await
+                        .map_err(Error::err)?;
 
-                let (s_sent, r_sent) = tokio::sync::oneshot::channel();
+                    tracing::trace!(%msg_uniq, %idx, %len, "snd_data:got permit");
 
-                if let Err(err) = this.0.send(Ok(StateCmd::SendData {
-                    msg_uniq: msg_uniq.clone(),
-                    rem_id,
-                    data: buf,
-                    send_permit,
-                    resp: s_sent,
-                    cli_url: cli_url.clone(),
-                })) {
-                    tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
-                    return Err(err);
-                }
+                    let rem_id = cli_url.id().unwrap();
 
-                match r_sent.await.map_err(|_| Error::id("Closed")) {
-                    Ok(r) => match r {
-                        Ok(_) => {
-                            tracing::trace!(%msg_uniq, %idx, "snd_data:complete ok");
-                        }
-                        Err(err) => {
-                            tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
-                            return Err(err);
-                        }
-                    },
-                    Err(err) => {
+                    let (s_sent, r_sent) = tokio::sync::oneshot::channel();
+
+                    if let Err(err) = this.0.send(Ok(StateCmd::SendData {
+                        msg_uniq: msg_uniq.clone(),
+                        rem_id,
+                        data: buf,
+                        timestamp,
+                        send_permit,
+                        resp: s_sent,
+                        cli_url: cli_url.clone(),
+                    })) {
                         tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
                         return Err(err);
                     }
-                }
-            }
 
-            Ok(())
+                    resp_list.push(async move {
+                        match r_sent.await.map_err(|_| Error::id("Closed")) {
+                            Ok(r) => match r {
+                                Ok(_) => {
+                                    tracing::trace!(%msg_uniq, %idx, "snd_data:complete ok");
+                                }
+                                Err(err) => {
+                                    tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
+                                    return Err(err);
+                                }
+                            },
+                            Err(err) => {
+                                tracing::trace!(%msg_uniq, %idx, ?err, "snd_data:complete err");
+                                return Err(err);
+                            }
+                        }
+                        Ok(())
+                    });
+                }
+
+                for resp in resp_list {
+                    resp.await?;
+                }
+
+                Ok(())
+            }).await.map_err(|_| Error::id("Timeout"))?
         }
     }
 
@@ -1063,10 +1148,26 @@ impl State {
         self.0.send(Ok(StateCmd::SndDemo))
     }
 
+    /// Get stats.
+    pub fn stats(
+        &self,
+    ) -> impl Future<Output = Result<serde_json::Value>> + 'static + Send {
+        let this = self.clone();
+        async move {
+            let (s, r) = tokio::sync::oneshot::channel();
+            this.0.send(Ok(StateCmd::Stats(s)))?;
+            r.await.map_err(|_| Error::id("Shutdown"))?
+        }
+    }
+
     // -- //
 
     fn tick_1s(&self) -> Result<()> {
         self.0.send(Ok(StateCmd::Tick1s))
+    }
+
+    pub(crate) fn track_sig(&self, rem_id: Id, ty: &'static str, bytes: usize) {
+        let _ = self.0.send(Ok(StateCmd::TrackSig { rem_id, ty, bytes }));
     }
 
     pub(crate) fn publish(&self, evt: StateEvt) {

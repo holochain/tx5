@@ -113,6 +113,7 @@ impl PeerConnection {
         B: Into<GoBufRef<'a>>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
+        tx5_init().await.map_err(Error::err)?;
         init_evt_manager();
         r2id!(config);
         let cb: PeerConEvtCb = Arc::new(cb);
@@ -120,6 +121,15 @@ impl PeerConnection {
             let peer_con_id = API.peer_con_alloc(config)?;
             register_peer_con_evt_cb(peer_con_id, cb);
             Ok(Self(peer_con_id))
+        })
+        .await?
+    }
+
+    /// Get stats.
+    pub async fn stats(&mut self) -> Result<GoBuf> {
+        let peer_con = self.0;
+        tokio::task::spawn_blocking(move || unsafe {
+            API.peer_con_stats(peer_con).map(GoBuf)
         })
         .await?
     }

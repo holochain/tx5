@@ -23,6 +23,39 @@ macro_rules! r2id {
     };
 }
 
+pub use tx5_core::Tx5InitConfig;
+
+#[allow(clippy::type_complexity)]
+async fn tx5_init() -> std::result::Result<(), String> {
+    static SHARED: once_cell::sync::Lazy<
+        futures::future::Shared<
+            std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = std::result::Result<(), String>,
+                        >
+                        + 'static
+                        + Send,
+                >,
+            >,
+        >,
+    > = once_cell::sync::Lazy::new(|| {
+        futures::FutureExt::shared(Box::pin(async move {
+            let mut config = GoBufRef::json(Tx5InitConfig::get());
+            let config = config.as_mut_ref().map_err(|e| format!("{e:?}"))?;
+            let config = config.0;
+            unsafe {
+                tx5_go_pion_sys::API
+                    .tx5_init(config)
+                    .map_err(|e| format!("{e:?}"))?;
+            }
+            <std::result::Result<(), String>>::Ok(())
+        }))
+    });
+
+    SHARED.clone().await
+}
+
 use deps::*;
 
 pub use tx5_core::{Error, ErrorExt, Id, Result};
@@ -71,6 +104,7 @@ mod tests {
         #[derive(Debug)]
         enum Cmd {
             Shutdown,
+            Stats(tokio::sync::oneshot::Sender<GoBuf>),
             ICE(GoBuf),
             Offer(GoBuf),
             Answer(GoBuf),
@@ -103,6 +137,9 @@ mod tests {
                     PeerConnection::new(&config, move |evt| match evt {
                         PeerConnectionEvent::Error(err) => {
                             panic!("{:?}", err);
+                        }
+                        PeerConnectionEvent::State(state) => {
+                            println!("peer1 state: {state:?}");
                         }
                         PeerConnectionEvent::ICECandidate(mut candidate) => {
                             println!(
@@ -155,6 +192,9 @@ mod tests {
                             );
                             peer1.set_remote_description(answer).await.unwrap();
                         }
+                        Cmd::Stats(rsp) => {
+                            let _ = rsp.send(peer1.stats().await.unwrap());
+                        }
                         _ => break,
                     }
                 }
@@ -174,6 +214,9 @@ mod tests {
                     PeerConnection::new(&config, move |evt| match evt {
                         PeerConnectionEvent::Error(err) => {
                             panic!("{:?}", err);
+                        }
+                        PeerConnectionEvent::State(state) => {
+                            println!("peer2 state: {state:?}");
                         }
                         PeerConnectionEvent::ICECandidate(mut candidate) => {
                             println!(
@@ -221,6 +264,9 @@ mod tests {
                                 .unwrap();
                             cmd_send_1.send(Cmd::Answer(answer)).unwrap();
                             println!("peer2 answer complete");
+                        }
+                        Cmd::Stats(rsp) => {
+                            let _ = rsp.send(peer2.stats().await.unwrap());
                         }
                         _ => break,
                     }
@@ -312,21 +358,45 @@ mod tests {
         assert_eq!("data", &lbl1);
         assert_eq!("data", &lbl2);
 
+        // -- set the buffered amount low thresholds -- //
+
+        let b = chan1.set_buffered_amount_low_threshold(5).unwrap();
+        println!("chan1 pre-send buffered amount: {b}");
+        let b = chan2.set_buffered_amount_low_threshold(5).unwrap();
+        println!("chan2 pre-send buffered amount: {b}");
+
         // -- send data on the data channels -- //
 
         let mut buf = GoBuf::new().unwrap();
         buf.extend(b"hello").unwrap();
-        chan1.send(buf).await.unwrap();
+        let b = chan1.send(buf).await.unwrap();
+        println!("chan1 post-send buffered amount: {b}");
 
         let mut buf = GoBuf::new().unwrap();
         buf.extend(b"world").unwrap();
-        chan2.send(buf).await.unwrap();
+        let b = chan2.send(buf).await.unwrap();
+        println!("chan2 post-send buffered amount: {b}");
 
         // -- await receiving data on the data channels -- //
 
         for _ in 0..2 {
             r_data.recv().unwrap();
         }
+
+        // -- get stats -- //
+
+        let (s, r) = tokio::sync::oneshot::channel();
+        cmd_send_1.send(Cmd::Stats(s)).unwrap();
+        println!(
+            "peer_con_1: {}",
+            String::from_utf8_lossy(&r.await.unwrap().to_vec().unwrap())
+        );
+        let (s, r) = tokio::sync::oneshot::channel();
+        cmd_send_2.send(Cmd::Stats(s)).unwrap();
+        println!(
+            "peer_con_2: {}",
+            String::from_utf8_lossy(&r.await.unwrap().to_vec().unwrap())
+        );
 
         // -- cleanup -- //
 

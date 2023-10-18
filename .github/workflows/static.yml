@@ -1,5 +1,8 @@
 name: Static Analysis
 on:
+  merge_group:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -16,6 +19,7 @@ jobs:
         ]
         toolchain: [
           stable,
+          1.71.1
         ]
     steps:
       - name: Checkout
@@ -24,19 +28,15 @@ jobs:
       - name: Go Toolchain
         uses: actions/setup-go@v3
         with:
-          go-version: '=1.18.0'
+          go-version: '=1.20.0'
 
-      - name: Toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          components: rustfmt, clippy
+      - name: Rust Toolchain
+        run: |
+          rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update
+          rustup default ${{ matrix.toolchain }}
 
-      - name: Cargo Install Readme
-        uses: actions-rs/cargo@v1
-        with:
-          command: install
-          args: cargo-rdme
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Make Static
         run: make static

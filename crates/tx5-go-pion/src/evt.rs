@@ -6,11 +6,51 @@ use std::sync::Arc;
 use tx5_go_pion_sys::Event as SysEvent;
 use tx5_go_pion_sys::API;
 
+/// PeerConnectionState events.
+#[derive(Debug)]
+pub enum PeerConnectionState {
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    New = 0x01,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    Connecting = 0x02,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    Connected = 0x03,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    Disconnected = 0x04,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    Failed = 0x05,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    Closed = 0x06,
+}
+
+impl PeerConnectionState {
+    /// Construct from a raw integer value.
+    pub fn from_raw(raw: usize) -> Self {
+        match raw {
+            0x01 => PeerConnectionState::New,
+            0x02 => PeerConnectionState::Connecting,
+            0x03 => PeerConnectionState::Connected,
+            0x04 => PeerConnectionState::Disconnected,
+            0x05 => PeerConnectionState::Failed,
+            0x06 => PeerConnectionState::Closed,
+            _ => panic!("invalid raw PeerConnectionState value: {raw}"),
+        }
+    }
+}
+
 /// Incoming events related to a PeerConnection.
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
     /// PeerConnection Error.
     Error(std::io::Error),
+
+    /// PeerConnectionState event.
+    State(PeerConnectionState),
 
     /// Received a trickle ICE candidate.
     ICECandidate(GoBuf),
@@ -30,6 +70,9 @@ pub enum DataChannelEvent {
 
     /// DataChannel incoming message.
     Message(GoBuf),
+
+    /// DataChannel buffered amount is now low.
+    BufferedAmountLow,
 }
 
 #[inline]
@@ -88,9 +131,17 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 }
             }
             SysEvent::PeerConStateChange {
-                peer_con_id: _,
-                peer_con_state: _,
-            } => (),
+                peer_con_id,
+                peer_con_state,
+            } => {
+                let maybe_cb =
+                    MANAGER.lock().peer_con.get(&peer_con_id).cloned();
+                if let Some(cb) = maybe_cb {
+                    cb(PeerConnectionEvent::State(
+                        PeerConnectionState::from_raw(peer_con_state),
+                    ));
+                }
+            }
             SysEvent::PeerConDataChan {
                 peer_con_id,
                 data_chan_id,
@@ -100,21 +151,21 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 if let Some(cb) = maybe_cb {
                     cb(PeerConnectionEvent::DataChannel(DataChannelSeed::new(
                         data_chan_id,
-                    )))
+                    )));
                 }
             }
             SysEvent::DataChanClose(data_chan_id) => {
                 let maybe_cb =
                     MANAGER.lock().data_chan.get(&data_chan_id).cloned();
                 if let Some(cb) = maybe_cb {
-                    cb(DataChannelEvent::Close)
+                    cb(DataChannelEvent::Close);
                 }
             }
             SysEvent::DataChanOpen(data_chan_id) => {
                 let maybe_cb =
                     MANAGER.lock().data_chan.get(&data_chan_id).cloned();
                 if let Some(cb) = maybe_cb {
-                    cb(DataChannelEvent::Open)
+                    cb(DataChannelEvent::Open);
                 }
             }
             SysEvent::DataChanMessage {
@@ -124,7 +175,14 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 let maybe_cb =
                     MANAGER.lock().data_chan.get(&data_chan_id).cloned();
                 if let Some(cb) = maybe_cb {
-                    cb(DataChannelEvent::Message(GoBuf(buffer_id)))
+                    cb(DataChannelEvent::Message(GoBuf(buffer_id)));
+                }
+            }
+            SysEvent::DataChanBufferedAmountLow(data_chan_id) => {
+                let maybe_cb =
+                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
+                if let Some(cb) = maybe_cb {
+                    cb(DataChannelEvent::BufferedAmountLow);
                 }
             }
         });

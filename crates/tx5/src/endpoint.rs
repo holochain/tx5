@@ -1,6 +1,8 @@
 //! Tx5 endpoint.
 
 use crate::*;
+use opentelemetry_api::{metrics::Unit, KeyValue};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tx5_core::Tx5Url;
 
@@ -148,7 +150,16 @@ impl Ep {
         self.state.listener_sig(sig_url)
     }
 
+    /// Close down all connections to, fail all outgoing messages to,
+    /// and drop all incoming messages from, the given remote id,
+    /// for the specified ban time period.
+    pub fn ban(&self, rem_id: Id, span: std::time::Duration) {
+        self.state.ban(rem_id, span);
+    }
+
     /// Send data to a remote on this tx5 endpoint.
+    /// The future returned from this method will resolve when
+    /// the data is handed off to our networking backend.
     pub fn send<B: bytes::Buf>(
         &self,
         rem_cli_url: Tx5Url,
@@ -157,11 +168,46 @@ impl Ep {
         self.state.snd_data(rem_cli_url, data)
     }
 
+    /// Broadcast data to all connections that happen to be open.
+    /// If no connections are open, no data will be broadcast.
+    /// The future returned from this method will resolve when all
+    /// broadcast messages have been handed off to our networking backend.
+    ///
+    /// This method is currently not ideal. It naively gets a list
+    /// of open connection urls and adds the broadcast to all of their queues.
+    /// This could result in a connection being re-established just
+    /// for the broadcast to occur.
+    pub fn broadcast<B: bytes::Buf>(
+        &self,
+        mut data: B,
+    ) -> impl std::future::Future<Output = Result<Vec<Result<()>>>> + 'static + Send
+    {
+        let data = data.copy_to_bytes(data.remaining());
+        let state = self.state.clone();
+        async move {
+            let url_list = state.list_connected().await?;
+            Ok(futures::future::join_all(
+                url_list
+                    .into_iter()
+                    .map(|url| state.snd_data(url, data.clone())),
+            )
+            .await)
+        }
+    }
+
     /// Send a demo broadcast to every connected signal server.
     /// Warning, if demo mode is not enabled on these servers, this
     /// could result in a ban.
     pub fn demo(&self) -> Result<()> {
         self.state.snd_demo()
+    }
+
+    /// Get stats.
+    pub fn get_stats(
+        &self,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value>> + 'static + Send
+    {
+        self.state.stats()
     }
 }
 
@@ -283,6 +329,21 @@ async fn new_sig_task(
             }
         };
     }
+
+    tracing::warn!("signal connection CLOSED");
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackendMetrics {
+    #[serde(default)]
+    messages_sent: u64,
+    #[serde(default)]
+    messages_received: u64,
+    #[serde(default)]
+    bytes_sent: u64,
+    #[serde(default)]
+    bytes_received: u64,
 }
 
 #[cfg(feature = "backend-go-pion")]
@@ -296,14 +357,23 @@ pub(crate) fn on_new_conn(
 
 #[cfg(feature = "backend-go-pion")]
 async fn new_conn_task(
-    _config: DynConfig,
+    config: DynConfig,
     ice_servers: Arc<serde_json::Value>,
     seed: state::ConnStateSeed,
 ) {
+    let config = &config;
+
     use tx5_go_pion::DataChannelEvent as DataEvt;
     use tx5_go_pion::PeerConnectionEvent as PeerEvt;
+    use tx5_go_pion::PeerConnectionState as PeerState;
 
     enum MultiEvt {
+        OneSec,
+        Stats(
+            tokio::sync::oneshot::Sender<
+                Option<HashMap<String, BackendMetrics>>,
+            >,
+        ),
         Peer(PeerEvt),
         Data(DataEvt),
     }
@@ -336,7 +406,166 @@ async fn new_conn_task(
         Ok(r) => r,
     };
 
+    let state_uniq = conn_state.meta().state_uniq.clone();
+    let conn_uniq = conn_state.meta().conn_uniq.clone();
+    let rem_id = conn_state.meta().cli_url.id().unwrap();
+
+    struct Unregister(
+        Option<Box<dyn opentelemetry_api::metrics::CallbackRegistration>>,
+    );
+    impl Drop for Unregister {
+        fn drop(&mut self) {
+            if let Some(mut unregister) = self.0.take() {
+                let _ = unregister.unregister();
+            }
+        }
+    }
+
+    let peer_snd_task = peer_snd.clone();
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if peer_snd_task.send(MultiEvt::OneSec).is_err() {
+                break;
+            }
+        }
+    });
+
+    let slot: Arc<std::sync::Mutex<Option<HashMap<String, BackendMetrics>>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let weak_slot = Arc::downgrade(&slot);
+    let peer_snd_task = peer_snd.clone();
+    tokio::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+            if let Some(slot) = weak_slot.upgrade() {
+                let (s, r) = tokio::sync::oneshot::channel();
+                if peer_snd_task.send(MultiEvt::Stats(s)).is_err() {
+                    break;
+                }
+                if let Ok(stats) = r.await {
+                    *slot.lock().unwrap() = stats;
+                }
+            } else {
+                break;
+            }
+        }
+    });
+
+    let weak_slot = Arc::downgrade(&slot);
+    let _unregister = {
+        use opentelemetry_api::metrics::MeterProvider;
+
+        let meter = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![
+                    KeyValue::new("state_uniq", state_uniq.to_string()),
+                    KeyValue::new("conn_uniq", conn_uniq.to_string()),
+                    KeyValue::new("remote_id", rem_id.to_string()),
+                ]),
+            );
+        let ice_snd = meter
+            .u64_observable_counter("tx5.conn.ice.send")
+            .with_description("Bytes sent on ice channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let ice_rcv = meter
+            .u64_observable_counter("tx5.conn.ice.recv")
+            .with_description("Bytes received on ice channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let data_snd = meter
+            .u64_observable_counter("tx5.conn.data.send")
+            .with_description("Bytes sent on data channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let data_rcv = meter
+            .u64_observable_counter("tx5.conn.data.recv")
+            .with_description("Bytes received on data channel")
+            .with_unit(Unit::new("By"))
+            .init();
+        let data_snd_msg = meter
+            .u64_observable_counter("tx5.conn.data.send.message.count")
+            .with_description("Message count sent on data channel")
+            .init();
+        let data_rcv_msg = meter
+            .u64_observable_counter("tx5.conn.data.recv.message.count")
+            .with_description("Message count received on data channel")
+            .init();
+        let unregister = match meter.register_callback(
+            &[data_snd.as_any(), data_rcv.as_any()],
+            move |obs| {
+                if let Some(slot) = weak_slot.upgrade() {
+                    let guard = slot.lock().unwrap();
+                    if let Some(slot) = &*guard {
+                        for (k, v) in slot.iter() {
+                            if k.starts_with("DataChannel") {
+                                obs.observe_u64(&data_snd, v.bytes_sent, &[]);
+                                obs.observe_u64(
+                                    &data_rcv,
+                                    v.bytes_received,
+                                    &[],
+                                );
+                                obs.observe_u64(
+                                    &data_snd_msg,
+                                    v.messages_sent,
+                                    &[],
+                                );
+                                obs.observe_u64(
+                                    &data_rcv_msg,
+                                    v.messages_received,
+                                    &[],
+                                );
+                            } else if k.starts_with("iceTransport") {
+                                obs.observe_u64(&ice_snd, v.bytes_sent, &[]);
+                                obs.observe_u64(
+                                    &ice_rcv,
+                                    v.bytes_received,
+                                    &[],
+                                );
+                            }
+                        }
+                    }
+                }
+            },
+        ) {
+            Ok(unregister) => Some(unregister),
+            Err(err) => {
+                tracing::warn!(?err, "unable to register connection metrics");
+                None
+            }
+        };
+        Unregister(unregister)
+    };
+
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
+    let mut data_chan_ready = false;
+
+    let mut check_data_chan_ready =
+        |data_chan: &mut Option<tx5_go_pion::DataChannel>| {
+            if data_chan_ready {
+                return Ok(());
+            }
+            if let Some(data_chan) = data_chan.as_mut() {
+                let state = data_chan.ready_state()?;
+                if state == 2
+                /* open */
+                {
+                    data_chan_ready = true;
+                    data_chan.set_buffered_amount_low_threshold(
+                        config.per_data_chan_buf_low(),
+                    )?;
+                    conn_state.ready()?;
+                }
+            }
+            Result::Ok(())
+        };
+
+    tracing::debug!(?conn_uniq, "PEER CON OPEN");
 
     loop {
         tokio::select! {
@@ -346,9 +575,44 @@ async fn new_conn_task(
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
                     }
+                    Some(MultiEvt::OneSec) => {
+                        if let Some(data_chan) = data_chan.as_mut() {
+                            if let Ok(buf) = data_chan.buffered_amount() {
+                                if buf <= config.per_data_chan_buf_low() {
+                                    conn_state.check_send_waiting(Some(state::BufState::Low)).await;
+                                }
+                            }
+                        }
+                    }
+                    Some(MultiEvt::Stats(resp)) => {
+                        if let Ok(mut buf) = peer.stats().await.map(BackBuf::from_raw) {
+                            if let Ok(val) = buf.to_json() {
+                                let _ = resp.send(Some(val));
+                            } else {
+                                let _ = resp.send(None);
+                            }
+                        } else {
+                            let _ = resp.send(None);
+                        }
+                    }
                     Some(MultiEvt::Peer(PeerEvt::Error(err))) => {
                         conn_state.close(err);
                         break;
+                    }
+                    Some(MultiEvt::Peer(PeerEvt::State(peer_state))) => {
+                        match peer_state {
+                            PeerState::New
+                            | PeerState::Connecting
+                            | PeerState::Connected => {
+                                tracing::debug!(?peer_state);
+                            }
+                            PeerState::Disconnected
+                            | PeerState::Failed
+                            | PeerState::Closed => {
+                                conn_state.close(Error::err(format!("BackendState:{peer_state:?}")));
+                                break;
+                            }
+                        }
                     }
                     Some(MultiEvt::Peer(PeerEvt::ICECandidate(buf))) => {
                         let buf = BackBuf::from_raw(buf);
@@ -361,9 +625,12 @@ async fn new_conn_task(
                         data_chan = Some(chan.handle(move |evt| {
                             let _ = peer_snd.send(MultiEvt::Data(evt));
                         }));
+                        if check_data_chan_ready(&mut data_chan).is_err() {
+                            break;
+                        }
                     }
                     Some(MultiEvt::Data(DataEvt::Open)) => {
-                        if conn_state.ready().is_err() {
+                        if check_data_chan_ready(&mut data_chan).is_err() {
                             break;
                         }
                     }
@@ -376,13 +643,17 @@ async fn new_conn_task(
                             break;
                         }
                     }
+                    Some(MultiEvt::Data(DataEvt::BufferedAmountLow)) => {
+                        tracing::debug!(?conn_uniq, "BufferedAmountLow");
+                        conn_state.check_send_waiting(Some(state::BufState::Low)).await;
+                    }
                 }
             }
             msg = conn_evt.recv() => {
                 match msg {
                     Some(Ok(state::ConnStateEvt::CreateOffer(mut resp))) => {
                         let peer = &mut peer;
-                        let data_chan = &mut data_chan;
+                        let data_chan_w = &mut data_chan;
                         let peer_snd = peer_snd.clone();
                         resp.with(move || async move {
                             let chan = peer.create_data_channel(
@@ -391,7 +662,7 @@ async fn new_conn_task(
                                 }
                             ).await?;
 
-                            *data_chan = Some(chan.handle(move |evt| {
+                            *data_chan_w = Some(chan.handle(move |evt| {
                                 let _ = peer_snd.send(MultiEvt::Data(evt));
                             }));
 
@@ -408,11 +679,14 @@ async fn new_conn_task(
 
                             Ok(BackBuf::from_raw(buf))
                         }).await;
+
+                        if check_data_chan_ready(&mut data_chan).is_err() {
+                            break;
+                        }
                     }
                     Some(Ok(state::ConnStateEvt::CreateAnswer(mut resp))) => {
                         let peer = &mut peer;
                         resp.with(move || async move {
-
                             let mut buf = peer.create_answer(
                                 tx5_go_pion::AnswerConfig::default(),
                             ).await?;
@@ -449,11 +723,21 @@ async fn new_conn_task(
                             match data_chan {
                                 None => Err(Error::id("NoDataChannel")),
                                 Some(chan) => {
-                                    chan.send(buf.imp.buf).await?;
-                                    // TODO - actually report this
-                                    Ok(state::BufState::Low)
+                                    let buf = chan.send(buf.imp.buf).await?;
+                                    if buf > config.per_data_chan_buf_low() {
+                                        Ok(state::BufState::High)
+                                    } else {
+                                        Ok(state::BufState::Low)
+                                    }
                                 }
                             }
+                        }).await;
+                    }
+                    Some(Ok(state::ConnStateEvt::Stats(mut resp))) => {
+                        let peer = &mut peer;
+                        resp.with(move || async move {
+                            peer.stats().await
+                                .map(BackBuf::from_raw)
                         }).await;
                     }
                     Some(Err(_)) => break,
@@ -462,4 +746,6 @@ async fn new_conn_task(
             }
         };
     }
+
+    tracing::debug!("PEER CON CLOSE");
 }

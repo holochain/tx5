@@ -1,6 +1,6 @@
 [package]
 name = "tx5-go-pion"
-version = "0.0.1-alpha.6"
+version = "0.0.3-alpha"
 edition = "2021"
 description = "Rust bindings to the go pion webrtc library"
 license = "MIT OR Apache-2.0"
@@ -11,13 +11,15 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
-tx5-go-pion-sys = { workspace = true }
+futures = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = [ "rt" ] }
+tx5-go-pion-sys = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+tx5-core = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing-subscriber = { workspace = true }
 tx5-go-pion-turn = { workspace = true }

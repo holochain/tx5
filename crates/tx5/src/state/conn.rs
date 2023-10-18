@@ -56,6 +56,7 @@ impl ConnStateSeed {
 }
 
 /// Indication of the current buffer state.
+#[derive(Debug, PartialEq)]
 pub enum BufState {
     /// BackBuffer is low, we can buffer more data.
     Low,
@@ -83,6 +84,9 @@ pub enum ConnStateEvt {
 
     /// Request to send a message on the data channel.
     SndData(BackBuf, OneSnd<BufState>),
+
+    /// Request a stats dump of this peer connection.
+    Stats(OneSnd<BackBuf>),
 }
 
 impl std::fmt::Debug for ConnStateEvt {
@@ -94,6 +98,7 @@ impl std::fmt::Debug for ConnStateEvt {
             ConnStateEvt::SetRem(_, _) => f.write_str("SetRem"),
             ConnStateEvt::SetIce(_, _) => f.write_str("SetIce"),
             ConnStateEvt::SndData(_, _) => f.write_str("SndData"),
+            ConnStateEvt::Stats(_) => f.write_str("Stats"),
         }
     }
 }
@@ -189,7 +194,7 @@ impl ConnStateEvtSnd {
         conn: ConnStateWeak,
         data: BackBuf,
         resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
-        send_permit: tokio::sync::OwnedSemaphorePermit,
+        send_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
         let s = OneSnd::new(move |result| {
             let _send_permit = send_permit;
@@ -214,27 +219,50 @@ impl ConnStateEvtSnd {
         });
         let _ = self.0.send(Ok(ConnStateEvt::SndData(data, s)));
     }
+
+    pub fn stats(
+        &self,
+        additions: Vec<(String, serde_json::Value)>,
+        rsp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+    ) {
+        let _ = self.0.send(Ok(ConnStateEvt::Stats(OneSnd::new(
+            move |buf: Result<BackBuf>| {
+                let _ = rsp.send((move || {
+                    let mut stats: serde_json::Value = buf?.to_json()?;
+                    for (key, value) in additions {
+                        stats.as_object_mut().unwrap().insert(key, value);
+                    }
+                    Ok(stats)
+                })());
+            },
+        ))));
+    }
 }
 
 struct ConnStateData {
     conn_uniq: Uniq,
     this: ConnStateWeak,
-    metrics: prometheus::Registry,
-    metric_conn_count: prometheus::IntGauge,
+    metric_conn_count: AtomicObservableUpDownCounterI64,
     meta: ConnStateMeta,
     state: StateWeak,
     this_id: Id,
-    cli_url: Tx5Url,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
     rcv_offer: bool,
     rcv_pending:
         HashMap<u64, (BytesList, Vec<tokio::sync::OwnedSemaphorePermit>)>,
+    wait_preflight: bool,
+    offer: (u64, u64, u64, u64),
+    answer: (u64, u64, u64, u64),
+    ice: (u64, u64, u64, u64),
+    buf_state: BufState,
+    send_wait: bool,
 }
 
 impl Drop for ConnStateData {
     fn drop(&mut self) {
+        self.metric_conn_count.add(-1);
         self.shutdown(Error::id("Dropped"));
     }
 }
@@ -252,19 +280,6 @@ impl ConnStateData {
             rem_id = ?self.rem_id,
             "ConnShutdown",
         );
-        self.metric_conn_count.dec();
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_bytes_snd.clone()));
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_bytes_rcv.clone()));
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_age.clone()));
-        let _ = self
-            .metrics
-            .unregister(Box::new(self.meta.metric_last_active.clone()));
         if let Some(state) = self.state.upgrade() {
             state.close_conn(self.rem_id, self.this.clone(), err.err_clone());
         }
@@ -284,6 +299,8 @@ impl ConnStateData {
     async fn exec(&mut self, cmd: ConnCmd) -> Result<()> {
         match cmd {
             ConnCmd::Tick1s => self.tick_1s().await,
+            ConnCmd::Stats(rsp) => self.stats(rsp).await,
+            ConnCmd::TrackSig { ty, bytes } => self.track_sig(ty, bytes).await,
             ConnCmd::NotifyConstructed => self.notify_constructed().await,
             ConnCmd::CheckConnectedTimeout => {
                 self.check_connected_timeout().await
@@ -296,7 +313,10 @@ impl ConnStateData {
             ConnCmd::InAnswer { answer } => self.in_answer(answer).await,
             ConnCmd::InIce { ice, cache } => self.in_ice(ice, cache).await,
             ConnCmd::Ready => self.ready().await,
-            ConnCmd::MaybeFetchForSend => self.maybe_fetch_for_send().await,
+            ConnCmd::MaybeFetchForSend {
+                send_complete,
+                buf_state,
+            } => self.maybe_fetch_for_send(send_complete, buf_state).await,
             ConnCmd::Send { to_send } => self.send(to_send).await,
             ConnCmd::Recv {
                 ident,
@@ -307,11 +327,77 @@ impl ConnStateData {
     }
 
     async fn tick_1s(&mut self) -> Result<()> {
-        if self.meta.metric_last_active.elapsed()
-            > self.meta.config.max_conn_init()
+        if self.meta.last_active_at.elapsed() > self.meta.config.max_conn_init()
             && !self.connected()
         {
             self.shutdown(Error::id("InactivityTimeout"));
+        }
+
+        Ok(())
+    }
+
+    async fn stats(
+        &mut self,
+        rsp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+    ) -> Result<()> {
+        let mut additions = Vec::new();
+        additions.push((
+            "ageSeconds".into(),
+            self.meta.created_at.elapsed().as_secs_f64().into(),
+        ));
+
+        let sig_stats = serde_json::json!({
+            "offersSent": self.offer.0,
+            "offerBytesSent": self.offer.1,
+            "offersReceived": self.offer.2,
+            "offerBytesReceived": self.offer.3,
+            "answersSent": self.answer.0,
+            "answerBytesSent": self.answer.1,
+            "answersReceived": self.answer.2,
+            "answerBytesReceived": self.answer.3,
+            "iceMessagesSent": self.ice.0,
+            "iceBytesSent": self.ice.1,
+            "iceMessagesReceived": self.ice.2,
+            "iceBytesReceived": self.ice.3,
+        });
+        additions.push(("signalingTransport".into(), sig_stats));
+
+        self.conn_evt.stats(additions, rsp);
+
+        Ok(())
+    }
+
+    async fn track_sig(
+        &mut self,
+        ty: &'static str,
+        bytes: usize,
+    ) -> Result<()> {
+        match ty {
+            "offer_out" => {
+                self.offer.0 += 1;
+                self.offer.1 += bytes as u64;
+            }
+            "offer_in" => {
+                self.offer.2 += 1;
+                self.offer.3 += bytes as u64;
+            }
+            "answer_out" => {
+                self.answer.0 += 1;
+                self.answer.1 += bytes as u64;
+            }
+            "answer_in" => {
+                self.answer.2 += 1;
+                self.answer.3 += bytes as u64;
+            }
+            "ice_out" => {
+                self.ice.0 += 1;
+                self.ice.1 += bytes as u64;
+            }
+            "ice_in" => {
+                self.ice.2 += 1;
+                self.ice.3 += bytes as u64;
+            }
+            _ => (),
         }
 
         Ok(())
@@ -413,14 +499,44 @@ impl ConnStateData {
     }
 
     async fn ready(&mut self) -> Result<()> {
-        if let Some(state) = self.state.upgrade() {
-            state.conn_ready(self.cli_url.clone());
+        // first, check / send the preflight
+        let data = self
+            .meta
+            .config
+            .on_conn_preflight(self.meta.cli_url.clone())
+            .await?
+            .unwrap_or_else(bytes::Bytes::new);
+
+        for buf in divide_send(&*self.meta.config, &self.meta.snd_ident, data)?
+        {
+            self.conn_evt.snd_data(self.this.clone(), buf, None, None);
         }
+
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
-        self.maybe_fetch_for_send().await
+        self.maybe_fetch_for_send(false, None).await
     }
 
-    async fn maybe_fetch_for_send(&mut self) -> Result<()> {
+    async fn maybe_fetch_for_send(
+        &mut self,
+        send_complete: bool,
+        buf_state: Option<BufState>,
+    ) -> Result<()> {
+        if send_complete {
+            self.send_wait = false;
+        }
+
+        if let Some(buf_state) = buf_state {
+            if self.buf_state != buf_state {
+                tracing::debug!(
+                    conn_uniq = %self.meta.conn_uniq,
+                    old_buf_state = ?self.buf_state,
+                    new_buf_state = ?buf_state,
+                    "Updating BufState",
+                );
+                self.buf_state = buf_state;
+            }
+        }
+
         if !self.connected() {
             return Ok(());
         }
@@ -428,13 +544,22 @@ impl ConnStateData {
         // if we are within the close time send grace period
         // do not send any new messages so we can try to shut
         // down gracefully
-        if self.meta.metric_age.elapsed()
+        if self.meta.created_at.elapsed()
             > (MAX_CON_TIME - CON_CLOSE_SEND_GRACE)
         {
             return Ok(());
         }
 
-        // TODO - also check our buffer amt low status
+        if let BufState::High = self.buf_state {
+            // wait for our buffer state to be low before fetching
+            // more data to send.
+            return Ok(());
+        }
+
+        if self.send_wait {
+            // we already have an outgoing send, don't request another
+            return Ok(());
+        }
 
         if let Some(state) = self.state.upgrade() {
             state.fetch_for_send(self.this.clone(), self.rem_id)?;
@@ -455,12 +580,49 @@ impl ConnStateData {
 
         tracing::trace!(conn_uniq = %self.conn_uniq, %msg_uniq, "conn send");
 
-        self.meta.metric_last_active.reset();
-        self.meta.metric_bytes_snd.inc_by(data.len()? as u64);
+        self.meta.last_active_at = std::time::Instant::now();
+        self.meta.metric_bytes_snd.add(data.len()? as u64);
 
-        self.conn_evt
-            .snd_data(self.this.clone(), data, resp, send_permit);
+        self.send_wait = true;
+        self.conn_evt.snd_data(
+            self.this.clone(),
+            data,
+            resp,
+            Some(send_permit),
+        );
 
+        Ok(())
+    }
+
+    async fn handle_recv_data(
+        &mut self,
+        mut bl: BytesList,
+        permit: Vec<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<()> {
+        use bytes::Buf;
+
+        if let Some(state) = self.state.upgrade() {
+            if self.wait_preflight {
+                let bytes = if bl.has_remaining() {
+                    Some(bl.copy_to_bytes(bl.remaining()))
+                } else {
+                    None
+                };
+                self.meta
+                    .config
+                    .on_conn_validate(self.meta.cli_url.clone(), bytes)
+                    .await?;
+                self.wait_preflight = false;
+
+                state.conn_ready(self.meta.cli_url.clone());
+            } else {
+                state.publish(StateEvt::RcvData(
+                    self.meta.cli_url.clone(),
+                    bl.into_dyn(),
+                    vec![Permit(permit)],
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -471,9 +633,9 @@ impl ConnStateData {
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<()> {
         let len = data.len();
-        self.meta.metric_last_active.reset();
+        self.meta.last_active_at = std::time::Instant::now();
 
-        self.meta.metric_bytes_rcv.inc_by(len as u64);
+        self.meta.metric_bytes_rcv.add(len as u64);
 
         let is_finish = ident.is_finish();
         let ident = ident.unset_finish();
@@ -483,17 +645,11 @@ impl ConnStateData {
                 if data.is_empty() || is_finish {
                     tracing::trace!(%is_finish, %ident, "rcv already finished");
                     // special case for oneshot message
-                    if let Some(state) = self.state.upgrade() {
-                        let mut bl = BytesList::new();
-                        if !data.is_empty() {
-                            bl.push(data);
-                        }
-                        state.publish(StateEvt::RcvData(
-                            self.cli_url.clone(),
-                            bl.into_dyn(),
-                            vec![Permit(vec![permit])],
-                        ));
+                    let mut bl = BytesList::new();
+                    if !data.is_empty() {
+                        bl.push(data);
                     }
+                    self.handle_recv_data(bl, vec![permit]).await?;
                 } else {
                     tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv new");
                     let mut bl = BytesList::new();
@@ -509,13 +665,7 @@ impl ConnStateData {
                     if !data.is_empty() {
                         bl.push(data);
                     }
-                    if let Some(state) = self.state.upgrade() {
-                        state.publish(StateEvt::RcvData(
-                            self.cli_url.clone(),
-                            bl.into_dyn(),
-                            vec![Permit(permit)],
-                        ));
-                    }
+                    self.handle_recv_data(bl, permit).await?;
                 } else {
                     tracing::trace!(%is_finish, %ident, byte_count=%len, "rcv next");
                     e.get_mut().0.push(data);
@@ -530,6 +680,11 @@ impl ConnStateData {
 
 enum ConnCmd {
     Tick1s,
+    Stats(tokio::sync::oneshot::Sender<Result<serde_json::Value>>),
+    TrackSig {
+        ty: &'static str,
+        bytes: usize,
+    },
     NotifyConstructed,
     CheckConnectedTimeout,
     Ice {
@@ -553,7 +708,10 @@ enum ConnCmd {
         cache: bool,
     },
     Ready,
-    MaybeFetchForSend,
+    MaybeFetchForSend {
+        send_complete: bool,
+        buf_state: Option<BufState>,
+    },
     Send {
         to_send: SendData,
     },
@@ -567,8 +725,7 @@ enum ConnCmd {
 #[allow(clippy::too_many_arguments)]
 async fn conn_state_task(
     conn_limit: Arc<tokio::sync::Semaphore>,
-    metrics: prometheus::Registry,
-    metric_conn_count: prometheus::IntGauge,
+    metric_conn_count: AtomicObservableUpDownCounterI64,
     meta: ConnStateMeta,
     strong: ConnState,
     conn_rcv: ManyRcv<ConnStateEvt>,
@@ -577,33 +734,40 @@ async fn conn_state_task(
     state: StateWeak,
     conn_uniq: Uniq,
     this_id: Id,
-    cli_url: Tx5Url,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
     sig_state: SigStateWeak,
     sig_ready: tokio::sync::oneshot::Receiver<Result<Tx5Url>>,
 ) -> Result<()> {
-    metric_conn_count.inc();
+    metric_conn_count.add(1);
 
     let mut data = ConnStateData {
         conn_uniq,
         this,
-        metrics,
         metric_conn_count,
         meta,
         state,
         this_id,
-        cli_url,
         rem_id,
         conn_evt,
         sig_state,
         rcv_offer: false,
         rcv_pending: HashMap::new(),
+        wait_preflight: true,
+        offer: (0, 0, 0, 0),
+        answer: (0, 0, 0, 0),
+        ice: (0, 0, 0, 0),
+        buf_state: BufState::Low,
+        send_wait: false,
     };
 
     let mut permit = None;
 
     let err = match async {
+        if conn_limit.available_permits() < 1 {
+            tracing::warn!(conn_uniq = %data.conn_uniq, "max connections reached, waiting for permit");
+        }
+
         permit = Some(
             conn_limit
                 .acquire_owned()
@@ -646,14 +810,18 @@ async fn conn_state_task(
 
 #[derive(Clone)]
 pub(crate) struct ConnStateMeta {
+    pub(crate) created_at: std::time::Instant,
+    pub(crate) last_active_at: std::time::Instant,
+    pub(crate) cli_url: Tx5Url,
+    pub(crate) state_uniq: Uniq,
     pub(crate) conn_uniq: Uniq,
     pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
+    _conn_snd: ConnStateEvtSnd,
     pub(crate) rcv_limit: Arc<tokio::sync::Semaphore>,
-    pub(crate) metric_bytes_snd: prometheus::IntCounter,
-    pub(crate) metric_bytes_rcv: prometheus::IntCounter,
-    pub(crate) metric_age: MetricTimestamp,
-    pub(crate) metric_last_active: MetricTimestamp,
+    pub(crate) metric_bytes_snd: AtomicObservableCounterU64,
+    pub(crate) metric_bytes_rcv: AtomicObservableCounterU64,
+    snd_ident: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Weak version on ConnState.
@@ -712,6 +880,10 @@ impl ConnState {
     }
     */
 
+    pub(crate) fn meta(&self) -> &ConnStateMeta {
+        &self.1
+    }
+
     /// Get a weak version of this ConnState instance.
     pub fn weak(&self) -> ConnStateWeak {
         ConnStateWeak(self.0.weak(), self.1.clone())
@@ -725,6 +897,11 @@ impl ConnState {
     /// Shutdown the connection with an error.
     pub fn close(&self, err: std::io::Error) {
         self.0.close(err);
+    }
+
+    /// Get the remote url of this connection.
+    pub fn rem_url(&self) -> Tx5Url {
+        self.1.cli_url.clone()
     }
 
     /// The connection generated an ice candidate for the remote.
@@ -777,6 +954,10 @@ impl ConnState {
                 std::io::copy(&mut data, &mut buf)?;
                 let buf = buf.into_inner().freeze();
 
+                if self.1.rcv_limit.available_permits() < len {
+                    tracing::warn!(%len, "recv queue full, waiting for permits");
+                }
+
                 let permit = self
                     .1
                     .rcv_limit
@@ -807,17 +988,25 @@ impl ConnState {
         todo!()
     }
 
+    /// Get stats.
+    pub async fn stats(&self) -> Result<serde_json::Value> {
+        let (s, r) = tokio::sync::oneshot::channel();
+        if self.0.send(Ok(ConnCmd::Stats(s))).is_err() {
+            return Err(Error::id("Closed"));
+        }
+        r.await.map_err(|_| Error::id("Closed"))?
+    }
+
     // -- //
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_and_publish(
         config: DynConfig,
         conn_limit: Arc<tokio::sync::Semaphore>,
-        state_prefix: Arc<str>,
-        metrics: prometheus::Registry,
-        metric_conn_count: prometheus::IntGauge,
+        metric_conn_count: AtomicObservableUpDownCounterI64,
         state: StateWeak,
         sig_state: SigStateWeak,
+        state_uniq: Uniq,
         conn_uniq: Uniq,
         this_id: Id,
         cli_url: Tx5Url,
@@ -825,57 +1014,76 @@ impl ConnState {
         rcv_limit: Arc<tokio::sync::Semaphore>,
         sig_ready: tokio::sync::oneshot::Receiver<Result<Tx5Url>>,
         maybe_offer: Option<BackBuf>,
+        snd_ident: Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<ConnStateWeak> {
         let (conn_snd, conn_rcv) = tokio::sync::mpsc::unbounded_channel();
+        let conn_snd = ConnStateEvtSnd(conn_snd);
 
-        // TODO - creates too many time series, just aggregate the full counts
-        let bad_uniq = bad_uniq();
+        let metric_bytes_snd = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![
+                    opentelemetry_api::KeyValue::new(
+                        "state_uniq",
+                        state_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "conn_uniq",
+                        conn_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "remote_id",
+                        rem_id.to_string(),
+                    ),
+                ]),
+            )
+            .u64_observable_counter_atomic("tx5.endpoint.conn.send", 0)
+            .with_description("Outgoing bytes sent on this connection")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init()
+            .0;
 
-        let metric_bytes_snd = prometheus::IntCounter::new(
-            format!("{state_prefix}_conn_{bad_uniq}_bytes_snd"),
-            "bytes sent out of this connection",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_bytes_snd.clone()))
-            .map_err(Error::err)?;
-
-        let metric_bytes_rcv = prometheus::IntCounter::new(
-            format!("{state_prefix}_conn_{bad_uniq}_bytes_rcv"),
-            "incoming bytes received by this connection",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_bytes_rcv.clone()))
-            .map_err(Error::err)?;
-
-        let metric_age = MetricTimestamp::new(
-            format!("{state_prefix}_conn_{bad_uniq}_age"),
-            "microseconds since this connection was created",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_age.clone()))
-            .map_err(Error::err)?;
-
-        let metric_last_active = MetricTimestamp::new(
-            format!("{state_prefix}_conn_{bad_uniq}_last_active"),
-            "microseconds since we last sent or received data on this connection",
-        )
-        .map_err(Error::err)?;
-        metrics
-            .register(Box::new(metric_last_active.clone()))
-            .map_err(Error::err)?;
+        let metric_bytes_rcv = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![
+                    opentelemetry_api::KeyValue::new(
+                        "state_uniq",
+                        state_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "conn_uniq",
+                        conn_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "remote_id",
+                        rem_id.to_string(),
+                    ),
+                ]),
+            )
+            .u64_observable_counter_atomic("tx5.endpoint.conn.recv", 0)
+            .with_description("Incoming bytes received on this connection")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init()
+            .0;
 
         let meta = ConnStateMeta {
+            created_at: std::time::Instant::now(),
+            last_active_at: std::time::Instant::now(),
+            cli_url,
+            state_uniq,
             conn_uniq: conn_uniq.clone(),
             config: config.clone(),
             connected: Arc::new(atomic::AtomicBool::new(false)),
+            _conn_snd: conn_snd.clone(),
             rcv_limit,
             metric_bytes_snd,
             metric_bytes_rcv,
-            metric_age,
-            metric_last_active,
+            snd_ident,
         };
 
         let actor = {
@@ -890,7 +1098,6 @@ impl ConnState {
                 let strong = ConnState(this.upgrade().unwrap(), meta.clone());
                 conn_state_task(
                     conn_limit,
-                    metrics,
                     metric_conn_count,
                     meta.clone(),
                     strong,
@@ -900,9 +1107,8 @@ impl ConnState {
                     state,
                     conn_uniq,
                     this_id,
-                    cli_url,
                     rem_id,
-                    ConnStateEvtSnd(conn_snd),
+                    conn_snd,
                     sig_state,
                     sig_ready,
                 )
@@ -945,6 +1151,10 @@ impl ConnState {
         self.0.send(Ok(ConnCmd::Tick1s))
     }
 
+    pub(crate) fn track_sig(&self, ty: &'static str, bytes: usize) {
+        let _ = self.0.send(Ok(ConnCmd::TrackSig { ty, bytes }));
+    }
+
     async fn check_connected_timeout(&self) {
         let _ = self.0.send(Ok(ConnCmd::CheckConnectedTimeout));
     }
@@ -973,22 +1183,30 @@ impl ConnState {
         let _ = self.0.send(Ok(ConnCmd::InAnswer { answer }));
     }
 
-    pub(crate) fn in_ice(&self, ice: BackBuf, cache: bool) {
+    pub(crate) fn in_ice(&self, mut ice: BackBuf, cache: bool) {
+        let bytes = ice.len().unwrap();
+        let _ = self.0.send(Ok(ConnCmd::TrackSig {
+            ty: "ice_in",
+            bytes,
+        }));
         let _ = self.0.send(Ok(ConnCmd::InIce { ice, cache }));
     }
 
-    pub(crate) async fn notify_send_waiting(&self) {
-        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend));
+    pub(crate) async fn check_send_waiting(&self, buf_state: Option<BufState>) {
+        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend {
+            send_complete: false,
+            buf_state,
+        }));
     }
 
     pub(crate) fn send(&self, to_send: SendData) {
         let _ = self.0.send(Ok(ConnCmd::Send { to_send }));
     }
 
-    pub(crate) fn notify_send_complete(&self, _buffer_state: BufState) {
-        // TODO - something with buffer state
-
-        // for now just trigger a check for another message to send
-        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend));
+    pub(crate) fn notify_send_complete(&self, buf_state: BufState) {
+        let _ = self.0.send(Ok(ConnCmd::MaybeFetchForSend {
+            send_complete: true,
+            buf_state: Some(buf_state),
+        }));
     }
 }

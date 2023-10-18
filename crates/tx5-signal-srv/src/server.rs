@@ -35,9 +35,10 @@ enum ProtoVer {
 }
 
 /// The main entrypoint tx5-signal-server logic task.
+#[allow(deprecated)]
 pub fn exec_tx5_signal_srv(
     config: Config,
-) -> Result<(SocketAddr, ServerDriver)> {
+) -> Result<(ServerDriver, Vec<SocketAddr>, Vec<std::io::Error>)> {
     // make sure our metrics are initialized
     let _ = &*METRICS_REQ_COUNT;
     let _ = &*METRICS_REQ_TIME_S;
@@ -97,13 +98,67 @@ pub fn exec_tx5_signal_srv(
 
     let routes = tx5_ws.or(prometheus).with(warp::trace::request());
 
-    warp::serve(routes)
-        .try_bind_ephemeral(([0, 0, 0, 0], config.port))
-        .map_err(Error::err)
-        .map(|(addr, fut)| {
-            let fut: ServerDriver = Box::pin(fut);
-            (addr, fut)
-        })
+    let mut drv_out = Vec::new();
+    let mut add_out = Vec::new();
+    let mut err_out = Vec::new();
+
+    for addr in config
+        .interfaces
+        .split(',')
+        .map(|s| s.parse::<std::net::IpAddr>())
+    {
+        let addr = match addr {
+            Err(err) => {
+                err_out.push(Error::err(err));
+                continue;
+            }
+            Ok(addr) => addr,
+        };
+        match warp::serve(routes.clone())
+            .try_bind_ephemeral((addr, config.port))
+            .map_err(Error::err)
+            .map(|(addr, fut)| {
+                let fut: ServerDriver = Box::pin(fut);
+                (addr, fut)
+            }) {
+            Err(err) => {
+                err_out.push(err);
+            }
+            Ok((addr, drv)) => {
+                drv_out.push(drv);
+                add_out.append(&mut tx_addr(addr)?);
+            }
+        }
+    }
+
+    if add_out.is_empty() {
+        return Err(Error::str(format!("{err_out:?}")));
+    }
+
+    let drv_out = Box::pin(async move {
+        let _ = futures::future::join_all(drv_out).await;
+    });
+
+    Ok((drv_out, add_out, err_out))
+}
+
+fn tx_addr(addr: std::net::SocketAddr) -> Result<Vec<std::net::SocketAddr>> {
+    if addr.ip().is_unspecified() {
+        let port = addr.port();
+        let mut list = Vec::new();
+        let include_v6 = addr.ip().is_ipv6();
+
+        for iface in if_addrs::get_if_addrs()? {
+            if iface.ip().is_ipv6() && !include_v6 {
+                continue;
+            }
+            list.push((iface.ip(), port).into());
+        }
+
+        Ok(list)
+    } else {
+        Ok(vec![addr])
+    }
 }
 
 fn decode_client_pub(

@@ -53,6 +53,13 @@ func NewDataChan(ch *webrtc.DataChannel) *DataChan {
 				handle,
 			),
 		)
+		EmitEvent(
+			TyDataChanOnBufferedAmountLow,
+			handle,
+			0,
+			0,
+			0,
+		)
 	})
 
 	ch.OnError(func(err error) {
@@ -157,6 +164,63 @@ func CallDataChanReadyState(
 	)
 }
 
+func CallDataChanSetBufferedAmountLowThreshold(
+	data_chan_id UintPtrT,
+	threshold UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(data_chan_id)
+	dataChan := hnd.Value().(*DataChan)
+	dataChan.mu.Lock()
+	defer dataChan.mu.Unlock()
+
+	if dataChan.closed {
+		panic("DataChanClosed")
+	}
+
+	dataChan.ch.SetBufferedAmountLowThreshold(uint64(threshold))
+
+	buffered := dataChan.ch.BufferedAmount()
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyDataChanSetBufferedAmountLowThreshold,
+		UintPtrT(buffered),
+		0,
+		0,
+		0,
+	)
+}
+
+func CallDataChanBufferedAmount(
+	data_chan_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(data_chan_id)
+	dataChan := hnd.Value().(*DataChan)
+	dataChan.mu.Lock()
+	defer dataChan.mu.Unlock()
+
+	if dataChan.closed {
+		panic("DataChanClosed")
+	}
+
+	buffered := dataChan.ch.BufferedAmount()
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyDataChanBufferedAmount,
+		UintPtrT(buffered),
+		0,
+		0,
+		0,
+	)
+}
+
 func CallDataChanSend(
 	data_chan_id UintPtrT,
 	buffer_id UintPtrT,
@@ -187,11 +251,13 @@ func CallDataChanSend(
 		panic(err)
 	}
 
+	buffered := dataChan.ch.BufferedAmount()
+
 	MessageCbInvoke(
 		response_cb,
 		response_usr,
 		TyDataChanSend,
-		0,
+		UintPtrT(buffered),
 		0,
 		0,
 		0,

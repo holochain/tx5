@@ -70,6 +70,65 @@ fn go_unzip_vendor() {
     .expect("failed to extract vendor zip file");
 }
 
+fn set_cmd_go_env(cmd: &mut Command, tgt_os: &str) {
+    // add some cross-compilation translators:
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
+        "arm" => {
+            cmd.env("GOARCH", "arm");
+        }
+        "aarch64" => {
+            cmd.env("GOARCH", "arm64");
+        }
+        "x86_64" => {
+            cmd.env("GOARCH", "amd64");
+        }
+        "x86" => {
+            cmd.env("GOARCH", "386");
+        }
+        _ => (),
+    }
+
+    // and for the os
+    match tgt_os {
+        "windows" => {
+            cmd.env("GOOS", "windows");
+        }
+        "macos" => {
+            cmd.env("GOOS", "darwin");
+        }
+        "ios" => {
+            cmd.env("GOOS", "ios");
+        }
+        "linux" => {
+            cmd.env("GOOS", "linux");
+        }
+        "android" => {
+            cmd.env("GOOS", "android");
+        }
+        "dragonfly" => {
+            cmd.env("GOOS", "dragonfly");
+        }
+        "freebsd" => {
+            cmd.env("GOOS", "freebsd");
+        }
+        "openbsd" => {
+            cmd.env("GOOS", "openbsd");
+        }
+        "netbsd" => {
+            cmd.env("GOOS", "netbsd");
+        }
+        _ => (),
+    }
+
+    if tgt_os == "android" {
+        let linker = std::env::var("RUSTC_LINKER").unwrap();
+        println!("cargo:warning=LINKER: {linker:?}");
+        cmd.env("CC_FOR_TARGET", &linker);
+        cmd.env("CC", &linker);
+        cmd.env("CGO_ENABLED", "1");
+    }
+}
+
 fn go_build() {
     let out_dir = std::env::var("OUT_DIR")
         .map(std::path::PathBuf::from)
@@ -84,17 +143,19 @@ fn go_build() {
 
     let mut lib_path = out_dir.clone();
 
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
-    lib_path.push("go-pion-webrtc.dylib");
-    #[cfg(target_os = "windows")]
-    lib_path.push("go-pion-webrtc.dll");
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "windows"
-    )))]
-    lib_path.push("go-pion-webrtc.so");
+    let tgt_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+
+    match tgt_os.as_str() {
+        "macos" | "ios" | "tvos" => {
+            lib_path.push("go-pion-webrtc.dylib");
+        }
+        "windows" => {
+            lib_path.push("go-pion-webrtc.dll");
+        }
+        _ => {
+            lib_path.push("go-pion-webrtc.so");
+        }
+    }
 
     let mut cache = out_dir.clone();
     cache.push("go-build");
@@ -120,15 +181,23 @@ fn go_build() {
     cp("go.mod");
 
     let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir.clone())
-        .env("GOCACHE", cache.clone())
-        .arg("build")
-        .arg("-ldflags") // strip debug symbols
-        .arg("-s -w") // strip debug symbols
-        .arg("-o")
-        .arg(lib_path.clone())
-        .arg("-mod=vendor")
-        .arg("-buildmode=c-shared");
+
+    set_cmd_go_env(&mut cmd, tgt_os.as_str());
+
+    // grr, clippy, the debug symbols belong in one arg
+    #[allow(clippy::suspicious_command_arg_space)]
+    {
+        cmd.current_dir(out_dir.clone())
+            .env("GOCACHE", cache.clone())
+            .arg("build")
+            .arg("-ldflags") // strip debug symbols
+            .arg("-s -w") // strip debug symbols
+            .arg("-buildvcs=false") // disable version control stamping binary
+            .arg("-o")
+            .arg(lib_path.clone())
+            .arg("-mod=vendor")
+            .arg("-buildmode=c-shared");
+    }
 
     println!("cargo:warning=NOTE:running go build: {cmd:?}");
 
@@ -141,33 +210,44 @@ fn go_build() {
         "error running go build",
     );
 
-    let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir.clone())
-        .env("GOCACHE", cache)
-        .arg("build")
-        .arg("-ldflags") // strip debug symbols
-        .arg("-s -w") // strip debug symbols
-        .arg("-o")
-        .arg(lib)
-        .arg("-mod=vendor")
-        .arg("-buildmode=c-archive");
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("go");
 
-    println!("cargo:warning=NOTE:running go build: {cmd:?}");
+        set_cmd_go_env(&mut cmd, tgt_os.as_str());
 
-    assert!(
-        cmd.spawn()
-            .expect("error spawing go build")
-            .wait()
-            .expect("error running go build")
-            .success(),
-        "error running go build",
-    );
+        // grr, clippy, the debug symbols belong in one arg
+        #[allow(clippy::suspicious_command_arg_space)]
+        {
+            cmd.current_dir(out_dir.clone())
+                .env("GOCACHE", cache)
+                .arg("build")
+                .arg("-ldflags") // strip debug symbols
+                .arg("-s -w") // strip debug symbols
+                .arg("-buildvcs=false") // disable version control stamping binary
+                .arg("-o")
+                .arg(lib)
+                .arg("-mod=vendor")
+                .arg("-buildmode=c-archive");
+        }
 
-    println!(
-        "cargo:rustc-link-search=native={}",
-        out_dir.to_string_lossy()
-    );
-    println!("cargo:rustc-link-lib=static=go-pion-webrtc");
+        println!("cargo:warning=NOTE:running go build: {cmd:?}");
+
+        assert!(
+            cmd.spawn()
+                .expect("error spawing go build")
+                .wait()
+                .expect("error running go build")
+                .success(),
+            "error running go build",
+        );
+
+        println!(
+            "cargo:rustc-link-search=native={}",
+            out_dir.to_string_lossy()
+        );
+        println!("cargo:rustc-link-lib=static=go-pion-webrtc");
+    }
 
     use sha2::Digest;
     let data = std::fs::read(lib_path).expect("failed to read generated lib");

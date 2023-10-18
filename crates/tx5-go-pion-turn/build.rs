@@ -75,14 +75,78 @@ fn go_build(path: &std::path::Path) {
     cp("go.mod");
 
     let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir.clone())
-        .env("GOCACHE", cache)
-        .arg("build")
-        .arg("-ldflags") // strip debug symbols
-        .arg("-s -w") // strip debug symbols
-        .arg("-o")
-        .arg(path)
-        .arg("-mod=vendor");
+
+    // add some cross-compilation translators:
+    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
+        "arm" => {
+            cmd.env("GOARCH", "arm");
+        }
+        "aarch64" => {
+            cmd.env("GOARCH", "arm64");
+        }
+        "x86_64" => {
+            cmd.env("GOARCH", "amd64");
+        }
+        "x86" => {
+            cmd.env("GOARCH", "386");
+        }
+        _ => (),
+    }
+
+    // and for the os
+    let tgt_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    match tgt_os.as_str() {
+        "windows" => {
+            cmd.env("GOOS", "windows");
+        }
+        "macos" => {
+            cmd.env("GOOS", "darwin");
+        }
+        "ios" => {
+            cmd.env("GOOS", "ios");
+        }
+        "linux" => {
+            cmd.env("GOOS", "linux");
+        }
+        "android" => {
+            cmd.env("GOOS", "android");
+        }
+        "dragonfly" => {
+            cmd.env("GOOS", "dragonfly");
+        }
+        "freebsd" => {
+            cmd.env("GOOS", "freebsd");
+        }
+        "openbsd" => {
+            cmd.env("GOOS", "openbsd");
+        }
+        "netbsd" => {
+            cmd.env("GOOS", "netbsd");
+        }
+        _ => (),
+    }
+
+    if tgt_os == "android" {
+        let linker = std::env::var("RUSTC_LINKER").unwrap();
+        println!("cargo:warning=LINKER: {linker:?}");
+        cmd.env("CC_FOR_TARGET", &linker);
+        cmd.env("CC", &linker);
+        cmd.env("CGO_ENABLED", "1");
+    }
+
+    // grr, clippy, the debug symbols belong in one arg
+    #[allow(clippy::suspicious_command_arg_space)]
+    {
+        cmd.current_dir(out_dir.clone())
+            .env("GOCACHE", cache)
+            .arg("build")
+            .arg("-ldflags") // strip debug symbols
+            .arg("-s -w") // strip debug symbols
+            .arg("-buildvcs=false") // disable version control stamping binary
+            .arg("-o")
+            .arg(path)
+            .arg("-mod=vendor");
+    }
 
     println!("cargo:warning=NOTE:running go build: {cmd:?}");
 

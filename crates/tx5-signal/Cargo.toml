@@ -1,6 +1,6 @@
 [package]
 name = "tx5-signal"
-version = "0.0.1-alpha.5"
+version = "0.0.3-alpha"
 description = "holochain webrtc signal client"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/holochain/tx5"
@@ -31,6 +31,9 @@ tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 tx5-core = { workspace = true }
 url = { workspace = true }
+
+[target.'cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))'.dependencies]
+webpki-roots = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }

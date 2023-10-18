@@ -64,7 +64,7 @@ use constants::*;
 
 #[ouroboros::self_referencing]
 struct LibInner {
-    _file: std::fs::File,
+    _file: tx5_core::file_check::FileCheck,
     lib: libloading::Library,
     #[borrows(lib)]
     // not 100% sure about this, but we never unload the lib,
@@ -117,11 +117,6 @@ struct LibInner {
 
 impl LibInner {
     unsafe fn priv_new() -> Self {
-        let mut path_1 =
-            dirs::data_local_dir().expect("failed to determine data dir");
-        let mut path_2 = dunce::canonicalize(".")
-            .expect("failed to canonicalize current dir");
-
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
         let ext = ".dylib";
         #[cfg(target_os = "windows")]
@@ -134,86 +129,30 @@ impl LibInner {
         )))]
         let ext = ".so";
 
-        path_1.push(format!("go-pion-webrtc-{LIB_HASH}{ext}"));
-        path_2.push(format!("go-pion-webrtc-{LIB_HASH}{ext}"));
+        let file_check = match tx5_core::file_check::file_check(
+            LIB_BYTES,
+            LIB_HASH,
+            "tx5-go-pion-webrtc",
+            ext,
+        ) {
+            Err(err) => panic!("filed to write go lib: {err:?}"),
+            Ok(lib) => lib,
+        };
 
-        for path in [&path_1, &path_2] {
-            tracing::trace!("check lib file: {path:?}");
+        let lib = libloading::Library::new(file_check.path())
+            .expect("failed to load shared");
 
-            let mut opts = std::fs::OpenOptions::new();
-
-            opts.write(true);
-            opts.create_new(true);
-
-            #[cfg(unix)]
-            std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-
-            if let Ok(mut file) = opts.open(path) {
-                use std::io::Write;
-
-                file.write_all(LIB_BYTES)
-                    .expect("failed to write lib bytes");
-                file.flush().expect("failed to flush lib bytes");
-
-                let mut perms = file
-                    .metadata()
-                    .expect("failed to get lib metadata")
-                    .permissions();
-
-                perms.set_readonly(true);
-                #[cfg(unix)]
-                std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o400);
-
-                file.set_permissions(perms)
-                    .expect("failed to set lib permissions");
-
-                tracing::trace!("wrote lib file: {path:?}");
-            }
-
-            if let Ok(mut file) =
-                std::fs::OpenOptions::new().read(true).open(path)
-            {
-                use std::io::Read;
-
-                let mut data = Vec::new();
-                file.read_to_end(&mut data).expect("failed to read lib");
-
-                use sha2::Digest;
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(data);
-                let hash = base64::encode_config(
-                    hasher.finalize(),
-                    base64::URL_SAFE_NO_PAD,
-                );
-
-                assert_eq!(LIB_HASH, hash);
-
-                let perms = file
-                    .metadata()
-                    .expect("failed to get lib metadata")
-                    .permissions();
-
-                assert!(perms.readonly());
-
-                let lib = libloading::Library::new(path)
-                    .expect("failed to load shared");
-
-                tracing::trace!("success correct lib file: {path:?}");
-
-                return LibInnerBuilder {
-                    _file: file,
-                    lib,
-                    on_event_builder: |lib: &libloading::Library| {
-                        lib.get(b"OnEvent").expect("failed to load symbol")
-                    },
-                    call_builder: |lib: &libloading::Library| {
-                        lib.get(b"Call").expect("failed to load symbol")
-                    },
-                }
-                .build();
-            }
+        LibInnerBuilder {
+            _file: file_check,
+            lib,
+            on_event_builder: |lib: &libloading::Library| {
+                lib.get(b"OnEvent").expect("failed to load symbol")
+            },
+            call_builder: |lib: &libloading::Library| {
+                lib.get(b"Call").expect("failed to load symbol")
+            },
         }
-        panic!("invalid lib paths: {path_1:?} {path_2:?}");
+        .build()
     }
 }
 
@@ -251,6 +190,7 @@ pub enum Event {
         data_chan_id: DataChanId,
         buffer_id: BufferId,
     },
+    DataChanBufferedAmountLow(DataChanId),
 }
 
 pub struct Api(LibInner);
@@ -318,6 +258,9 @@ impl Api {
                     data_chan_id: slot_a,
                     buffer_id: slot_b,
                 },
+                TY_DATA_CHAN_ON_BUFFERED_AMOUNT_LOW => {
+                    Event::DataChanBufferedAmountLow(slot_a)
+                }
                 oth => Event::Error(Error::err(format!(
                     "invalid event_type: {oth}",
                 ))),
@@ -427,6 +370,19 @@ impl Api {
             Some(call_cb),
             cb as *mut _,
         );
+    }
+
+    /// Initialize the library with some optional configuration.
+    /// You MUST call this exactly ONCE before opening any peer connections.
+    #[inline]
+    pub unsafe fn tx5_init(
+        &self,
+        config_buf_id: BufferId,
+    ) -> Result<PeerConId> {
+        self.call(TY_TX_5_INIT, config_buf_id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
     }
 
     /// Create a new buffer in go memory with given length,
@@ -542,6 +498,14 @@ impl Api {
             None,
             std::ptr::null_mut(),
         );
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_stats(&self, id: PeerConId) -> Result<BufferId> {
+        self.call(TY_PEER_CON_STATS, id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
     }
 
     #[inline]
@@ -680,9 +644,39 @@ impl Api {
         &self,
         id: DataChanId,
         buffer_id: BufferId,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         self.call(TY_DATA_CHAN_SEND, id, buffer_id, 0, 0, |r| match r {
-            Ok((_t, _a, _b, _c, _d)) => Ok(()),
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn data_chan_set_buffered_amount_low_threshold(
+        &self,
+        id: DataChanId,
+        threshold: usize,
+    ) -> Result<usize> {
+        self.call(
+            TY_DATA_CHAN_SET_BUFFERED_AMOUNT_LOW_THRESHOLD,
+            id,
+            threshold,
+            0,
+            0,
+            |r| match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
+            },
+        )
+    }
+
+    #[inline]
+    pub unsafe fn data_chan_buffered_amount(
+        &self,
+        id: DataChanId,
+    ) -> Result<usize> {
+        self.call(TY_DATA_CHAN_BUFFERED_AMOUNT, id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })
     }

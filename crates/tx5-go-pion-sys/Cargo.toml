@@ -33,5 +33,6 @@ parking_lot = { workspace = true }
 [build-dependencies]
 base64 = { workspace = true }
 Inflector = { workspace = true }
+once_cell = { workspace = true }
 sha2 = { workspace = true }
 zip = { workspace = true }

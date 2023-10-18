@@ -1,6 +1,69 @@
 use std::process::Command;
 
+#[derive(Debug)]
+enum LinkType {
+    Dynamic,
+    Static,
+}
+
+#[derive(Debug)]
+struct Target {
+    pub go_arch: Option<&'static str>,
+    pub go_os: Option<&'static str>,
+    pub link_type: LinkType,
+}
+
+impl Default for Target {
+    fn default() -> Self {
+        let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+
+        let go_arch = match target_arch.as_str() {
+            "arm" => Some("arm"),
+            "aarch64" => Some("arm64"),
+            "x86_64" => Some("amd64"),
+            "x86" => Some("386"),
+            _ => None,
+        };
+
+        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+
+        let go_os = match target_os.as_str() {
+            "windows" => Some("windows"),
+            "macos" => Some("darwin"),
+            "ios" => Some("ios"),
+            "linux" => Some("linux"),
+            "android" => Some("android"),
+            "dragonfly" => Some("dragonfly"),
+            "freebsd" => Some("freebsd"),
+            "openbsd" => Some("openbsd"),
+            "netbsd" => Some("netbsd"),
+            _ => None,
+        };
+
+        let link_type = match target_os.as_str() {
+            "windows" | "android" => LinkType::Dynamic,
+            _ => LinkType::Static,
+        };
+
+        match link_type {
+            LinkType::Dynamic => println!("cargo:rustc-cfg=link_dynamic"),
+            LinkType::Static => println!("cargo:rustc-cfg=link_static"),
+        }
+
+        Self {
+            go_arch,
+            go_os,
+            link_type,
+        }
+    }
+}
+
+static TARGET: once_cell::sync::Lazy<Target> =
+    once_cell::sync::Lazy::new(Target::default);
+
 fn main() {
+    println!("cargo:warning={:?}", *TARGET);
+
     //println!("cargo:warning=NOTE:running go-pion-webrtc-sys build.rs");
 
     println!("cargo:rerun-if-changed=go.mod");
@@ -56,63 +119,22 @@ fn go_unzip_vendor() {
     .expect("failed to extract vendor zip file");
 }
 
-fn set_cmd_go_env(cmd: &mut Command, tgt_os: &str) {
-    // add some cross-compilation translators:
-    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
-        "arm" => {
-            cmd.env("GOARCH", "arm");
-        }
-        "aarch64" => {
-            cmd.env("GOARCH", "arm64");
-        }
-        "x86_64" => {
-            cmd.env("GOARCH", "amd64");
-        }
-        "x86" => {
-            cmd.env("GOARCH", "386");
-        }
-        _ => (),
+fn set_cmd_go_env(cmd: &mut Command) {
+    if let Some(go_arch) = TARGET.go_arch {
+        cmd.env("GOARCH", go_arch);
     }
 
-    // and for the os
-    match tgt_os {
-        "windows" => {
-            cmd.env("GOOS", "windows");
-        }
-        "macos" => {
-            cmd.env("GOOS", "darwin");
-        }
-        "ios" => {
-            cmd.env("GOOS", "ios");
-        }
-        "linux" => {
-            cmd.env("GOOS", "linux");
-        }
-        "android" => {
-            cmd.env("GOOS", "android");
-        }
-        "dragonfly" => {
-            cmd.env("GOOS", "dragonfly");
-        }
-        "freebsd" => {
-            cmd.env("GOOS", "freebsd");
-        }
-        "openbsd" => {
-            cmd.env("GOOS", "openbsd");
-        }
-        "netbsd" => {
-            cmd.env("GOOS", "netbsd");
-        }
-        _ => (),
+    if let Some(go_os) = TARGET.go_os {
+        cmd.env("GOOS", go_os);
     }
 
-    if tgt_os == "android" {
-        let linker = std::env::var("RUSTC_LINKER").unwrap();
+    if let Ok(linker) = std::env::var("RUSTC_LINKER") {
         println!("cargo:warning=LINKER: {linker:?}");
         cmd.env("CC_FOR_TARGET", &linker);
         cmd.env("CC", &linker);
-        cmd.env("CGO_ENABLED", "1");
     }
+
+    cmd.env("CGO_ENABLED", "1");
 }
 
 fn go_build() {
@@ -168,7 +190,7 @@ fn go_build() {
 
     let mut cmd = Command::new("go");
 
-    set_cmd_go_env(&mut cmd, tgt_os.as_str());
+    set_cmd_go_env(&mut cmd);
 
     // grr, clippy, the debug symbols belong in one arg
     #[allow(clippy::suspicious_command_arg_space)]
@@ -196,11 +218,10 @@ fn go_build() {
         "error running go build",
     );
 
-    #[cfg(not(windows))]
-    {
+    if let LinkType::Static = TARGET.link_type {
         let mut cmd = Command::new("go");
 
-        set_cmd_go_env(&mut cmd, tgt_os.as_str());
+        set_cmd_go_env(&mut cmd);
 
         // grr, clippy, the debug symbols belong in one arg
         #[allow(clippy::suspicious_command_arg_space)]

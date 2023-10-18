@@ -28,6 +28,12 @@
 )]
 extern "C" {}
 
+#[cfg(all(link_dynamic, link_static))]
+compile_error!("cfg link_dynamic and link_static were both specified, you must enable exactly one of link_dynamic and link_static");
+
+#[cfg(all(not(link_dynamic), not(link_static)))]
+compile_error!("neither cfg link_dynamic nor link_static were specified, you must enable exactly one of link_dynamic and link_static");
+
 /// Re-exported dependencies.
 pub mod deps {
     pub use libc;

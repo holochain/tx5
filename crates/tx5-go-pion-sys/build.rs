@@ -239,25 +239,22 @@ fn go_build() {
                 base64::URL_SAFE_NO_PAD,
             );
 
-            let mut exe_hash = out_dir;
-            exe_hash.push("lib_hash.rs");
+            let mut lib_hash = out_dir;
+            lib_hash.push("lib_hash.rs");
             std::fs::write(
-                exe_hash,
-                format!(
-                    r#"
-                const LIB_HASH: &str = "{hash}";
-            "#,
-                ),
+                lib_hash,
+                format!("const LIB_HASH: &str = \"{hash}\";\n"),
             )
             .expect("failed to write lib hash");
         }
         LinkType::Static => {
             let mut lib_path = out_dir.clone();
 
-            #[cfg(not(windows))]
-            lib_path.push("libgo-pion-webrtc.a");
-            #[cfg(windows)]
-            lib_path.push("go-pion-webrtc.lib");
+            if let Some("windows") = TARGET.go_os {
+                lib_path.push("go-pion-webrtc.lib");
+            } else {
+                lib_path.push("libgo-pion-webrtc.a");
+            }
 
             go_build_cmd(&out_dir, &lib_path, "-buildmode=c-archive");
 

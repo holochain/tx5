@@ -21,31 +21,17 @@ fn main() {
 fn go_check_version() {
     //println!("cargo:warning=NOTE:checking go version");
 
-    const VER_MAJ: u32 = 1;
-
-    #[cfg(not(windows))]
-    const VER_MIN: u32 = 18;
-    #[cfg(windows)]
-    const VER_MIN: u32 = 20;
-
     let go_version = Command::new("go")
         .arg("version")
         .output()
         .expect("error checking go version");
     assert_eq!(b"go version go", &go_version.stdout[0..13]);
-    let ver_maj: u32 = String::from_utf8_lossy(&go_version.stdout[13..14])
-        .parse()
-        .expect("error parsing go version");
-    let ver_min: u32 = String::from_utf8_lossy(&go_version.stdout[15..17])
+    let ver: f64 = String::from_utf8_lossy(&go_version.stdout[13..17])
         .parse()
         .expect("error parsing go version");
     assert!(
-        ver_maj >= VER_MAJ,
-        "go executable version must be >= {VER_MAJ}.{VER_MIN}, got: {ver_maj}.{ver_min}",
-    );
-    assert!(
-        ver_min >= VER_MIN,
-        "go executable version must be >= {VER_MAJ}.{VER_MIN}, got: {ver_maj}.{ver_min}",
+        ver >= 1.20,
+        "go executable version must be >= 1.20, got: {ver}",
     );
 }
 

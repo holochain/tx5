@@ -169,7 +169,7 @@ fn go_build_cmd(
             .arg("-s -w") // strip debug symbols
             .arg("-buildvcs=false") // disable version control stamping binary
             .arg("-o")
-            .arg(lib_path.clone())
+            .arg(lib_path)
             .arg("-mod=vendor")
             .arg(build_mode);
     }

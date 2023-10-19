@@ -76,7 +76,7 @@ static TARGET: once_cell::sync::Lazy<Target> =
     once_cell::sync::Lazy::new(Target::default);
 
 fn main() {
-    println!("cargo:warning={:?}", *TARGET);
+    //println!("cargo:warning={:?}", *TARGET);
 
     //println!("cargo:warning=NOTE:running go-pion-webrtc-sys build.rs");
 
@@ -148,7 +148,7 @@ fn go_build_cmd(
     cmd.env("GOOS", TARGET.go_os);
 
     if let Ok(linker) = std::env::var("RUSTC_LINKER") {
-        println!("cargo:warning=LINKER: {linker:?}");
+        //println!("cargo:warning=LINKER: {linker:?}");
         cmd.env("CC_FOR_TARGET", &linker);
         cmd.env("CC", &linker);
     }
@@ -170,7 +170,7 @@ fn go_build_cmd(
             .arg(build_mode);
     }
 
-    println!("cargo:warning=NOTE:running go build: {cmd:?}");
+    //println!("cargo:warning=NOTE:running go build: {cmd:?}");
 
     assert!(
         cmd.spawn()

@@ -373,6 +373,9 @@ async fn preflight_small() {
 async fn preflight_huge() {
     init_tracing();
 
+    const HUGE_DATA: bytes::Bytes =
+        bytes::Bytes::from_static(&[42; 16 * 1024 * 512]);
+
     let mut srv_config = tx5_signal_srv::Config::default();
     srv_config.port = 0;
     srv_config.demo = true;
@@ -387,7 +390,6 @@ async fn preflight_huge() {
     println!("sig_url: {}", sig_url);
 
     let valid_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    const HUGE_DATA: &[u8] = &[42; 16 * 1024 * 512];
 
     fn make_config(
         ep_num: usize,
@@ -396,9 +398,7 @@ async fn preflight_huge() {
         DefConfig::default()
             .with_conn_preflight(move |_, _| {
                 println!("PREFLIGHT:{ep_num}");
-                Box::pin(async move {
-                    Ok(Some(bytes::Bytes::from_static(HUGE_DATA)))
-                })
+                Box::pin(async move { Ok(Some(HUGE_DATA.clone())) })
             })
             .with_conn_validate(move |_, _, data| {
                 println!("VALIDATE:{ep_num}");

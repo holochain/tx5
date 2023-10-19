@@ -538,6 +538,15 @@ async fn ban() {
 async fn large_messages() {
     init_tracing();
 
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut msg_1 = vec![0; 1024 * 1024 * 16];
+    rng.fill(&mut msg_1[..]);
+    let mut msg_2 = vec![0; 1024 * 58];
+    rng.fill(&mut msg_2[..]);
+    let msg_1_r = msg_1.clone();
+    let msg_2_r = msg_2.clone();
+
     let mut srv_config = tx5_signal_srv::Config::default();
     srv_config.port = 0;
     srv_config.demo = true;
@@ -563,16 +572,7 @@ async fn large_messages() {
 
     println!("cli_url2: {}", cli_url2);
 
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let mut msg_1 = vec![0; 1024 * 1024 * 16];
-    rng.fill(&mut msg_1[..]);
-    let mut msg_2 = vec![0; 1024 * 58];
-    rng.fill(&mut msg_2[..]);
-
     let recv_task = {
-        let msg_1 = msg_1.clone();
-        let msg_2 = msg_2.clone();
         tokio::task::spawn(async move {
             match ep_rcv2.recv().await {
                 Some(Ok(EpEvt::Connected { .. })) => (),
@@ -587,10 +587,10 @@ async fn large_messages() {
                     })) => {
                         assert_eq!(cli_url1, rem_cli_url);
                         let msg = data.to_vec().unwrap();
-                        if msg.len() == msg_1.len() {
-                            assert_eq!(msg, msg_1);
-                        } else if msg.len() == msg_2.len() {
-                            assert_eq!(msg, msg_2);
+                        if msg.len() == msg_1_r.len() {
+                            assert_eq!(msg, msg_1_r);
+                        } else if msg.len() == msg_2_r.len() {
+                            assert_eq!(msg, msg_2_r);
                         } else {
                             panic!("unexpected");
                         }

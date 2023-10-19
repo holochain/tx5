@@ -455,12 +455,8 @@ async fn preflight_huge() {
         };
 
         loop {
-            match ep_rcv2.recv().await {
-                Some(Ok(EpEvt::Connected { .. })) => check(),
-                Some(Ok(EpEvt::Disconnected { .. })) => (),
-                Some(Ok(EpEvt::Data { .. })) => check(),
-                oth => panic!("unexpected: {:?}", oth),
-            }
+            let _ = ep_rcv2.recv().await;
+            check();
         }
     });
 

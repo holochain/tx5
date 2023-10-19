@@ -128,7 +128,7 @@ fn go_build(path: &std::path::Path) {
 
     if tgt_os == "android" {
         let linker = std::env::var("RUSTC_LINKER").unwrap();
-        println!("cargo:warning=LINKER: {linker:?}");
+        //println!("cargo:warning=LINKER: {linker:?}");
         cmd.env("CC_FOR_TARGET", &linker);
         cmd.env("CC", &linker);
         cmd.env("CGO_ENABLED", "1");
@@ -148,7 +148,7 @@ fn go_build(path: &std::path::Path) {
             .arg("-mod=vendor");
     }
 
-    println!("cargo:warning=NOTE:running go build: {cmd:?}");
+    //println!("cargo:warning=NOTE:running go build: {cmd:?}");
 
     assert!(
         cmd.spawn()

@@ -13,6 +13,27 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::drop_non_drop)]
 
+// Link to CoreFoundation / Security on any Apple device.
+#[cfg_attr(
+    any(target_os = "macos", target_os = "ios", target_os = "tvos"),
+    link(name = "CoreFoundation", kind = "framework")
+)]
+#[cfg_attr(
+    any(target_os = "macos", target_os = "ios", target_os = "tvos"),
+    link(name = "Security", kind = "framework")
+)]
+#[cfg_attr(
+    any(target_os = "macos", target_os = "ios", target_os = "tvos"),
+    link(name = "resolv")
+)]
+extern "C" {}
+
+#[cfg(all(link_dynamic, link_static))]
+compile_error!("both cfg link_dynamic and link_static were specified, you must enable exactly one of link_dynamic or link_static");
+
+#[cfg(all(not(link_dynamic), not(link_static)))]
+compile_error!("neither cfg link_dynamic nor link_static were specified, you must enable exactly one of link_dynamic or link_static");
+
 /// Re-exported dependencies.
 pub mod deps {
     pub use libc;
@@ -26,24 +47,40 @@ pub use tx5_core::{Error, ErrorExt, Id, Result};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
-const LIB_BYTES: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dylib"));
+type OnEventSig = unsafe extern "C" fn(
+    // event_cb
+    Option<
+        unsafe extern "C" fn(
+            *mut libc::c_void, // response_usr
+            usize,             // response_type
+            usize,             // slot_a
+            usize,             // slot_b
+            usize,             // slot_c
+            usize,             // slot_d
+        ),
+    >,
+    *mut libc::c_void, // event_usr
+) -> *mut libc::c_void;
 
-#[cfg(target_os = "windows")]
-const LIB_BYTES: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dll"));
-
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "tvos",
-    target_os = "windows",
-)))]
-const LIB_BYTES: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
-
-include!(concat!(env!("OUT_DIR"), "/lib_hash.rs"));
+type CallSig = unsafe extern "C" fn(
+    usize, // call_type
+    usize, // slot_a
+    usize, // slot_b
+    usize, // slot_c
+    usize, // slot_d
+    // response_cb
+    Option<
+        unsafe extern "C" fn(
+            *mut libc::c_void, // response_usr
+            usize,             // response_type
+            usize,             // slot_a
+            usize,             // slot_b
+            usize,             // slot_c
+            usize,             // slot_d
+        ),
+    >,
+    *mut libc::c_void, // response_usr
+);
 
 /// Constants.
 pub mod constants {
@@ -51,19 +88,13 @@ pub mod constants {
 }
 use constants::*;
 
-#[ouroboros::self_referencing]
-struct LibInner {
-    _file: tx5_core::file_check::FileCheck,
-    lib: libloading::Library,
-    #[borrows(lib)]
-    // not 100% sure about this, but we never unload the lib,
-    // so it's effectively 'static
-    #[covariant]
-    on_event: libloading::Symbol<
-        'this,
-        unsafe extern "C" fn(
-            // event_cb
-            Option<
+#[cfg(link_static)]
+mod static_lib {
+    use super::*;
+
+    extern "C" {
+        fn OnEvent(
+            event_cb: Option<
                 unsafe extern "C" fn(
                     *mut libc::c_void, // response_usr
                     usize,             // response_type
@@ -73,23 +104,16 @@ struct LibInner {
                     usize,             // slot_d
                 ),
             >,
-            *mut libc::c_void, // event_usr
-        ) -> *mut libc::c_void,
-    >,
-    #[borrows(lib)]
-    // not 100% sure about this, but we never unload the lib,
-    // so it's effectively 'static
-    #[covariant]
-    call: libloading::Symbol<
-        'this,
-        unsafe extern "C" fn(
-            usize, // call_type
-            usize, // slot_a
-            usize, // slot_b
-            usize, // slot_c
-            usize, // slot_d
-            // response_cb
-            Option<
+            event_usr: *mut libc::c_void,
+        ) -> *mut libc::c_void;
+
+        fn Call(
+            call_type: usize,
+            slot_a: usize,
+            slot_b: usize,
+            slot_c: usize,
+            slot_d: usize,
+            response_cb: Option<
                 unsafe extern "C" fn(
                     *mut libc::c_void, // response_usr
                     usize,             // response_type
@@ -99,51 +123,125 @@ struct LibInner {
                     usize,             // slot_d
                 ),
             >,
-            *mut libc::c_void, // response_usr
-        ),
-    >,
-}
+            response_usr: *mut libc::c_void,
+        );
+    }
 
-impl LibInner {
-    unsafe fn priv_new() -> Self {
-        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
-        let ext = ".dylib";
-        #[cfg(target_os = "windows")]
-        let ext = ".dll";
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "windows",
-        )))]
-        let ext = ".so";
+    pub struct LibInner;
 
-        let file_check = match tx5_core::file_check::file_check(
-            LIB_BYTES,
-            LIB_HASH,
-            "tx5-go-pion-webrtc",
-            ext,
-        ) {
-            Err(err) => panic!("filed to write go lib: {err:?}"),
-            Ok(lib) => lib,
-        };
-
-        let lib = libloading::Library::new(file_check.path())
-            .expect("failed to load shared");
-
-        LibInnerBuilder {
-            _file: file_check,
-            lib,
-            on_event_builder: |lib: &libloading::Library| {
-                lib.get(b"OnEvent").expect("failed to load symbol")
-            },
-            call_builder: |lib: &libloading::Library| {
-                lib.get(b"Call").expect("failed to load symbol")
-            },
+    impl LibInner {
+        pub unsafe fn priv_new() -> Self {
+            LibInner
         }
-        .build()
+
+        pub fn on_event_fn(&self) -> &OnEventSig {
+            &(OnEvent as OnEventSig)
+        }
+
+        pub fn call_fn(&self) -> &CallSig {
+            &(Call as CallSig)
+        }
     }
 }
+
+#[cfg(link_static)]
+use static_lib::*;
+
+#[cfg(link_dynamic)]
+mod dynamic_lib {
+    use super::*;
+
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
+    const LIB_BYTES: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dylib"));
+
+    #[cfg(target_os = "windows")]
+    const LIB_BYTES: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dll"));
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "windows",
+    )))]
+    const LIB_BYTES: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
+
+    include!(concat!(env!("OUT_DIR"), "/lib_hash.rs"));
+
+    #[ouroboros::self_referencing]
+    pub struct LibInner {
+        _file: tx5_core::file_check::FileCheck,
+        lib: libloading::Library,
+        #[borrows(lib)]
+        // not 100% sure about this, but we never unload the lib,
+        // so it's effectively 'static
+        #[covariant]
+        on_event: libloading::Symbol<'this, OnEventSig>,
+        #[borrows(lib)]
+        // not 100% sure about this, but we never unload the lib,
+        // so it's effectively 'static
+        #[covariant]
+        call: libloading::Symbol<'this, CallSig>,
+    }
+
+    impl LibInner {
+        pub unsafe fn priv_new() -> Self {
+            #[cfg(any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "tvos"
+            ))]
+            let ext = ".dylib";
+            #[cfg(target_os = "windows")]
+            let ext = ".dll";
+            #[cfg(not(any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "tvos",
+                target_os = "windows",
+            )))]
+            let ext = ".so";
+
+            let file_check = match tx5_core::file_check::file_check(
+                LIB_BYTES,
+                LIB_HASH,
+                "tx5-go-pion-webrtc",
+                ext,
+            ) {
+                Err(err) => panic!("filed to write go lib: {err:?}"),
+                Ok(lib) => lib,
+            };
+
+            let lib = libloading::Library::new(file_check.path())
+                .expect("failed to load shared");
+
+            LibInnerBuilder {
+                _file: file_check,
+                lib,
+                on_event_builder: |lib: &libloading::Library| {
+                    lib.get(b"OnEvent").expect("failed to load symbol")
+                },
+                call_builder: |lib: &libloading::Library| {
+                    lib.get(b"Call").expect("failed to load symbol")
+                },
+            }
+            .build()
+        }
+
+        pub fn on_event_fn(&self) -> &OnEventSig {
+            self.borrow_on_event()
+        }
+
+        pub fn call_fn(&self) -> &CallSig {
+            self.borrow_call()
+        }
+    }
+}
+
+#[cfg(link_dynamic)]
+use dynamic_lib::*;
 
 pub type CallType = usize;
 pub type ResponseUsr = *mut libc::c_void;
@@ -264,8 +362,7 @@ impl Api {
         let cb: DynCb = Box::new(Arc::new(cb));
         let cb = Box::into_raw(cb);
 
-        let prev_usr =
-            self.0.borrow_on_event()(Some(on_event_cb), cb as *mut _);
+        let prev_usr = self.0.on_event_fn()(Some(on_event_cb), cb as *mut _);
 
         if !prev_usr.is_null() {
             let closure: DynCb = Box::from_raw(prev_usr as *mut _);
@@ -350,7 +447,7 @@ impl Api {
         let cb: DynCb<'a> = Box::new(Box::new(cb));
         let cb = Box::into_raw(cb);
 
-        self.0.borrow_call()(
+        self.0.call_fn()(
             call_type,
             slot_a,
             slot_b,
@@ -386,7 +483,7 @@ impl Api {
 
     #[inline]
     pub unsafe fn buffer_free(&self, id: BufferId) {
-        self.0.borrow_call()(
+        self.0.call_fn()(
             TY_BUFFER_FREE,
             id,
             0,
@@ -478,7 +575,7 @@ impl Api {
 
     #[inline]
     pub unsafe fn peer_con_free(&self, id: PeerConId) {
-        self.0.borrow_call()(
+        self.0.call_fn()(
             TY_PEER_CON_FREE,
             id,
             0,
@@ -598,7 +695,7 @@ impl Api {
 
     #[inline]
     pub unsafe fn data_chan_free(&self, id: DataChanId) {
-        self.0.borrow_call()(
+        self.0.call_fn()(
             TY_DATA_CHAN_FREE,
             id,
             0,

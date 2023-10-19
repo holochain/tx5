@@ -8,8 +8,8 @@ enum LinkType {
 
 #[derive(Debug)]
 struct Target {
-    pub go_arch: Option<&'static str>,
-    pub go_os: Option<&'static str>,
+    pub go_arch: &'static str,
+    pub go_os: &'static str,
     pub link_type: LinkType,
 }
 
@@ -18,26 +18,26 @@ impl Default for Target {
         let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
         let go_arch = match target_arch.as_str() {
-            "arm" => Some("arm"),
-            "aarch64" => Some("arm64"),
-            "x86_64" => Some("amd64"),
-            "x86" => Some("386"),
-            _ => None,
+            "arm" => "arm",
+            "aarch64" => "arm64",
+            "x86_64" => "amd64",
+            "x86" => "386",
+            oth => panic!("{oth} arch not yet supported"),
         };
 
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
 
         let go_os = match target_os.as_str() {
-            "windows" => Some("windows"),
-            "macos" => Some("darwin"),
-            "ios" => Some("ios"),
-            "linux" => Some("linux"),
-            "android" => Some("android"),
-            "dragonfly" => Some("dragonfly"),
-            "freebsd" => Some("freebsd"),
-            "openbsd" => Some("openbsd"),
-            "netbsd" => Some("netbsd"),
-            _ => None,
+            "windows" => "windows",
+            "macos" => "darwin",
+            "ios" => "ios",
+            "linux" => "linux",
+            "android" => "android",
+            "dragonfly" => "dragonfly",
+            "freebsd" => "freebsd",
+            "openbsd" => "openbsd",
+            "netbsd" => "netbsd",
+            oth => panic!("{oth} os not yet supported"),
         };
 
         let mut link_type = match target_os.as_str() {
@@ -143,13 +143,9 @@ fn go_build_cmd(
 
     let mut cmd = Command::new("go");
 
-    if let Some(go_arch) = TARGET.go_arch {
-        cmd.env("GOARCH", go_arch);
-    }
+    cmd.env("GOARCH", TARGET.go_arch);
 
-    if let Some(go_os) = TARGET.go_os {
-        cmd.env("GOOS", go_os);
-    }
+    cmd.env("GOOS", TARGET.go_os);
 
     if let Ok(linker) = std::env::var("RUSTC_LINKER") {
         println!("cargo:warning=LINKER: {linker:?}");
@@ -216,10 +212,10 @@ fn go_build() {
             let mut lib_path = out_dir.clone();
 
             match TARGET.go_os {
-                Some("darwin") | Some("ios") => {
+                "darwin" | "ios" => {
                     lib_path.push("go-pion-webrtc.dylib");
                 }
-                Some("windows") => {
+                "windows" => {
                     lib_path.push("go-pion-webrtc.dll");
                 }
                 _ => {
@@ -250,7 +246,7 @@ fn go_build() {
         LinkType::Static => {
             let mut lib_path = out_dir.clone();
 
-            if let Some("windows") = TARGET.go_os {
+            if let "windows" = TARGET.go_os {
                 lib_path.push("go-pion-webrtc.lib");
             } else {
                 lib_path.push("libgo-pion-webrtc.a");

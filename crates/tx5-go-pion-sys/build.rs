@@ -200,7 +200,7 @@ fn go_build() {
         a.push(f);
         let mut b = out_dir.clone();
         b.push(f);
-        std::fs::copy(a, b).expect("failed to copy go file");
+        std::fs::copy(a, b).expect("failed to copy golang project file");
     };
 
     cp("buffer.go");

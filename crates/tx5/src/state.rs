@@ -291,11 +291,13 @@ impl StateData {
     async fn tick_1s(&mut self) -> Result<()> {
         let timeout = self.meta.config.max_conn_init();
 
+        // clear out stale ice_cache
         self.ice_cache.retain(|_, list| {
             list.retain_mut(|data| data.timestamp.elapsed() < timeout);
             !list.is_empty()
         });
 
+        // clear out stale messages
         self.send_map.retain(|_, list| {
             list.retain_mut(|info| {
                 if info.timestamp.elapsed() < timeout {
@@ -332,6 +334,7 @@ impl StateData {
             0.0
         };
 
+        // clear out stale connections
         self.conn_map.retain(|_, (conn, _)| {
             let meta = conn.meta();
 
@@ -363,6 +366,32 @@ impl StateData {
 
             true
         });
+
+        // open any needed new connections for still-pending messages
+        // but only if we have an open signal connection
+        if self.this_id.is_some() {
+            let mut want_conns = std::collections::HashSet::new();
+            for (rem_id, _) in self.send_map.iter() {
+                if !self.conn_map.contains_key(rem_id)
+                    && !want_conns.contains(rem_id)
+                {
+                    want_conns.insert(*rem_id);
+                }
+            }
+            for rem_id in want_conns {
+                let mut sig_url = None;
+                for (u, _) in self.signal_map.iter() {
+                    if u.id() == Some(rem_id) {
+                        sig_url = Some(u.clone());
+                        break;
+                    }
+                }
+                if let Some(sig_url) = sig_url {
+                    let _ =
+                        self.create_new_conn(sig_url, rem_id, None, None).await;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -471,6 +500,13 @@ impl StateData {
 
         tracing::trace!(?maybe_msg_uniq, %conn_uniq, "create_new_conn");
 
+        let this_id = if let Some(this_id) = &self.this_id {
+            *this_id
+        } else {
+            // our signal server is not yet connected, wait for that
+            return Ok(());
+        };
+
         let cli_url = sig_url.to_client(rem_id);
         let conn = match ConnState::new_and_publish(
             self.meta.config.clone(),
@@ -480,7 +516,7 @@ impl StateData {
             sig,
             self.state_uniq.clone(),
             conn_uniq,
-            self.this_id.unwrap(),
+            this_id,
             cli_url.clone(),
             rem_id,
             self.recv_limit.clone(),

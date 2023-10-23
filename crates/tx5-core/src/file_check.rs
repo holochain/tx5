@@ -31,6 +31,7 @@ fn tmp_persist<F, P: AsRef<std::path::Path>>(
     p: P,
 ) -> std::result::Result<F, tempfile::PersistError<F>> {
     // this is even less atomic...
+    // TODO - remove this hack after: https://github.com/Stebalien/tempfile/issues/259 is resolved
     if std::fs::metadata(&p).is_ok() {
         // file might exist, error out
         return Err(tempfile::PersistError {

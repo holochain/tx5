@@ -406,8 +406,8 @@ async fn new_conn_task(
         Ok(r) => r,
     };
 
-    let state_uniq = conn_state.meta().state_uniq.clone();
-    let conn_uniq = conn_state.meta().conn_uniq.clone();
+    let state_uniq = conn_state.meta().state_uniq;
+    let conn_uniq = conn_state.meta().conn_uniq;
     let rem_id = conn_state.meta().cli_url.id().unwrap();
 
     struct Unregister(

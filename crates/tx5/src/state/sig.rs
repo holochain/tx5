@@ -190,40 +190,34 @@ impl SigStateData {
         self.sig_evt.err(err);
     }
 
-    async fn exec(&mut self, cmd: SigCmd) -> Result<()> {
+    fn exec(&mut self, cmd: SigCmd) -> Result<()> {
         match cmd {
-            SigCmd::CheckConnectedTimeout => {
-                self.check_connected_timeout().await
-            }
+            SigCmd::CheckConnectedTimeout => self.check_connected_timeout(),
             SigCmd::PushAssertRespond { resp } => {
-                self.push_assert_respond(resp).await
+                self.push_assert_respond(resp)
             }
             SigCmd::NotifyConnected {
                 cli_url,
                 ice_servers,
-            } => self.notify_connected(cli_url, ice_servers).await,
+            } => self.notify_connected(cli_url, ice_servers),
             SigCmd::RegisterConn { rem_id, conn, resp } => {
-                self.register_conn(rem_id, conn, resp).await
+                self.register_conn(rem_id, conn, resp)
             }
             SigCmd::UnregisterConn { rem_id, conn } => {
-                self.unregister_conn(rem_id, conn).await
+                self.unregister_conn(rem_id, conn)
             }
-            SigCmd::Offer { rem_id, data } => self.offer(rem_id, data).await,
-            SigCmd::Answer { rem_id, data } => self.answer(rem_id, data).await,
-            SigCmd::Ice { rem_id, data } => self.ice(rem_id, data).await,
-            SigCmd::Demo { rem_id } => self.demo(rem_id).await,
-            SigCmd::SndOffer { rem_id, data } => {
-                self.snd_offer(rem_id, data).await
-            }
-            SigCmd::SndAnswer { rem_id, data } => {
-                self.snd_answer(rem_id, data).await
-            }
-            SigCmd::SndIce { rem_id, data } => self.snd_ice(rem_id, data).await,
-            SigCmd::SndDemo => self.snd_demo().await,
+            SigCmd::Offer { rem_id, data } => self.offer(rem_id, data),
+            SigCmd::Answer { rem_id, data } => self.answer(rem_id, data),
+            SigCmd::Ice { rem_id, data } => self.ice(rem_id, data),
+            SigCmd::Demo { rem_id } => self.demo(rem_id),
+            SigCmd::SndOffer { rem_id, data } => self.snd_offer(rem_id, data),
+            SigCmd::SndAnswer { rem_id, data } => self.snd_answer(rem_id, data),
+            SigCmd::SndIce { rem_id, data } => self.snd_ice(rem_id, data),
+            SigCmd::SndDemo => self.snd_demo(),
         }
     }
 
-    async fn check_connected_timeout(&mut self) -> Result<()> {
+    fn check_connected_timeout(&mut self) -> Result<()> {
         if !self.connected {
             Err(Error::id("Timeout"))
         } else {
@@ -231,7 +225,7 @@ impl SigStateData {
         }
     }
 
-    async fn push_assert_respond(
+    fn push_assert_respond(
         &mut self,
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
     ) -> Result<()> {
@@ -243,7 +237,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn notify_connected(
+    fn notify_connected(
         &mut self,
         cli_url: Tx5Url,
         ice_servers: Arc<serde_json::Value>,
@@ -260,7 +254,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn register_conn(
+    fn register_conn(
         &mut self,
         rem_id: Id,
         conn: ConnStateWeak,
@@ -275,7 +269,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn unregister_conn(
+    fn unregister_conn(
         &mut self,
         rem_id: Id,
         conn: ConnStateWeak,
@@ -289,7 +283,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn offer(&mut self, rem_id: Id, mut data: BackBuf) -> Result<()> {
+    fn offer(&mut self, rem_id: Id, mut data: BackBuf) -> Result<()> {
         let len = data.len().unwrap();
         if let Some(state) = self.state.upgrade() {
             state.in_offer(self.sig_url.clone(), rem_id, data)?;
@@ -298,7 +292,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn answer(&mut self, rem_id: Id, mut data: BackBuf) -> Result<()> {
+    fn answer(&mut self, rem_id: Id, mut data: BackBuf) -> Result<()> {
         let len = data.len().unwrap();
         if let Some(conn) = self.registered_conn_map.get(&rem_id) {
             if let Some(conn) = conn.upgrade() {
@@ -311,7 +305,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn ice(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
+    fn ice(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         if let Some(conn) = self.registered_conn_map.get(&rem_id) {
             if let Some(conn) = conn.upgrade() {
                 conn.in_ice(data, true);
@@ -324,14 +318,14 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn demo(&mut self, rem_id: Id) -> Result<()> {
+    fn demo(&mut self, rem_id: Id) -> Result<()> {
         if let Some(state) = self.state.upgrade() {
             state.in_demo(self.sig_url.clone(), rem_id)?;
         }
         Ok(())
     }
 
-    async fn snd_offer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
+    fn snd_offer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.sig_evt.snd_offer(
             self.state.clone(),
             self.this.clone(),
@@ -341,7 +335,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn snd_answer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
+    fn snd_answer(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.sig_evt.snd_answer(
             self.state.clone(),
             self.this.clone(),
@@ -351,7 +345,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn snd_ice(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
+    fn snd_ice(&mut self, rem_id: Id, data: BackBuf) -> Result<()> {
         self.sig_evt.snd_ice(
             self.state.clone(),
             self.this.clone(),
@@ -361,7 +355,7 @@ impl SigStateData {
         Ok(())
     }
 
-    async fn snd_demo(&mut self) -> Result<()> {
+    fn snd_demo(&mut self) -> Result<()> {
         self.sig_evt.snd_demo();
         Ok(())
     }
@@ -436,7 +430,7 @@ async fn sig_state_task(
     };
     let err = match async {
         while let Some(cmd) = rcv.recv().await {
-            data.exec(cmd?).await?;
+            data.exec(cmd?)?;
         }
         Ok(())
     }

@@ -162,7 +162,7 @@ impl StateEvtSnd {
 }
 
 pub(crate) struct SendData {
-    msg_uniq: Uniq,
+    msg_uniq: SubUniq,
     data: BackBuf,
     timestamp: std::time::Instant,
     resp: Option<tokio::sync::oneshot::Sender<Result<()>>>,
@@ -228,10 +228,10 @@ impl StateData {
         match cmd {
             StateCmd::Tick1s => self.tick_1s().await,
             StateCmd::TrackSig { rem_id, ty, bytes } => {
-                self.track_sig(rem_id, ty, bytes).await
+                self.track_sig(rem_id, ty, bytes)
             }
-            StateCmd::SndDemo => self.snd_demo().await,
-            StateCmd::ListConnected(resp) => self.list_connected(resp).await,
+            StateCmd::SndDemo => self.snd_demo(),
+            StateCmd::ListConnected(resp) => self.list_connected(resp),
             StateCmd::AssertListenerSig { sig_url, resp } => {
                 self.assert_listener_sig(sig_url, resp).await
             }
@@ -255,14 +255,12 @@ impl StateData {
                 )
                 .await
             }
-            StateCmd::Ban { rem_id, span } => self.ban(rem_id, span).await,
+            StateCmd::Ban { rem_id, span } => self.ban(rem_id, span),
             StateCmd::Stats(resp) => self.stats(resp).await,
-            StateCmd::Publish { evt } => self.publish(evt).await,
-            StateCmd::SigConnected { cli_url } => {
-                self.sig_connected(cli_url).await
-            }
+            StateCmd::Publish { evt } => self.publish(evt),
+            StateCmd::SigConnected { cli_url } => self.sig_connected(cli_url),
             StateCmd::FetchForSend { conn, rem_id } => {
-                self.fetch_for_send(conn, rem_id).await
+                self.fetch_for_send(conn, rem_id)
             }
             StateCmd::InOffer {
                 sig_url,
@@ -270,20 +268,16 @@ impl StateData {
                 data,
             } => self.in_offer(sig_url, rem_id, data).await,
             StateCmd::InDemo { sig_url, rem_id } => {
-                self.in_demo(sig_url, rem_id).await
+                self.in_demo(sig_url, rem_id)
             }
-            StateCmd::CacheIce { rem_id, ice } => {
-                self.cache_ice(rem_id, ice).await
-            }
-            StateCmd::GetCachedIce { rem_id } => {
-                self.get_cached_ice(rem_id).await
-            }
+            StateCmd::CacheIce { rem_id, ice } => self.cache_ice(rem_id, ice),
+            StateCmd::GetCachedIce { rem_id } => self.get_cached_ice(rem_id),
             StateCmd::CloseSig { sig_url, sig, err } => {
-                self.close_sig(sig_url, sig, err).await
+                self.close_sig(sig_url, sig, err)
             }
-            StateCmd::ConnReady { cli_url } => self.conn_ready(cli_url).await,
+            StateCmd::ConnReady { cli_url } => self.conn_ready(cli_url),
             StateCmd::CloseConn { rem_id, conn, err } => {
-                self.close_conn(rem_id, conn, err).await
+                self.close_conn(rem_id, conn, err)
             }
         }
     }
@@ -339,7 +333,7 @@ impl StateData {
             let meta = conn.meta();
 
             let args = drop_consider::DropConsiderArgs {
-                conn_uniq: meta.conn_uniq.clone(),
+                conn_uniq: meta.conn_uniq,
                 cfg_conn_max_cnt: meta.config.max_conn_count() as i64,
                 cfg_conn_max_init: meta.config.max_conn_init().as_secs_f64(),
                 tot_conn_cnt,
@@ -396,7 +390,7 @@ impl StateData {
         Ok(())
     }
 
-    async fn track_sig(
+    fn track_sig(
         &mut self,
         rem_id: Id,
         ty: &'static str,
@@ -410,7 +404,7 @@ impl StateData {
         Ok(())
     }
 
-    async fn snd_demo(&mut self) -> Result<()> {
+    fn snd_demo(&mut self) -> Result<()> {
         for (_, sig) in self.signal_map.iter() {
             if let Some(sig) = sig.upgrade() {
                 sig.snd_demo();
@@ -420,7 +414,7 @@ impl StateData {
         Ok(())
     }
 
-    async fn list_connected(
+    fn list_connected(
         &mut self,
         resp: tokio::sync::oneshot::Sender<Result<Vec<Tx5Url>>>,
     ) -> Result<()> {
@@ -477,7 +471,7 @@ impl StateData {
         sig_url: Tx5Url,
         rem_id: Id,
         maybe_offer: Option<BackBuf>,
-        maybe_msg_uniq: Option<Uniq>,
+        maybe_msg_uniq: Option<SubUniq>,
     ) -> Result<()> {
         if self.is_banned(rem_id) {
             tracing::warn!(
@@ -514,7 +508,7 @@ impl StateData {
             self.meta.metric_conn_count.clone(),
             self.this.clone(),
             sig,
-            self.state_uniq.clone(),
+            self.state_uniq,
             conn_uniq,
             this_id,
             cli_url.clone(),
@@ -540,7 +534,7 @@ impl StateData {
     #[allow(clippy::too_many_arguments)]
     async fn send_data(
         &mut self,
-        msg_uniq: Uniq,
+        msg_uniq: SubUniq,
         rem_id: Id,
         data: BackBuf,
         timestamp: std::time::Instant,
@@ -561,7 +555,7 @@ impl StateData {
             .entry(rem_id)
             .or_default()
             .push_back(SendData {
-                msg_uniq: msg_uniq.clone(),
+                msg_uniq,
                 data,
                 timestamp,
                 resp: Some(data_sent),
@@ -584,11 +578,7 @@ impl StateData {
             .await
     }
 
-    async fn ban(
-        &mut self,
-        rem_id: Id,
-        span: std::time::Duration,
-    ) -> Result<()> {
+    fn ban(&mut self, rem_id: Id, span: std::time::Duration) -> Result<()> {
         let expires_at = std::time::Instant::now() + span;
         self.ban_map.insert(rem_id, expires_at);
         self.send_map.remove(&rem_id);
@@ -645,12 +635,12 @@ impl StateData {
         }
     }
 
-    async fn publish(&mut self, evt: StateEvt) -> Result<()> {
+    fn publish(&mut self, evt: StateEvt) -> Result<()> {
         let _ = self.evt.publish(evt);
         Ok(())
     }
 
-    async fn sig_connected(&mut self, cli_url: Tx5Url) -> Result<()> {
+    fn sig_connected(&mut self, cli_url: Tx5Url) -> Result<()> {
         let loc_id = cli_url.id().unwrap();
         if let Some(this_id) = &self.this_id {
             if this_id != &loc_id {
@@ -663,7 +653,7 @@ impl StateData {
         Ok(())
     }
 
-    async fn fetch_for_send(
+    fn fetch_for_send(
         &mut self,
         want_conn: ConnStateWeak,
         rem_id: Id,
@@ -743,12 +733,12 @@ impl StateData {
             .await
     }
 
-    async fn in_demo(&mut self, sig_url: Tx5Url, rem_id: Id) -> Result<()> {
+    fn in_demo(&mut self, sig_url: Tx5Url, rem_id: Id) -> Result<()> {
         let cli_url = sig_url.to_client(rem_id);
         self.evt.publish(StateEvt::Demo(cli_url))
     }
 
-    async fn cache_ice(&mut self, rem_id: Id, ice: BackBuf) -> Result<()> {
+    fn cache_ice(&mut self, rem_id: Id, ice: BackBuf) -> Result<()> {
         let list = self.ice_cache.entry(rem_id).or_default();
         list.push_back(IceData {
             timestamp: std::time::Instant::now(),
@@ -757,7 +747,7 @@ impl StateData {
         Ok(())
     }
 
-    async fn get_cached_ice(&mut self, rem_id: Id) -> Result<()> {
+    fn get_cached_ice(&mut self, rem_id: Id) -> Result<()> {
         let StateData {
             conn_map,
             ice_cache,
@@ -775,7 +765,7 @@ impl StateData {
         Ok(())
     }
 
-    async fn close_sig(
+    fn close_sig(
         &mut self,
         sig_url: Tx5Url,
         sig: SigStateWeak,
@@ -794,11 +784,11 @@ impl StateData {
         Ok(())
     }
 
-    async fn conn_ready(&mut self, cli_url: Tx5Url) -> Result<()> {
+    fn conn_ready(&mut self, cli_url: Tx5Url) -> Result<()> {
         self.evt.publish(StateEvt::Connected(cli_url))
     }
 
-    async fn close_conn(
+    fn close_conn(
         &mut self,
         rem_id: Id,
         conn: ConnStateWeak,
@@ -832,7 +822,7 @@ enum StateCmd {
         resp: tokio::sync::oneshot::Sender<Result<Tx5Url>>,
     },
     SendData {
-        msg_uniq: Uniq,
+        msg_uniq: SubUniq,
         rem_id: Id,
         data: BackBuf,
         timestamp: std::time::Instant,
@@ -988,7 +978,7 @@ impl State {
             .0;
 
         let meta = StateMeta {
-            state_uniq: state_uniq.clone(),
+            state_uniq,
             config,
             conn_limit,
             snd_limit,
@@ -1136,7 +1126,7 @@ impl State {
                     let (s_sent, r_sent) = tokio::sync::oneshot::channel();
 
                     if let Err(err) = this.0.send(Ok(StateCmd::SendData {
-                        msg_uniq: msg_uniq.clone(),
+                        msg_uniq: *msg_uniq,
                         rem_id,
                         data: buf,
                         timestamp,

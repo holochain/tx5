@@ -240,7 +240,7 @@ impl ConnStateEvtSnd {
 }
 
 struct ConnStateData {
-    conn_uniq: Uniq,
+    conn_uniq: SubUniq,
     this: ConnStateWeak,
     metric_conn_count: AtomicObservableUpDownCounterI64,
     meta: ConnStateMeta,
@@ -298,26 +298,24 @@ impl ConnStateData {
 
     async fn exec(&mut self, cmd: ConnCmd) -> Result<()> {
         match cmd {
-            ConnCmd::Tick1s => self.tick_1s().await,
-            ConnCmd::Stats(rsp) => self.stats(rsp).await,
-            ConnCmd::TrackSig { ty, bytes } => self.track_sig(ty, bytes).await,
-            ConnCmd::NotifyConstructed => self.notify_constructed().await,
-            ConnCmd::CheckConnectedTimeout => {
-                self.check_connected_timeout().await
-            }
-            ConnCmd::Ice { data } => self.ice(data).await,
-            ConnCmd::SelfOffer { offer } => self.self_offer(offer).await,
-            ConnCmd::ReqSelfAnswer => self.req_self_answer().await,
-            ConnCmd::SelfAnswer { answer } => self.self_answer(answer).await,
-            ConnCmd::InOffer { offer } => self.in_offer(offer).await,
-            ConnCmd::InAnswer { answer } => self.in_answer(answer).await,
-            ConnCmd::InIce { ice, cache } => self.in_ice(ice, cache).await,
+            ConnCmd::Tick1s => self.tick_1s(),
+            ConnCmd::Stats(rsp) => self.stats(rsp),
+            ConnCmd::TrackSig { ty, bytes } => self.track_sig(ty, bytes),
+            ConnCmd::NotifyConstructed => self.notify_constructed(),
+            ConnCmd::CheckConnectedTimeout => self.check_connected_timeout(),
+            ConnCmd::Ice { data } => self.ice(data),
+            ConnCmd::SelfOffer { offer } => self.self_offer(offer),
+            ConnCmd::ReqSelfAnswer => self.req_self_answer(),
+            ConnCmd::SelfAnswer { answer } => self.self_answer(answer),
+            ConnCmd::InOffer { offer } => self.in_offer(offer),
+            ConnCmd::InAnswer { answer } => self.in_answer(answer),
+            ConnCmd::InIce { ice, cache } => self.in_ice(ice, cache),
             ConnCmd::Ready => self.ready().await,
             ConnCmd::MaybeFetchForSend {
                 send_complete,
                 buf_state,
-            } => self.maybe_fetch_for_send(send_complete, buf_state).await,
-            ConnCmd::Send { to_send } => self.send(to_send).await,
+            } => self.maybe_fetch_for_send(send_complete, buf_state),
+            ConnCmd::Send { to_send } => self.send(to_send),
             ConnCmd::Recv {
                 ident,
                 data,
@@ -326,7 +324,7 @@ impl ConnStateData {
         }
     }
 
-    async fn tick_1s(&mut self) -> Result<()> {
+    fn tick_1s(&mut self) -> Result<()> {
         if self.meta.last_active_at.elapsed() > self.meta.config.max_conn_init()
             && !self.connected()
         {
@@ -336,7 +334,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn stats(
+    fn stats(
         &mut self,
         rsp: tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
     ) -> Result<()> {
@@ -367,11 +365,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn track_sig(
-        &mut self,
-        ty: &'static str,
-        bytes: usize,
-    ) -> Result<()> {
+    fn track_sig(&mut self, ty: &'static str, bytes: usize) -> Result<()> {
         match ty {
             "offer_out" => {
                 self.offer.0 += 1;
@@ -403,7 +397,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn notify_constructed(&mut self) -> Result<()> {
+    fn notify_constructed(&mut self) -> Result<()> {
         if !self.rcv_offer {
             // Kick off connection initialization by requesting
             // an outgoing offer be created by this connection.
@@ -413,7 +407,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn check_connected_timeout(&mut self) -> Result<()> {
+    fn check_connected_timeout(&mut self) -> Result<()> {
         if !self.connected() {
             Err(Error::id("Timeout"))
         } else {
@@ -421,24 +415,24 @@ impl ConnStateData {
         }
     }
 
-    async fn ice(&mut self, data: BackBuf) -> Result<()> {
+    fn ice(&mut self, data: BackBuf) -> Result<()> {
         let sig = self.get_sig()?;
         sig.snd_ice(self.rem_id, data)
     }
 
-    async fn self_offer(&mut self, offer: Result<BackBuf>) -> Result<()> {
+    fn self_offer(&mut self, offer: Result<BackBuf>) -> Result<()> {
         let sig = self.get_sig()?;
         let mut offer = offer?;
         self.conn_evt.set_loc(self.this.clone(), offer.try_clone()?);
         sig.snd_offer(self.rem_id, offer)
     }
 
-    async fn req_self_answer(&mut self) -> Result<()> {
+    fn req_self_answer(&mut self) -> Result<()> {
         self.conn_evt.create_answer(self.this.clone());
         Ok(())
     }
 
-    async fn self_answer(&mut self, answer: Result<BackBuf>) -> Result<()> {
+    fn self_answer(&mut self, answer: Result<BackBuf>) -> Result<()> {
         let sig = self.get_sig()?;
         let mut answer = answer?;
         self.conn_evt
@@ -446,7 +440,7 @@ impl ConnStateData {
         sig.snd_answer(self.rem_id, answer)
     }
 
-    async fn in_offer(&mut self, mut offer: BackBuf) -> Result<()> {
+    fn in_offer(&mut self, mut offer: BackBuf) -> Result<()> {
         tracing::trace!(
             conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
@@ -463,7 +457,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn in_answer(&mut self, mut answer: BackBuf) -> Result<()> {
+    fn in_answer(&mut self, mut answer: BackBuf) -> Result<()> {
         tracing::trace!(
             conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
@@ -479,7 +473,7 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn in_ice(&mut self, mut ice: BackBuf, cache: bool) -> Result<()> {
+    fn in_ice(&mut self, mut ice: BackBuf, cache: bool) -> Result<()> {
         tracing::trace!(
             conn_uniq = %self.conn_uniq,
             this_id = ?self.this_id,
@@ -513,10 +507,10 @@ impl ConnStateData {
         }
 
         self.meta.connected.store(true, atomic::Ordering::SeqCst);
-        self.maybe_fetch_for_send(false, None).await
+        self.maybe_fetch_for_send(false, None)
     }
 
-    async fn maybe_fetch_for_send(
+    fn maybe_fetch_for_send(
         &mut self,
         send_complete: bool,
         buf_state: Option<BufState>,
@@ -569,7 +563,7 @@ impl ConnStateData {
         }
     }
 
-    async fn send(&mut self, to_send: SendData) -> Result<()> {
+    fn send(&mut self, to_send: SendData) -> Result<()> {
         let SendData {
             msg_uniq,
             mut data,
@@ -732,7 +726,7 @@ async fn conn_state_task(
     mut rcv: ManyRcv<ConnCmd>,
     this: ConnStateWeak,
     state: StateWeak,
-    conn_uniq: Uniq,
+    conn_uniq: SubUniq,
     this_id: Id,
     rem_id: Id,
     conn_evt: ConnStateEvtSnd,
@@ -814,7 +808,7 @@ pub(crate) struct ConnStateMeta {
     pub(crate) last_active_at: std::time::Instant,
     pub(crate) cli_url: Tx5Url,
     pub(crate) state_uniq: Uniq,
-    pub(crate) conn_uniq: Uniq,
+    pub(crate) conn_uniq: SubUniq,
     pub(crate) config: DynConfig,
     pub(crate) connected: Arc<atomic::AtomicBool>,
     _conn_snd: ConnStateEvtSnd,
@@ -1007,7 +1001,7 @@ impl ConnState {
         state: StateWeak,
         sig_state: SigStateWeak,
         state_uniq: Uniq,
-        conn_uniq: Uniq,
+        conn_uniq: SubUniq,
         this_id: Id,
         cli_url: Tx5Url,
         rem_id: Id,
@@ -1076,7 +1070,7 @@ impl ConnState {
             last_active_at: std::time::Instant::now(),
             cli_url,
             state_uniq,
-            conn_uniq: conn_uniq.clone(),
+            conn_uniq,
             config: config.clone(),
             connected: Arc::new(atomic::AtomicBool::new(false)),
             _conn_snd: conn_snd.clone(),

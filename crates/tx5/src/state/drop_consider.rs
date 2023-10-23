@@ -1,4 +1,4 @@
-use tx5_core::Uniq;
+use tx5_core::SubUniq;
 
 #[derive(Debug)]
 pub(crate) enum DropConsiderResult {
@@ -11,7 +11,7 @@ pub(crate) enum DropConsiderResult {
 
 #[derive(Debug)]
 pub(crate) struct DropConsiderArgs {
-    pub(crate) conn_uniq: Uniq,
+    pub(crate) conn_uniq: SubUniq,
     pub(crate) cfg_conn_max_cnt: i64,
     pub(crate) cfg_conn_max_init: f64,
     pub(crate) tot_conn_cnt: i64,
@@ -128,7 +128,7 @@ fn consider_low_throughput(args: &DropConsiderArgs) -> DropConsiderResult {
 impl Default for DropConsiderArgs {
     fn default() -> Self {
         Self {
-            conn_uniq: Uniq::default(),
+            conn_uniq: tx5_core::Uniq::default().sub(),
             cfg_conn_max_cnt: 20,
             cfg_conn_max_init: 20.0,
             tot_conn_cnt: 30,

@@ -134,3 +134,121 @@ impl<T: 'static + Send> Actor<T> {
         res
     }
 }
+
+/*
+/// Weak actor handle that does not add to reference count.
+pub struct ActorSyncWeak<T: 'static + Send>(Weak<Mutex<Option<T>>>);
+
+impl<T: 'static + Send> ActorSyncWeak<T> {
+    /// Attempt to upgrade to a full actor handle.
+    pub fn upgrade(&self) -> Option<ActorSync<T>> {
+        match self.0.upgrade() {
+            None => None,
+            Some(a) => {
+                if a.lock().is_some() {
+                    Some(ActorSync(a))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+impl<T: 'static + Send> PartialEq for ActorSyncWeak<T> {
+    fn eq(&self, rhs: &Self) -> bool {
+        Weak::ptr_eq(&self.0, &rhs.0)
+    }
+}
+
+impl<T: 'static + Send> Eq for ActorSyncWeak<T> {}
+
+impl<T: 'static + Send> PartialEq<ActorSync<T>> for ActorSyncWeak<T> {
+    fn eq(&self, rhs: &ActorSync<T>) -> bool {
+        Weak::ptr_eq(&self.0, &Arc::downgrade(&rhs.0))
+    }
+}
+
+impl<T: 'static + Send> Clone for ActorSyncWeak<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+/// An actor that executes as a task, providing synchronized messaging.
+pub struct ActorSync<T: 'static + Send>(Arc<Mutex<Option<T>>>);
+
+impl<T: 'static + Send> PartialEq for ActorSync<T> {
+    fn eq(&self, rhs: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &rhs.0)
+    }
+}
+
+impl<T: 'static + Send> Eq for ActorSync<T> {}
+
+impl<T: 'static + Send> PartialEq<ActorSyncWeak<T>> for ActorSync<T> {
+    fn eq(&self, rhs: &ActorSyncWeak<T>) -> bool {
+        Weak::ptr_eq(&Arc::downgrade(&self.0), &rhs.0)
+    }
+}
+
+impl<T: 'static + Send> Clone for ActorSync<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: 'static + Send> ActorSync<T> {
+    /// Construct a new actor.
+    pub fn new<F>(f: F) -> Self
+    where
+        F: FnOnce(ActorSyncWeak<T>) -> T,
+    {
+        Self(Arc::new_cyclic(move |weak| {
+            let t = f(ActorSyncWeak(weak.clone()));
+
+            Mutex::new(Some(t))
+        }))
+    }
+
+    /// Get a weak handle to the actor that does not add to reference count.
+    pub fn weak(&self) -> ActorSyncWeak<T> {
+        ActorSyncWeak(Arc::downgrade(&self.0))
+    }
+
+    /// Check if this handle is pointing to a closed actor.
+    pub fn is_closed(&self) -> bool {
+        self.0.lock().is_none()
+    }
+
+    /// Access this actor.
+    pub fn access<R, F>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut T) -> Result<R>,
+    {
+        match &mut *self.0.lock() {
+            Some(t) => f(t),
+            None => Err(Error::id("Closed")),
+        }
+    }
+
+    /// Access this actor, and then close it.
+    pub fn access_close<R, F>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut T) -> Result<R>,
+    {
+        let mut lock = self.0.lock();
+        let r = match &mut *lock {
+            Some(t) => f(t),
+            None => Err(Error::id("Closed")),
+        };
+        *lock = None;
+        r
+    }
+
+    /// Close this actor.
+    pub fn close(&self) {
+        *self.0.lock() = None;
+    }
+}
+*/

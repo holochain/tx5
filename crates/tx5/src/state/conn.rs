@@ -310,7 +310,8 @@ impl ConnStateData {
             ConnCmd::InOffer { offer } => self.in_offer(offer),
             ConnCmd::InAnswer { answer } => self.in_answer(answer),
             ConnCmd::InIce { ice, cache } => self.in_ice(ice, cache),
-            ConnCmd::Ready => self.ready().await,
+            ConnCmd::Ready => self.ready(),
+            ConnCmd::Ready2 { preflight } => self.ready2(preflight),
             ConnCmd::MaybeFetchForSend {
                 send_complete,
                 buf_state,
@@ -492,16 +493,30 @@ impl ConnStateData {
         Ok(())
     }
 
-    async fn ready(&mut self) -> Result<()> {
-        // first, check / send the preflight
-        let data = self
+    fn ready(&mut self) -> Result<()> {
+        let preflight = self
             .meta
             .config
-            .on_conn_preflight(self.meta.cli_url.clone())
-            .await?
-            .unwrap_or_else(bytes::Bytes::new);
+            .on_conn_preflight(self.meta.cli_url.clone());
 
-        for buf in divide_send(&*self.meta.config, &self.meta.snd_ident, data)?
+        let this = self.this.clone();
+
+        tokio::task::spawn(async move {
+            let preflight = preflight.await?.unwrap_or_else(bytes::Bytes::new);
+
+            if let Some(this) = this.upgrade() {
+                this.ready2(preflight)
+            } else {
+                Err(Error::id("Shutdown"))
+            }
+        });
+
+        Ok(())
+    }
+
+    fn ready2(&mut self, preflight: bytes::Bytes) -> Result<()> {
+        for buf in
+            divide_send(&*self.meta.config, &self.meta.snd_ident, preflight)?
         {
             self.conn_evt.snd_data(self.this.clone(), buf, None, None);
         }
@@ -702,6 +717,9 @@ enum ConnCmd {
         cache: bool,
     },
     Ready,
+    Ready2 {
+        preflight: bytes::Bytes,
+    },
     MaybeFetchForSend {
         send_complete: bool,
         buf_state: Option<BufState>,
@@ -992,6 +1010,10 @@ impl ConnState {
     }
 
     // -- //
+
+    fn ready2(&self, preflight: bytes::Bytes) -> Result<()> {
+        self.0.send(Ok(ConnCmd::Ready2 { preflight }))
+    }
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_and_publish(

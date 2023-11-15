@@ -19,10 +19,9 @@ struct Test {
 }
 
 impl Test {
-    pub async fn new<Cb>(port: u16, recv_cb: Cb) -> Self
-    where
-        Cb: FnMut(SignalMsg) + 'static + Send,
-    {
+    pub async fn new(
+        port: u16,
+    ) -> (Self, tokio::sync::mpsc::Receiver<SignalMsg>) {
         let passphrase = sodoken::BufRead::new_no_lock(b"test-passphrase");
         let keystore_config = PwHashLimits::Minimum
             .with_exec(|| LairServerConfigInner::new("/", passphrase.clone()))
@@ -49,10 +48,9 @@ impl Test {
             .await
             .unwrap();
 
-        let cli = cli::Cli::builder()
+        let (cli, msg_recv) = cli::Cli::builder()
             .with_lair_client(lair_client)
             .with_lair_tag(tag)
-            .with_recv_cb(recv_cb)
             .with_url(
                 url::Url::parse(&format!("ws://localhost:{}/tx5-ws", port))
                     .unwrap(),
@@ -61,10 +59,13 @@ impl Test {
             .await
             .unwrap();
 
-        Self {
-            _keystore: keystore,
-            cli,
-        }
+        (
+            Self {
+                _keystore: keystore,
+                cli,
+            },
+            msg_recv,
+        )
     }
 }
 
@@ -124,29 +125,12 @@ async fn sanity() {
 }
 
 async fn sanity_inner(srv_port: u16) {
-    #[derive(Debug)]
-    enum In {
-        Cli1(SignalMsg),
-        Cli2(SignalMsg),
-    }
-
-    let (in_send, mut in_recv) = tokio::sync::mpsc::unbounded_channel();
-
-    let cli1 = {
-        let in_send = in_send.clone();
-        Test::new(srv_port, move |msg| {
-            in_send.send(In::Cli1(msg)).unwrap();
-        })
-        .await
-    };
+    let (cli1, mut rcv1) = Test::new(srv_port).await;
 
     let cli1_pk = *cli1.cli.local_id();
     tracing::info!(%cli1_pk);
 
-    let cli2 = Test::new(srv_port, move |msg| {
-        in_send.send(In::Cli2(msg)).unwrap();
-    })
-    .await;
+    let (cli2, mut rcv2) = Test::new(srv_port).await;
 
     let cli2_pk = *cli2.cli.local_id();
     tracing::info!(%cli2_pk);
@@ -156,38 +140,35 @@ async fn sanity_inner(srv_port: u16) {
         .await
         .unwrap();
 
-    let msg = in_recv.recv().await;
+    let msg = rcv2.recv().await;
     tracing::info!(?msg);
-    assert!(matches!(msg, Some(In::Cli2(SignalMsg::Offer { .. }))));
+    assert!(matches!(msg, Some(SignalMsg::Offer { .. })));
 
     cli2.cli
         .answer(cli1_pk, serde_json::json!({ "type": "answer" }))
         .await
         .unwrap();
 
-    let msg = in_recv.recv().await;
+    let msg = rcv1.recv().await;
     tracing::info!(?msg);
-    assert!(matches!(msg, Some(In::Cli1(SignalMsg::Answer { .. }))));
+    assert!(matches!(msg, Some(SignalMsg::Answer { .. })));
 
     cli1.cli
         .ice(cli2_pk, serde_json::json!({ "type": "ice" }))
         .await
         .unwrap();
 
-    let msg = in_recv.recv().await;
+    let msg = rcv2.recv().await;
     tracing::info!(?msg);
-    assert!(matches!(msg, Some(In::Cli2(SignalMsg::Ice { .. }))));
+    assert!(matches!(msg, Some(SignalMsg::Ice { .. })));
 
     cli1.cli.demo();
 
-    for _ in 0..2 {
-        let msg = in_recv.recv().await;
-        tracing::info!(?msg);
-        let inner = match msg {
-            Some(In::Cli1(m)) => m,
-            Some(In::Cli2(m)) => m,
-            _ => panic!("unexpected eos"),
-        };
-        assert!(matches!(inner, SignalMsg::Demo { .. }));
-    }
+    let msg = rcv1.recv().await;
+    tracing::info!(?msg);
+    assert!(matches!(msg, Some(SignalMsg::Demo { .. })));
+
+    let msg = rcv2.recv().await;
+    tracing::info!(?msg);
+    assert!(matches!(msg, Some(SignalMsg::Demo { .. })));
 }

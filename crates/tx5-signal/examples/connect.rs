@@ -21,9 +21,8 @@ async fn main() {
 
     tracing::info!(%sig_url);
 
-    let cli = tx5_signal::Cli::builder()
+    let (cli, _rcv) = tx5_signal::Cli::builder()
         .with_url(sig_url)
-        .with_recv_cb(|_msg| {})
         .build()
         .await
         .expect("expect can build tx5_signal::Cli");

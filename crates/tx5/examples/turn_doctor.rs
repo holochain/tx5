@@ -175,9 +175,8 @@ async fn main() {
     let sig_url = url::Url::parse(sig_url).unwrap();
     println!("SIG_URL: {sig_url}");
 
-    let sig_cli = tx5_signal::Cli::builder()
+    let (sig_cli, _sig_rcv) = tx5_signal::Cli::builder()
         .with_url(sig_url)
-        .with_recv_cb(|_msg| {})
         .build()
         .await
         .expect("expect can build tx5_signal::Cli");

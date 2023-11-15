@@ -52,11 +52,9 @@ pub enum SignalMsg {
     },
 }
 
-type RecvCb = Box<dyn FnMut(SignalMsg) + 'static + Send>;
-
 /// Builder for constructing a Cli instance.
 pub struct CliBuilder {
-    recv_cb: RecvCb,
+    msg_limit: usize,
     lair_client: Option<LairClient>,
     lair_tag: Option<Arc<str>>,
     url: Option<url::Url>,
@@ -65,7 +63,12 @@ pub struct CliBuilder {
 impl Default for CliBuilder {
     fn default() -> Self {
         Self {
-            recv_cb: Box::new(|_| {}),
+            // if *every* message were 512 bytes (they are most often *far*
+            // smaller than this), this would represent
+            // 512 * 1024 = ~524 KiB of data, and 1024 should be plenty
+            // to address any concurrency concerns. This shouldn't ever
+            // need to be configurable, but we can easily make it so if needed.
+            msg_limit: 1024,
             lair_client: None,
             lair_tag: None,
             url: None,
@@ -74,23 +77,6 @@ impl Default for CliBuilder {
 }
 
 impl CliBuilder {
-    /// Set the receiver callback.
-    pub fn set_recv_cb<Cb>(&mut self, cb: Cb)
-    where
-        Cb: FnMut(SignalMsg) + 'static + Send,
-    {
-        self.recv_cb = Box::new(cb);
-    }
-
-    /// Apply the receiver callback.
-    pub fn with_recv_cb<Cb>(mut self, cb: Cb) -> Self
-    where
-        Cb: FnMut(SignalMsg) + 'static + Send,
-    {
-        self.set_recv_cb(cb);
-        self
-    }
-
     /// Set the LairClient.
     pub fn set_lair_client(&mut self, lair_client: LairClient) {
         self.lair_client = Some(lair_client);
@@ -125,7 +111,9 @@ impl CliBuilder {
     }
 
     /// Build the Srv instance.
-    pub async fn build(self) -> Result<Cli> {
+    pub async fn build(
+        self,
+    ) -> Result<(Cli, tokio::sync::mpsc::Receiver<SignalMsg>)> {
         Cli::priv_build(self).await
     }
 }
@@ -448,13 +436,17 @@ impl Cli {
         }
     }
 
-    async fn priv_build(builder: CliBuilder) -> Result<Self> {
+    async fn priv_build(
+        builder: CliBuilder,
+    ) -> Result<(Self, tokio::sync::mpsc::Receiver<SignalMsg>)> {
         let CliBuilder {
-            recv_cb,
+            msg_limit,
             lair_client,
             lair_tag,
             url,
         } = builder;
+
+        let (msg_send, msg_recv) = tokio::sync::mpsc::channel(msg_limit);
 
         let mut lair_keystore = None;
 
@@ -572,7 +564,7 @@ impl Cli {
             con_url_versioned,
             endpoint,
             ice.clone(),
-            recv_cb,
+            msg_send,
             x25519_pub,
             lair_client.clone(),
             write_send.clone(),
@@ -601,16 +593,19 @@ impl Cli {
 
         let _ = init_recv.await;
 
-        Ok(Self {
-            addr: url,
-            hnd,
-            ice,
-            write_send,
-            seq: Seq::new(),
-            _lair_keystore: lair_keystore,
-            lair_client,
-            x25519_pub,
-        })
+        Ok((
+            Self {
+                addr: url,
+                hnd,
+                ice,
+                write_send,
+                seq: Seq::new(),
+                _lair_keystore: lair_keystore,
+                lair_client,
+                x25519_pub,
+            },
+            msg_recv,
+        ))
     }
 }
 
@@ -621,7 +616,7 @@ async fn con_task(
     con_url: String,
     endpoint: String,
     ice: Arc<Mutex<Arc<serde_json::Value>>>,
-    recv_cb: RecvCb,
+    msg_send: tokio::sync::mpsc::Sender<SignalMsg>,
     x25519_pub: Id,
     lair_client: LairClient,
     write_send: WriteSend,
@@ -629,7 +624,6 @@ async fn con_task(
     init: tokio::sync::oneshot::Sender<()>,
 ) {
     let mut init = Some(init);
-    let mut recv_cb = Some(recv_cb);
     let mut write_recv = Some(write_recv);
     loop {
         if let Some(socket) = con_open_connection(
@@ -648,16 +642,15 @@ async fn con_task(
                 let _ = init.send(());
             }
 
-            let (a_recv_cb, a_write_recv) = con_manage_connection(
+            let a_write_recv = con_manage_connection(
                 socket,
-                recv_cb.take().unwrap(),
+                msg_send.clone(),
                 x25519_pub,
                 &lair_client,
                 write_send.clone(),
                 write_recv.take().unwrap(),
             )
             .await;
-            recv_cb = Some(a_recv_cb);
             write_recv = Some(a_write_recv);
         }
 
@@ -854,16 +847,14 @@ async fn con_open_connection(
 
 async fn con_manage_connection(
     socket: Socket,
-    recv_cb: RecvCb,
+    msg_send: tokio::sync::mpsc::Sender<SignalMsg>,
     x25519_pub: Id,
     lair_client: &LairClient,
     write_send: WriteSend,
     write_recv: WriteRecv,
-) -> (RecvCb, WriteRecv) {
-    let recv_cb = Arc::new(tokio::sync::Mutex::new(recv_cb));
+) -> WriteRecv {
     let write_recv = Arc::new(tokio::sync::Mutex::new(write_recv));
 
-    let recv_cb2 = recv_cb.clone();
     let write_recv2 = write_recv.clone();
 
     macro_rules! dbg_err {
@@ -883,7 +874,6 @@ async fn con_manage_connection(
 
     tokio::select! {
         _ = async move {
-            let mut recv_cb = recv_cb2.lock().await;
             while let Some(msg) = read.next().await {
                 let msg = dbg_err!(msg);
                 if let Message::Pong(_) = &msg {
@@ -903,11 +893,11 @@ async fn con_manage_connection(
                 let msg = msg.into_data();
                 match dbg_err!(wire::Wire::decode(&msg)) {
                     wire::Wire::DemoV1 { rem_pub } => {
-                        recv_cb(SignalMsg::Demo { rem_pub });
+                        let _ = msg_send.send(SignalMsg::Demo { rem_pub }).await;
                     }
                     wire::Wire::FwdV1 { rem_pub, nonce, cipher } => {
                         if let Err(err) = decode_fwd(
-                            &mut recv_cb,
+                            &msg_send,
                             &mut seq_track,
                             &x25519_pub,
                             lair_client,
@@ -941,20 +931,14 @@ async fn con_manage_connection(
         } => (),
     };
 
-    (
-        Arc::try_unwrap(recv_cb)
-            .map_err(|_| ())
-            .unwrap()
-            .into_inner(),
-        Arc::try_unwrap(write_recv)
-            .map_err(|_| ())
-            .unwrap()
-            .into_inner(),
-    )
+    Arc::try_unwrap(write_recv)
+        .map_err(|_| ())
+        .unwrap()
+        .into_inner()
 }
 
 async fn decode_fwd(
-    recv_cb: &mut RecvCb,
+    msg_send: &tokio::sync::mpsc::Sender<SignalMsg>,
     seq_track: &mut SeqTrack,
     x25519_pub: &Id,
     lair_client: &LairClient,
@@ -982,13 +966,13 @@ async fn decode_fwd(
 
     match msg {
         wire::FwdInnerV1::Offer { offer, .. } => {
-            recv_cb(SignalMsg::Offer { rem_pub, offer });
+            let _ = msg_send.send(SignalMsg::Offer { rem_pub, offer }).await;
         }
         wire::FwdInnerV1::Answer { answer, .. } => {
-            recv_cb(SignalMsg::Answer { rem_pub, answer });
+            let _ = msg_send.send(SignalMsg::Answer { rem_pub, answer }).await;
         }
         wire::FwdInnerV1::Ice { ice, .. } => {
-            recv_cb(SignalMsg::Ice { rem_pub, ice });
+            let _ = msg_send.send(SignalMsg::Ice { rem_pub, ice }).await;
         }
     }
 

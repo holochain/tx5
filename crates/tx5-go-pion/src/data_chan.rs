@@ -5,7 +5,11 @@ use tx5_go_pion_sys::API;
 
 /// A precursor go pion webrtc DataChannel, awaiting an event handler.
 #[derive(Debug)]
-pub struct DataChannelSeed(pub(crate) usize, Arc<Mutex<Vec<DataChannelEvent>>>);
+pub struct DataChannelSeed(
+    pub(crate) usize,
+    Arc<Mutex<Vec<DataChannelEvent>>>,
+    Arc<tokio::sync::Semaphore>,
+);
 
 impl Drop for DataChannelSeed {
     fn drop(&mut self) {
@@ -16,7 +20,10 @@ impl Drop for DataChannelSeed {
 }
 
 impl DataChannelSeed {
-    pub(crate) fn new(data_chan_id: usize) -> Self {
+    pub(crate) fn new(
+        data_chan_id: usize,
+        limit: Arc<tokio::sync::Semaphore>,
+    ) -> Self {
         let hold = Arc::new(Mutex::new(Vec::new()));
         {
             let hold = hold.clone();
@@ -25,9 +32,10 @@ impl DataChannelSeed {
                 Arc::new(move |evt| {
                     hold.lock().push(evt);
                 }),
+                limit.clone(),
             );
         }
-        Self(data_chan_id, hold)
+        Self(data_chan_id, hold, limit)
     }
 
     /// Construct a real DataChannel by providing an event handler.
@@ -37,13 +45,18 @@ impl DataChannelSeed {
     {
         let cb: DataChanEvtCb = Arc::new(cb);
         let data_chan_id = self.0;
+        let limit = self.2.clone();
         self.0 = 0;
-        replace_data_chan_evt_cb(data_chan_id, move || {
-            for evt in self.1.lock().drain(..) {
-                cb(evt);
-            }
-            cb
-        });
+        replace_data_chan_evt_cb(
+            data_chan_id,
+            move || {
+                for evt in self.1.lock().drain(..) {
+                    cb(evt);
+                }
+                cb
+            },
+            limit,
+        );
         DataChannel(data_chan_id)
     }
 }

@@ -14,6 +14,7 @@ async fn limit_ports() {
         move |evt| {
             let _ = s.send(evt);
         },
+        std::sync::Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3)),
     )
     .await
     .unwrap();

@@ -20,6 +20,11 @@ impl Drop for ConnStateSeed {
 }
 
 impl ConnStateSeed {
+    /// Get early access to the receive limit.
+    pub fn rcv_limit(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.output.as_ref().unwrap().0.meta().rcv_limit
+    }
+
     /// Finalize this conn_state seed by indicating a successful connection.
     pub fn result_ok(mut self) -> Result<(ConnState, ManyRcv<ConnStateEvt>)> {
         self.done = true;
@@ -915,72 +920,37 @@ impl ConnState {
     }
 
     /// The connection received data on the data channel.
-    /// This synchronous function must not block for now...
-    /// (we'll need to test some blocking strategies
-    /// for the goroutine in tx5-go-pion)... but we also can't just
-    /// fill up memory if the application is processing slowly.
-    /// So it will error / trigger connection shutdown if we get
-    /// too much of a backlog.
-    pub fn rcv_data(&self, mut data: BackBuf) -> Result<()> {
-        // polling try_acquire doesn't fairly reserve a place in line,
-        // so we need to timeout an actual acquire future..
+    pub fn rcv_data(
+        &self,
+        mut data: BackBuf,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<()> {
+        use std::io::Read;
 
-        // we've got 15 ms of time to acquire the recv permit
-        // this is a little more forgiving than just blanket deny
-        // if the app is a little slow, but it's also not so much time
-        // that we'll end up stalling other tasks that need to run.
+        let mut len = data.len()?;
+        if len > 16 * 1024 {
+            return Err(Error::id("MsgChunkTooLarge"));
+        }
+        if len < 8 {
+            return Err(Error::id("MsgChunkInvalid"));
+        }
 
-        let fut = tokio::time::timeout(
-            std::time::Duration::from_millis(15),
-            async move {
-                use std::io::Read;
+        let mut ident = [0; 8];
+        data.read_exact(&mut ident[..])?;
+        let ident = u64::from_le_bytes(ident);
 
-                let mut len = data.len()?;
-                if len > 16 * 1024 {
-                    return Err(Error::id("MsgChunkTooLarge"));
-                }
-                if len < 8 {
-                    return Err(Error::id("MsgChunkInvalid"));
-                }
+        len -= 8;
 
-                let mut ident = [0; 8];
-                data.read_exact(&mut ident[..])?;
-                let ident = u64::from_le_bytes(ident);
+        let buf = bytes::BytesMut::with_capacity(len);
+        let mut buf = bytes::BufMut::writer(buf);
+        std::io::copy(&mut data, &mut buf)?;
+        let buf = buf.into_inner().freeze();
 
-                len -= 8;
-
-                let buf = bytes::BytesMut::with_capacity(len);
-                let mut buf = bytes::BufMut::writer(buf);
-                std::io::copy(&mut data, &mut buf)?;
-                let buf = buf.into_inner().freeze();
-
-                if self.1.rcv_limit.available_permits() < len {
-                    tracing::warn!(%len, "recv queue full, waiting for permits");
-                }
-
-                let permit = self
-                    .1
-                    .rcv_limit
-                    .clone()
-                    .acquire_many_owned(len as u32)
-                    .await
-                    .map_err(|_| Error::id("Closed"))?;
-
-                self.0.send(Ok(ConnCmd::Recv {
-                    ident,
-                    data: buf,
-                    permit,
-                }))
-            },
-        );
-
-        // need an external (futures) polling executor, because tokio
-        // won't let us use blocking_recv, since we're still in the runtime.
-
-        futures::executor::block_on(fut).map_err(|_| {
-            tracing::error!("SLOW_APP: failed to receive in timely manner");
-            Error::id("RecvQueueFull")
-        })?
+        self.0.send(Ok(ConnCmd::Recv {
+            ident,
+            data: buf,
+            permit,
+        }))
     }
 
     /// The send buffer *was* high, but has now transitioned to low.

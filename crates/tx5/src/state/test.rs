@@ -253,9 +253,12 @@ async fn extended_outgoing() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
+    let limit = Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3));
+
     // receive the empty preflight
+    let permit = limit.clone().acquire_owned().await.unwrap();
     conn_state
-        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap(), permit)
         .unwrap();
 
     match test.state_evt.recv().await {
@@ -280,8 +283,12 @@ async fn extended_outgoing() {
     println!("about to rcv");
 
     // now, receive the actual message
+    let permit = limit.clone().acquire_owned().await.unwrap();
     conn_state
-        .rcv_data(BackBuf::from_slice(b"\x2a\0\0\0\0\0\0\x80world").unwrap())
+        .rcv_data(
+            BackBuf::from_slice(b"\x2a\0\0\0\0\0\0\x80world").unwrap(),
+            permit,
+        )
         .unwrap();
 
     match test.state_evt.recv().await {
@@ -502,9 +509,12 @@ async fn polite_in_offer() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
+    let limit = Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3));
+
     // receive the empty preflight
+    let permit = limit.clone().acquire_owned().await.unwrap();
     conn_state
-        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap(), permit)
         .unwrap();
 
     match test.state_evt.recv().await {
@@ -623,9 +633,12 @@ async fn impolite_in_offer() {
         oth => panic!("unexpected: {:?}", oth),
     };
 
+    let limit = Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3));
+
     // receive the empty preflight
+    let permit = limit.clone().acquire_owned().await.unwrap();
     conn_state
-        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap())
+        .rcv_data(BackBuf::from_slice(b"\0\0\0\0\0\0\0\x80").unwrap(), permit)
         .unwrap();
 
     match test.state_evt.recv().await {

@@ -202,9 +202,13 @@ async fn spawn_peer(
     tokio::sync::mpsc::UnboundedReceiver<PeerConnectionEvent>,
 ) {
     let (snd, rcv) = tokio::sync::mpsc::unbounded_channel();
-    let con = PeerConnection::new(config, move |evt| {
-        let _ = snd.send(evt);
-    })
+    let con = PeerConnection::new(
+        config,
+        move |evt| {
+            let _ = snd.send(evt);
+        },
+        Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3)),
+    )
     .await
     .unwrap();
     (con, rcv)
@@ -222,13 +226,14 @@ async fn spawn_chan(
     let s_d = std::sync::Mutex::new(Some(s_d));
     let c = std::sync::atomic::AtomicUsize::new(1);
     let mut chan = seed.handle(move |evt| match evt {
+        DataChannelEvent::Error(err) => panic!("{err:?}"),
         DataChannelEvent::Close | DataChannelEvent::BufferedAmountLow => (),
         DataChannelEvent::Open => {
             if let Some(s_o) = s_o.lock().unwrap().take() {
                 let _ = s_o.send(());
             }
         }
-        DataChannelEvent::Message(mut buf) => {
+        DataChannelEvent::Message(mut buf, _) => {
             assert_eq!(1024, buf.len().unwrap());
             std::io::Write::write_all(&mut std::io::stdout(), b".").unwrap();
             std::io::Write::flush(&mut std::io::stdout()).unwrap();

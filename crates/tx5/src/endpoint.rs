@@ -379,11 +379,14 @@ async fn new_conn_task(
     let mut peer = match async {
         let peer_config = BackBuf::from_json(ice_servers)?;
 
-        let peer =
-            tx5_go_pion::PeerConnection::new(peer_config.imp.buf, move |evt| {
+        let peer = tx5_go_pion::PeerConnection::new(
+            peer_config.imp.buf,
+            move |evt| {
                 let _ = peer_snd2.send(MultiEvt::Peer(evt));
-            })
-            .await?;
+            },
+            seed.rcv_limit().clone(),
+        )
+        .await?;
 
         Result::Ok(peer)
     }
@@ -590,7 +593,9 @@ async fn new_conn_task(
                             let _ = resp.send(None);
                         }
                     }
-                    Some(MultiEvt::Peer(PeerEvt::Error(err))) => {
+                    Some(MultiEvt::Peer(PeerEvt::Error(err)))
+                    | Some(MultiEvt::Data(DataEvt::Error(err))) => {
+                        tracing::warn!(?err, "ConnectionError");
                         conn_state.close(err);
                         break;
                     }
@@ -633,8 +638,8 @@ async fn new_conn_task(
                         conn_state.close(Error::id("DataChanClosed"));
                         break;
                     }
-                    Some(MultiEvt::Data(DataEvt::Message(buf))) => {
-                        if conn_state.rcv_data(BackBuf::from_raw(buf)).is_err() {
+                    Some(MultiEvt::Data(DataEvt::Message(buf, permit))) => {
+                        if conn_state.rcv_data(BackBuf::from_raw(buf), permit).is_err() {
                             break;
                         }
                     }

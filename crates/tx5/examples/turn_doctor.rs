@@ -332,12 +332,17 @@ async fn gather_ice(
             std::time::Duration::from_secs(10),
             async move {
                 let (s, mut r) = tokio::sync::mpsc::unbounded_channel();
-                let mut con =
-                    tx5_go_pion::PeerConnection::new(config, move |evt| {
+                let mut con = tx5_go_pion::PeerConnection::new(
+                    config,
+                    move |evt| {
                         let _ = s.send(evt);
-                    })
-                    .await
-                    .unwrap();
+                    },
+                    std::sync::Arc::new(tokio::sync::Semaphore::new(
+                        usize::MAX >> 3,
+                    )),
+                )
+                .await
+                .unwrap();
 
                 let _dc = con
                     .create_data_channel(

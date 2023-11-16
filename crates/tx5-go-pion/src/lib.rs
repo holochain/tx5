@@ -92,6 +92,8 @@ mod tests {
     async fn peer_con() {
         init_tracing();
 
+        let rcv_limit = Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3));
+
         let (ice, turn) = tx5_go_pion_turn::test_turn_server().await.unwrap();
 
         let config: PeerConnectionConfig =
@@ -131,31 +133,38 @@ mod tests {
             let res_send = res_send.clone();
             let cmd_send_2 = cmd_send_2.clone();
             let ice1 = ice1.clone();
+            let rcv_limit = rcv_limit.clone();
             tokio::task::spawn(async move {
                 let mut peer1 = {
                     let cmd_send_2 = cmd_send_2.clone();
-                    PeerConnection::new(&config, move |evt| match evt {
-                        PeerConnectionEvent::Error(err) => {
-                            panic!("{:?}", err);
-                        }
-                        PeerConnectionEvent::State(state) => {
-                            println!("peer1 state: {state:?}");
-                        }
-                        PeerConnectionEvent::ICECandidate(mut candidate) => {
-                            println!(
-                                "peer1 in-ice: {}",
-                                String::from_utf8_lossy(
-                                    &candidate.to_vec().unwrap()
-                                )
-                            );
-                            ice1.lock().push(candidate.mut_clone());
-                            // ok if these are lost during test shutdown
-                            let _ = cmd_send_2.send(Cmd::ICE(candidate));
-                        }
-                        PeerConnectionEvent::DataChannel(chan) => {
-                            println!("peer1 in-chan: {:?}", chan);
-                        }
-                    })
+                    PeerConnection::new(
+                        &config,
+                        move |evt| match evt {
+                            PeerConnectionEvent::Error(err) => {
+                                panic!("{:?}", err);
+                            }
+                            PeerConnectionEvent::State(state) => {
+                                println!("peer1 state: {state:?}");
+                            }
+                            PeerConnectionEvent::ICECandidate(
+                                mut candidate,
+                            ) => {
+                                println!(
+                                    "peer1 in-ice: {}",
+                                    String::from_utf8_lossy(
+                                        &candidate.to_vec().unwrap()
+                                    )
+                                );
+                                ice1.lock().push(candidate.mut_clone());
+                                // ok if these are lost during test shutdown
+                                let _ = cmd_send_2.send(Cmd::ICE(candidate));
+                            }
+                            PeerConnectionEvent::DataChannel(chan) => {
+                                println!("peer1 in-chan: {:?}", chan);
+                            }
+                        },
+                        rcv_limit,
+                    )
                     .await
                     .unwrap()
                 };
@@ -211,29 +220,35 @@ mod tests {
             tokio::task::spawn(async move {
                 let mut peer2 = {
                     let cmd_send_1 = cmd_send_1.clone();
-                    PeerConnection::new(&config, move |evt| match evt {
-                        PeerConnectionEvent::Error(err) => {
-                            panic!("{:?}", err);
-                        }
-                        PeerConnectionEvent::State(state) => {
-                            println!("peer2 state: {state:?}");
-                        }
-                        PeerConnectionEvent::ICECandidate(mut candidate) => {
-                            println!(
-                                "peer2 in-ice: {}",
-                                String::from_utf8_lossy(
-                                    &candidate.to_vec().unwrap()
-                                )
-                            );
-                            ice2.lock().push(candidate.mut_clone());
-                            // ok if these are lost during test shutdown
-                            let _ = cmd_send_1.send(Cmd::ICE(candidate));
-                        }
-                        PeerConnectionEvent::DataChannel(chan) => {
-                            println!("peer2 in-chan: {:?}", chan);
-                            res_send.send(Res::Chan2(chan)).unwrap();
-                        }
-                    })
+                    PeerConnection::new(
+                        &config,
+                        move |evt| match evt {
+                            PeerConnectionEvent::Error(err) => {
+                                panic!("{:?}", err);
+                            }
+                            PeerConnectionEvent::State(state) => {
+                                println!("peer2 state: {state:?}");
+                            }
+                            PeerConnectionEvent::ICECandidate(
+                                mut candidate,
+                            ) => {
+                                println!(
+                                    "peer2 in-ice: {}",
+                                    String::from_utf8_lossy(
+                                        &candidate.to_vec().unwrap()
+                                    )
+                                );
+                                ice2.lock().push(candidate.mut_clone());
+                                // ok if these are lost during test shutdown
+                                let _ = cmd_send_1.send(Cmd::ICE(candidate));
+                            }
+                            PeerConnectionEvent::DataChannel(chan) => {
+                                println!("peer2 in-chan: {:?}", chan);
+                                res_send.send(Res::Chan2(chan)).unwrap();
+                            }
+                        },
+                        rcv_limit,
+                    )
                     .await
                     .unwrap()
                 };
@@ -300,7 +315,7 @@ mod tests {
             if let DataChannelEvent::Open = evt {
                 s_open1.send(()).unwrap();
             }
-            if let DataChannelEvent::Message(mut msg) = evt {
+            if let DataChannelEvent::Message(mut msg, _) = evt {
                 msg.access(|data| {
                     assert_eq!(b"world", data.unwrap());
                     Ok(())
@@ -317,7 +332,7 @@ mod tests {
             if let DataChannelEvent::Open = evt {
                 s_open.send(()).unwrap();
             }
-            if let DataChannelEvent::Message(mut msg) = evt {
+            if let DataChannelEvent::Message(mut msg, _) = evt {
                 msg.access(|data| {
                     assert_eq!(b"hello", data.unwrap());
                     Ok(())

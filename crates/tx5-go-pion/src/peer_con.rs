@@ -95,7 +95,7 @@ impl From<&AnswerConfig> for GoBufRef<'static> {
 
 /// A go pion webrtc PeerConnection.
 #[derive(Debug)]
-pub struct PeerConnection(usize);
+pub struct PeerConnection(usize, Arc<tokio::sync::Semaphore>);
 
 impl Drop for PeerConnection {
     fn drop(&mut self) {
@@ -108,7 +108,11 @@ impl Drop for PeerConnection {
 
 impl PeerConnection {
     /// Construct a new PeerConnection.
-    pub async fn new<'a, B, Cb>(config: B, cb: Cb) -> Result<Self>
+    pub async fn new<'a, B, Cb>(
+        config: B,
+        cb: Cb,
+        recv_limit: Arc<tokio::sync::Semaphore>,
+    ) -> Result<Self>
     where
         B: Into<GoBufRef<'a>>,
         Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
@@ -119,8 +123,8 @@ impl PeerConnection {
         let cb: PeerConEvtCb = Arc::new(cb);
         tokio::task::spawn_blocking(move || unsafe {
             let peer_con_id = API.peer_con_alloc(config)?;
-            register_peer_con_evt_cb(peer_con_id, cb);
-            Ok(Self(peer_con_id))
+            register_peer_con_evt_cb(peer_con_id, cb, recv_limit.clone());
+            Ok(Self(peer_con_id, recv_limit))
         })
         .await?
     }
@@ -208,11 +212,12 @@ impl PeerConnection {
         B: Into<GoBufRef<'a>>,
     {
         let peer_con = self.0;
+        let limit = self.1.clone();
         r2id!(config);
         tokio::task::spawn_blocking(move || unsafe {
             let data_chan_id =
                 API.peer_con_create_data_chan(peer_con, config)?;
-            Ok(DataChannelSeed::new(data_chan_id))
+            Ok(DataChannelSeed::new(data_chan_id, limit))
         })
         .await?
     }

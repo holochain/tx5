@@ -226,22 +226,17 @@ async fn new_sig_task(
 ) {
     tracing::debug!(%sig_url, "spawning new signal task");
 
-    let (sig_snd, mut sig_rcv) = tokio::sync::mpsc::unbounded_channel();
-
-    let (sig, cli_url) = match async {
-        let sig = tx5_signal::Cli::builder()
+    let (sig, mut sig_rcv, cli_url) = match async {
+        let (sig, sig_rcv) = tx5_signal::Cli::builder()
             .with_lair_client(config.lair_client().clone())
             .with_lair_tag(config.lair_tag().clone())
             .with_url(sig_url.to_string().parse().unwrap())
-            .with_recv_cb(move |msg| {
-                let _ = sig_snd.send(msg);
-            })
             .build()
             .await?;
 
         let cli_url = Tx5Url::new(sig.local_addr())?;
 
-        Result::Ok((sig, cli_url))
+        Result::Ok((sig, sig_rcv, cli_url))
     }
     .await
     {

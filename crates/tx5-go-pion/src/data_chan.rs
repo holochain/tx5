@@ -1,88 +1,154 @@
 use crate::*;
-use parking_lot::Mutex;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use tx5_go_pion_sys::API;
 
-/// A precursor go pion webrtc DataChannel, awaiting an event handler.
-#[derive(Debug)]
-pub struct DataChannelSeed(
-    pub(crate) usize,
-    Arc<Mutex<Vec<DataChannelEvent>>>,
-    Arc<tokio::sync::Semaphore>,
-);
+struct DataChanCore {
+    data_chan_id: usize,
+    recv_limit: Arc<tokio::sync::Semaphore>,
+    evt_send: EventSend<DataChannelEvent>,
+    drop_err: Error,
+}
 
-impl Drop for DataChannelSeed {
+impl Drop for DataChanCore {
     fn drop(&mut self) {
-        if self.0 != 0 {
-            unsafe { API.data_chan_free(self.0) }
+        self.evt_send.send_err(self.drop_err.clone());
+        unregister_data_chan(self.data_chan_id);
+        unsafe {
+            API.data_chan_free(self.data_chan_id);
         }
     }
 }
 
-impl DataChannelSeed {
-    pub(crate) fn new(
+impl DataChanCore {
+    pub fn new(
         data_chan_id: usize,
-        limit: Arc<tokio::sync::Semaphore>,
+        recv_limit: Arc<tokio::sync::Semaphore>,
+        evt_send: EventSend<DataChannelEvent>,
     ) -> Self {
-        let hold = Arc::new(Mutex::new(Vec::new()));
-        {
-            let hold = hold.clone();
-            register_data_chan_evt_cb(
-                data_chan_id,
-                Arc::new(move |evt| {
-                    hold.lock().push(evt);
-                }),
-                limit.clone(),
-            );
+        Self {
+            data_chan_id,
+            recv_limit,
+            evt_send,
+            drop_err: Error::id("DataChannelDropped").into(),
         }
-        Self(data_chan_id, hold, limit)
     }
 
-    /// Construct a real DataChannel by providing an event handler.
-    pub fn handle<Cb>(mut self, cb: Cb) -> DataChannel
-    where
-        Cb: Fn(DataChannelEvent) + 'static + Send + Sync,
-    {
-        let cb: DataChanEvtCb = Arc::new(cb);
-        let data_chan_id = self.0;
-        let limit = self.2.clone();
-        self.0 = 0;
-        replace_data_chan_evt_cb(
-            data_chan_id,
-            move || {
-                for evt in self.1.lock().drain(..) {
-                    cb(evt);
-                }
-                cb
-            },
-            limit,
-        );
-        DataChannel(data_chan_id)
+    pub fn close(&mut self, err: Error) {
+        // self.evt_send.send_err() is called in Drop impl
+        self.drop_err = err;
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct WeakDataChan(
+    Weak<Mutex<std::result::Result<DataChanCore, Error>>>,
+);
+
+macro_rules! data_chan_strong_core {
+    ($inner:expr, $ident:ident, $block:block) => {
+        match &mut *$inner.lock().unwrap() {
+            Ok($ident) => $block,
+            Err(err) => Result::Err(err.clone().into()),
+        }
+    };
+}
+
+macro_rules! data_chan_weak_core {
+    ($inner:expr, $ident:ident, $block:block) => {
+        match $inner.upgrade() {
+            Some(strong) => data_chan_strong_core!(strong, $ident, $block),
+            None => Result::Err(Error::id("DataChannelClosed")),
+        }
+    };
+}
+
+impl WeakDataChan {
+    pub fn close(&self, err: Error) {
+        if let Some(strong) = self.0.upgrade() {
+            let mut lock = strong.lock().unwrap();
+            if let Ok(core) = &mut *lock {
+                core.close(err.clone());
+            }
+            *lock = Err(err.into());
+        }
+    }
+
+    pub fn get_recv_limit(&self) -> Result<Arc<tokio::sync::Semaphore>> {
+        data_chan_weak_core!(self.0, core, { Ok(core.recv_limit.clone()) })
+    }
+
+    pub async fn send_evt(&self, evt: DataChannelEvent) -> Result<()> {
+        data_chan_weak_core!(self.0, core, { core.evt_send.send(evt).await })
     }
 }
 
 /// A go pion webrtc DataChannel.
-#[derive(Debug)]
-pub struct DataChannel(pub(crate) usize);
+pub struct DataChannel(Arc<Mutex<std::result::Result<DataChanCore, Error>>>);
 
-impl Drop for DataChannel {
-    fn drop(&mut self) {
-        unregister_data_chan_evt_cb(self.0);
-        unsafe { API.data_chan_free(self.0) }
+impl std::fmt::Debug for DataChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let res = match &*self.0.lock().unwrap() {
+            Ok(core) => format!("DataChannel(open, {})", core.data_chan_id),
+            Err(err) => format!("DataChannel(closed, {:?})", err),
+        };
+        f.write_str(&res)
     }
 }
 
 impl DataChannel {
+    pub(crate) fn new(
+        data_chan_id: usize,
+        recv_limit: Arc<tokio::sync::Semaphore>,
+    ) -> (Self, EventRecv<DataChannelEvent>) {
+        let (evt_send, evt_recv) = EventSend::new(1024);
+
+        let strong = Arc::new(Mutex::new(Ok(DataChanCore::new(
+            data_chan_id,
+            recv_limit,
+            evt_send.clone(),
+        ))));
+
+        let weak = WeakDataChan(Arc::downgrade(&strong));
+
+        register_data_chan(data_chan_id, weak);
+
+        // we might have missed some state callbacks
+        if let Ok(ready_state) =
+            unsafe { API.data_chan_ready_state(data_chan_id) }
+        {
+            if ready_state == 2 {
+                let _ = evt_send.send.send((DataChannelEvent::Open, None));
+            } else if ready_state > 2 {
+                let _ = evt_send.send.send((DataChannelEvent::Close, None));
+            }
+        }
+
+        (Self(strong), evt_recv)
+    }
+
+    /// Close this data channel.
+    pub fn close(&mut self, err: Error) {
+        let mut lock = self.0.lock().unwrap();
+        if let Ok(core) = &mut *lock {
+            core.close(err.clone());
+        }
+        *lock = Err(err.into());
+    }
+
+    fn get_data_chan_id(&self) -> Result<usize> {
+        data_chan_strong_core!(self.0, core, { Ok(core.data_chan_id) })
+    }
+
     /// Get the label of this DataChannel.
     #[inline]
     pub fn label(&mut self) -> Result<GoBuf> {
-        unsafe { Ok(GoBuf(API.data_chan_label(self.0)?)) }
+        unsafe { Ok(GoBuf(API.data_chan_label(self.get_data_chan_id()?)?)) }
     }
 
     /// Get the ready state of this DataChannel.
     #[inline]
     pub fn ready_state(&mut self) -> Result<usize> {
-        unsafe { API.data_chan_ready_state(self.0) }
+        unsafe { API.data_chan_ready_state(self.get_data_chan_id()?) }
     }
 
     /// Set the buffered amount low threshold.
@@ -93,14 +159,17 @@ impl DataChannel {
         threshold: usize,
     ) -> Result<usize> {
         unsafe {
-            API.data_chan_set_buffered_amount_low_threshold(self.0, threshold)
+            API.data_chan_set_buffered_amount_low_threshold(
+                self.get_data_chan_id()?,
+                threshold,
+            )
         }
     }
 
     /// Returns the current BufferedAmount.
     #[inline]
     pub fn buffered_amount(&mut self) -> Result<usize> {
-        unsafe { API.data_chan_buffered_amount(self.0) }
+        unsafe { API.data_chan_buffered_amount(self.get_data_chan_id()?) }
     }
 
     /// Send data to the remote peer on this DataChannel.
@@ -110,10 +179,11 @@ impl DataChannel {
         B: Into<GoBufRef<'a>>,
     {
         // TODO - use OnBufferedAmountLow signal to implement backpressure
-        let data_chan = self.0;
+        let data_chan_id = self.get_data_chan_id()?;
+
         r2id!(data);
         tokio::task::spawn_blocking(move || unsafe {
-            API.data_chan_send(data_chan, data)
+            API.data_chan_send(data_chan_id, data)
         })
         .await?
     }

@@ -100,327 +100,178 @@ mod tests {
             serde_json::from_str(&format!("{{\"iceServers\":[{ice}]}}"))
                 .unwrap();
 
-        let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (mut peer1, mut prcv1) =
+            PeerConnection::new(&config, rcv_limit.clone())
+                .await
+                .unwrap();
+        let (mut peer2, mut prcv2) =
+            PeerConnection::new(&config, rcv_limit.clone())
+                .await
+                .unwrap();
 
-        #[derive(Debug)]
-        enum Cmd {
-            Shutdown,
-            Stats(tokio::sync::oneshot::Sender<GoBuf>),
-            ICE(GoBuf),
-            Offer(GoBuf),
-            Answer(GoBuf),
-        }
+        let (mut data1, mut drcv1) = peer1
+            .create_data_channel(DataChannelConfig {
+                label: Some("data".into()),
+            })
+            .await
+            .unwrap();
 
-        #[derive(Debug)]
-        enum Res {
-            Chan1(DataChannelSeed),
-            Chan2(DataChannelSeed),
-        }
+        let mut offer =
+            peer1.create_offer(OfferConfig::default()).await.unwrap();
+        peer1
+            .set_local_description(offer.try_clone().unwrap())
+            .await
+            .unwrap();
+        peer2.set_remote_description(offer).await.unwrap();
+        let mut answer =
+            peer2.create_answer(AnswerConfig::default()).await.unwrap();
+        peer2
+            .set_local_description(answer.try_clone().unwrap())
+            .await
+            .unwrap();
+        peer1.set_remote_description(answer).await.unwrap();
 
-        let (cmd_send_1, mut cmd_recv_1) =
-            tokio::sync::mpsc::unbounded_channel();
-
-        let (cmd_send_2, mut cmd_recv_2) =
-            tokio::sync::mpsc::unbounded_channel();
-
-        let (res_send, mut res_recv) = tokio::sync::mpsc::unbounded_channel();
-
-        // -- spawn thread for peer connection 1 -- //
-
-        let hnd1 = {
-            let config = config.clone();
-            let res_send = res_send.clone();
-            let cmd_send_2 = cmd_send_2.clone();
-            let ice1 = ice1.clone();
-            let rcv_limit = rcv_limit.clone();
-            tokio::task::spawn(async move {
-                let mut peer1 = {
-                    let cmd_send_2 = cmd_send_2.clone();
-                    PeerConnection::new(
-                        &config,
-                        move |evt| match evt {
-                            PeerConnectionEvent::Error(err) => {
-                                panic!("{:?}", err);
-                            }
-                            PeerConnectionEvent::State(state) => {
-                                println!("peer1 state: {state:?}");
-                            }
-                            PeerConnectionEvent::ICECandidate(
-                                mut candidate,
-                            ) => {
-                                println!(
-                                    "peer1 in-ice: {}",
-                                    String::from_utf8_lossy(
-                                        &candidate.to_vec().unwrap()
-                                    )
-                                );
-                                ice1.lock().push(candidate.mut_clone());
-                                // ok if these are lost during test shutdown
-                                let _ = cmd_send_2.send(Cmd::ICE(candidate));
-                            }
-                            PeerConnectionEvent::DataChannel(chan) => {
-                                println!("peer1 in-chan: {:?}", chan);
-                            }
-                        },
-                        rcv_limit,
-                    )
-                    .await
-                    .unwrap()
-                };
-
-                println!("peer1 about to create data channel");
-                let chan1 = peer1
-                    .create_data_channel(DataChannelConfig {
-                        label: Some("data".into()),
-                    })
-                    .await
-                    .unwrap();
-                res_send.send(Res::Chan1(chan1)).unwrap();
-                println!("peer1 create data channel complete");
-
-                println!("peer1 about to create offer");
-                let mut offer =
-                    peer1.create_offer(OfferConfig::default()).await.unwrap();
-                peer1.set_local_description(&mut offer).await.unwrap();
-                cmd_send_2.send(Cmd::Offer(offer)).unwrap();
-                println!("peer1 offer complete");
-
-                while let Some(cmd) = cmd_recv_1.recv().await {
-                    match cmd {
-                        Cmd::ICE(ice) => {
-                            // ok if these are lost during test shutdown
-                            let _ = peer1.add_ice_candidate(ice).await;
-                        }
-                        Cmd::Answer(mut answer) => {
-                            println!(
-                                "peer1 recv answer: {}",
-                                String::from_utf8_lossy(
-                                    &answer.to_vec().unwrap()
-                                )
-                            );
-                            peer1.set_remote_description(answer).await.unwrap();
-                        }
-                        Cmd::Stats(rsp) => {
-                            let _ = rsp.send(peer1.stats().await.unwrap());
-                        }
-                        _ => break,
+        let (mut data2, mut drcv2) = loop {
+            if let Some(evt) = prcv2.recv().await {
+                match evt {
+                    PeerConnectionEvent::Error(err) => panic!("{err:?}"),
+                    PeerConnectionEvent::State(_) => (),
+                    PeerConnectionEvent::ICECandidate(ice) => {
+                        peer1.add_ice_candidate(ice).await.unwrap();
+                    }
+                    PeerConnectionEvent::DataChannel(data2, drcv2) => {
+                        break (data2, drcv2);
                     }
                 }
-            })
+            } else {
+                panic!("receiver ended");
+            }
         };
 
-        // -- spawn thread for peer connection 2 -- //
+        enum FinishState {
+            Start,
+            Msg1,
+            Msg2,
+            Done,
+        }
 
-        let hnd2 = {
-            let config = config.clone();
-            let res_send = res_send.clone();
-            let cmd_send_1 = cmd_send_1.clone();
-            let ice2 = ice2.clone();
-            tokio::task::spawn(async move {
-                let mut peer2 = {
-                    let cmd_send_1 = cmd_send_1.clone();
-                    PeerConnection::new(
-                        &config,
-                        move |evt| match evt {
-                            PeerConnectionEvent::Error(err) => {
-                                panic!("{:?}", err);
-                            }
-                            PeerConnectionEvent::State(state) => {
-                                println!("peer2 state: {state:?}");
-                            }
-                            PeerConnectionEvent::ICECandidate(
-                                mut candidate,
-                            ) => {
-                                println!(
-                                    "peer2 in-ice: {}",
-                                    String::from_utf8_lossy(
-                                        &candidate.to_vec().unwrap()
-                                    )
-                                );
-                                ice2.lock().push(candidate.mut_clone());
-                                // ok if these are lost during test shutdown
-                                let _ = cmd_send_1.send(Cmd::ICE(candidate));
-                            }
-                            PeerConnectionEvent::DataChannel(chan) => {
-                                println!("peer2 in-chan: {:?}", chan);
-                                res_send.send(Res::Chan2(chan)).unwrap();
-                            }
-                        },
-                        rcv_limit,
-                    )
-                    .await
-                    .unwrap()
-                };
+        impl FinishState {
+            fn is_done(&self) -> bool {
+                matches!(self, Self::Done)
+            }
 
-                while let Some(cmd) = cmd_recv_2.recv().await {
-                    match cmd {
-                        Cmd::ICE(ice) => {
-                            // ok if these are lost during test shutdown
-                            let _ = peer2.add_ice_candidate(ice).await;
-                        }
-                        Cmd::Offer(mut offer) => {
-                            println!(
-                                "peer2 recv offer: {}",
-                                String::from_utf8_lossy(
-                                    &offer.to_vec().unwrap()
-                                )
-                            );
-                            peer2.set_remote_description(offer).await.unwrap();
-
-                            println!("peer2 about to create answer");
-                            let mut answer = peer2
-                                .create_answer(AnswerConfig::default())
-                                .await
-                                .unwrap();
-                            peer2
-                                .set_local_description(&mut answer)
-                                .await
-                                .unwrap();
-                            cmd_send_1.send(Cmd::Answer(answer)).unwrap();
-                            println!("peer2 answer complete");
-                        }
-                        Cmd::Stats(rsp) => {
-                            let _ = rsp.send(peer2.stats().await.unwrap());
-                        }
-                        _ => break,
-                    }
+            fn msg1(&self) -> Self {
+                match self {
+                    Self::Start => Self::Msg1,
+                    Self::Msg2 => Self::Done,
+                    _ => panic!(),
                 }
-            })
-        };
+            }
 
-        // -- retrieve our data channels -- //
-
-        let mut chan1 = None;
-        let mut chan2 = None;
-
-        for _ in 0..2 {
-            match res_recv.recv().await.unwrap() {
-                Res::Chan1(chan) => chan1 = Some(chan),
-                Res::Chan2(chan) => chan2 = Some(chan),
+            fn msg2(&self) -> Self {
+                match self {
+                    Self::Start => Self::Msg2,
+                    Self::Msg1 => Self::Done,
+                    _ => panic!(),
+                }
             }
         }
 
-        let (s_open, r_open) = std::sync::mpsc::sync_channel(32);
-        let (s_data, r_data) = std::sync::mpsc::sync_channel(32);
+        let mut state = FinishState::Start;
 
-        println!("got data channels");
+        loop {
+            tokio::select! {
+                evt = prcv1.recv() => match evt {
+                    Some(PeerConnectionEvent::State(_)) => (),
+                    Some(PeerConnectionEvent::ICECandidate(ice)) => {
+                        peer2.add_ice_candidate(ice).await.unwrap();
+                    }
+                    oth => panic!("unexpected: {oth:?}"),
+                },
+                evt = prcv2.recv() => match evt {
+                    Some(PeerConnectionEvent::State(_)) => (),
+                    Some(PeerConnectionEvent::ICECandidate(ice)) => {
+                        peer1.add_ice_candidate(ice).await.unwrap();
+                    }
+                    oth => panic!("unexpected: {oth:?}"),
+                },
+                evt = drcv1.recv() => match evt {
+                    Some(DataChannelEvent::BufferedAmountLow) => (),
+                    Some(DataChannelEvent::Open) => {
+                        assert_eq!(
+                            "data",
+                            &String::from_utf8_lossy(
+                               &data2.label().unwrap().to_vec().unwrap()),
+                        );
+                        println!(
+                            "data1 pre-send buffered amount: {}",
+                            data1.set_buffered_amount_low_threshold(5).unwrap(),
+                        );
+                        println!(
+                            "data1 post-send buffered amount: {}",
+                            data1.send(GoBuf::from_slice(b"hello").unwrap()).await.unwrap(),
+                        );
+                    }
+                    Some(DataChannelEvent::Message(mut buf, _permit)) => {
+                        assert_eq!(
+                            "world",
+                            &String::from_utf8_lossy(&buf.to_vec().unwrap()),
+                        );
 
-        // -- setup event handler for data channel 1 -- //
+                        state = state.msg1();
+                    }
+                    oth => panic!("unexpected: {oth:?}"),
+                },
+                evt = drcv2.recv() => match evt {
+                    Some(DataChannelEvent::BufferedAmountLow) => (),
+                    Some(DataChannelEvent::Open) => {
+                        assert_eq!(
+                            "data",
+                            &String::from_utf8_lossy(
+                               &data2.label().unwrap().to_vec().unwrap()),
+                        );
+                        println!(
+                            "data2 pre-send buffered amount: {}",
+                            data2.set_buffered_amount_low_threshold(5).unwrap(),
+                        );
+                        println!(
+                            "data2 post-send buffered amount: {}",
+                            data2.send(GoBuf::from_slice(b"world").unwrap()).await.unwrap(),
+                        );
+                    }
+                    Some(DataChannelEvent::Message(mut buf, _permit)) => {
+                        assert_eq!(
+                            "hello",
+                            &String::from_utf8_lossy(&buf.to_vec().unwrap()),
+                        );
 
-        let s_open1 = s_open.clone();
-        let s_data1 = s_data.clone();
-        let mut chan1 = chan1.unwrap().handle(move |evt| {
-            println!("chan1: {:?}", evt);
-            if let DataChannelEvent::Open = evt {
-                s_open1.send(()).unwrap();
+                        state = state.msg2();
+                    }
+                    oth => panic!("unexpected: {oth:?}"),
+                },
             }
-            if let DataChannelEvent::Message(mut msg, _) = evt {
-                msg.access(|data| {
-                    assert_eq!(b"world", data.unwrap());
-                    Ok(())
-                })
-                .unwrap();
-                s_data1.send(()).unwrap();
+            if state.is_done() {
+                println!(
+                    "peer1: {}",
+                    String::from_utf8_lossy(
+                        &peer1.stats().await.unwrap().to_vec().unwrap()
+                    ),
+                );
+                println!(
+                    "peer2: {}",
+                    String::from_utf8_lossy(
+                        &peer1.stats().await.unwrap().to_vec().unwrap()
+                    ),
+                );
+                break;
             }
-        });
-
-        // -- setup event handler for data channel 2 -- //
-
-        let mut chan2 = chan2.unwrap().handle(move |evt| {
-            println!("chan2: {:?}", evt);
-            if let DataChannelEvent::Open = evt {
-                s_open.send(()).unwrap();
-            }
-            if let DataChannelEvent::Message(mut msg, _) = evt {
-                msg.access(|data| {
-                    assert_eq!(b"hello", data.unwrap());
-                    Ok(())
-                })
-                .unwrap();
-                s_data.send(()).unwrap();
-            }
-        });
-
-        // -- make sure the channels are ready / open -- //
-
-        let chan1ready = chan1.ready_state().unwrap();
-        println!("chan1 ready_state: {}", chan1ready);
-        let chan2ready = chan2.ready_state().unwrap();
-        println!("chan2 ready_state: {}", chan2ready);
-
-        let mut need_open_cnt = 0;
-        if chan1ready < 2 {
-            need_open_cnt += 1;
-        }
-        if chan2ready < 2 {
-            need_open_cnt += 1;
-        }
-
-        for _ in 0..need_open_cnt {
-            r_open.recv().unwrap();
-        }
-
-        // -- check the channel labels -- //
-
-        let lbl1 =
-            String::from_utf8_lossy(&chan1.label().unwrap().to_vec().unwrap())
-                .to_string();
-        let lbl2 =
-            String::from_utf8_lossy(&chan2.label().unwrap().to_vec().unwrap())
-                .to_string();
-        tracing::info!(%lbl1, %lbl2);
-        assert_eq!("data", &lbl1);
-        assert_eq!("data", &lbl2);
-
-        // -- set the buffered amount low thresholds -- //
-
-        let b = chan1.set_buffered_amount_low_threshold(5).unwrap();
-        println!("chan1 pre-send buffered amount: {b}");
-        let b = chan2.set_buffered_amount_low_threshold(5).unwrap();
-        println!("chan2 pre-send buffered amount: {b}");
-
-        // -- send data on the data channels -- //
-
-        let mut buf = GoBuf::new().unwrap();
-        buf.extend(b"hello").unwrap();
-        let b = chan1.send(buf).await.unwrap();
-        println!("chan1 post-send buffered amount: {b}");
-
-        let mut buf = GoBuf::new().unwrap();
-        buf.extend(b"world").unwrap();
-        let b = chan2.send(buf).await.unwrap();
-        println!("chan2 post-send buffered amount: {b}");
-
-        // -- await receiving data on the data channels -- //
-
-        for _ in 0..2 {
-            r_data.recv().unwrap();
         }
 
-        // -- get stats -- //
+        data1.close(Error::id("").into());
+        data2.close(Error::id("").into());
+        peer1.close(Error::id("").into());
+        peer2.close(Error::id("").into());
 
-        let (s, r) = tokio::sync::oneshot::channel();
-        cmd_send_1.send(Cmd::Stats(s)).unwrap();
-        println!(
-            "peer_con_1: {}",
-            String::from_utf8_lossy(&r.await.unwrap().to_vec().unwrap())
-        );
-        let (s, r) = tokio::sync::oneshot::channel();
-        cmd_send_2.send(Cmd::Stats(s)).unwrap();
-        println!(
-            "peer_con_2: {}",
-            String::from_utf8_lossy(&r.await.unwrap().to_vec().unwrap())
-        );
-
-        // -- cleanup -- //
-
-        drop(chan1);
-        drop(chan2);
-        cmd_send_1.send(Cmd::Shutdown).unwrap();
-        cmd_send_2.send(Cmd::Shutdown).unwrap();
-        hnd1.await.unwrap();
-        hnd2.await.unwrap();
         turn.stop().await.unwrap();
     }
 }

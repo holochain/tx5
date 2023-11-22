@@ -82,14 +82,20 @@ async fn main() {
     let rcv_done1 = rcv_done.clone();
 
     tokio::task::spawn(async move {
-        let seed = c1
+        let (data_chan, data_recv) = c1
             .create_data_channel(DataChannelConfig {
                 label: Some("data".into()),
             })
             .await
             .unwrap();
 
-        tokio::task::spawn(spawn_chan(seed, start, chan_ready1, rcv_done1));
+        tokio::task::spawn(spawn_chan(
+            data_chan,
+            data_recv,
+            start,
+            chan_ready1,
+            rcv_done1,
+        ));
 
         let mut offer = c1.create_offer(OfferConfig::default()).await.unwrap();
 
@@ -159,9 +165,13 @@ async fn main() {
                     t2o_snd.send(Cmd::Ice(ice)).unwrap();
                 }
             }
-            Cmd::PeerEvt(PeerConnectionEvent::DataChannel(seed)) => {
+            Cmd::PeerEvt(PeerConnectionEvent::DataChannel(
+                data_chan,
+                data_recv,
+            )) => {
                 tokio::task::spawn(spawn_chan(
-                    seed,
+                    data_chan,
+                    data_recv,
                     start,
                     chan_ready.clone(),
                     rcv_done.clone(),
@@ -197,16 +207,9 @@ async fn main() {
 
 async fn spawn_peer(
     config: PeerConnectionConfig,
-) -> (
-    PeerConnection,
-    tokio::sync::mpsc::UnboundedReceiver<PeerConnectionEvent>,
-) {
-    let (snd, rcv) = tokio::sync::mpsc::unbounded_channel();
-    let con = PeerConnection::new(
+) -> (PeerConnection, EventRecv<PeerConnectionEvent>) {
+    let (con, rcv) = PeerConnection::new(
         config,
-        move |evt| {
-            let _ = snd.send(evt);
-        },
         Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3)),
     )
     .await
@@ -215,40 +218,19 @@ async fn spawn_peer(
 }
 
 async fn spawn_chan(
-    seed: DataChannelSeed,
+    mut data_chan: DataChannel,
+    mut data_recv: EventRecv<DataChannelEvent>,
     start: std::time::Instant,
     chan_ready: Arc<tokio::sync::Barrier>,
     rcv_done: Arc<tokio::sync::Barrier>,
 ) {
-    let (s_o, r_o) = tokio::sync::oneshot::channel();
-    let s_o = std::sync::Mutex::new(Some(s_o));
-    let (s_d, r_d) = tokio::sync::oneshot::channel();
-    let s_d = std::sync::Mutex::new(Some(s_d));
-    let c = std::sync::atomic::AtomicUsize::new(1);
-    let mut chan = seed.handle(move |evt| match evt {
-        DataChannelEvent::Error(err) => panic!("{err:?}"),
-        DataChannelEvent::Close | DataChannelEvent::BufferedAmountLow => (),
-        DataChannelEvent::Open => {
-            if let Some(s_o) = s_o.lock().unwrap().take() {
-                let _ = s_o.send(());
-            }
+    loop {
+        match data_recv.recv().await {
+            Some(DataChannelEvent::Open) => break,
+            Some(DataChannelEvent::BufferedAmountLow) => (),
+            oth => panic!("{oth:?}"),
         }
-        DataChannelEvent::Message(mut buf, _) => {
-            assert_eq!(1024, buf.len().unwrap());
-            std::io::Write::write_all(&mut std::io::stdout(), b".").unwrap();
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-            let cnt = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if cnt == MSG_CNT {
-                if let Some(s_d) = s_d.lock().unwrap().take() {
-                    let _ = s_d.send(());
-                }
-            }
-        }
-    });
-
-    //if chan.ready_state().unwrap() < 2 {
-    r_o.await.unwrap();
-    //}
+    }
 
     println!("chan ready");
 
@@ -258,11 +240,27 @@ async fn spawn_chan(
 
     for _ in 0..MSG_CNT {
         let buf = GoBuf::from_slice(ONE_KB).unwrap();
-        chan.send(buf).await.unwrap();
+        data_chan.send(buf).await.unwrap();
     }
 
-    // we've received all our messages
-    r_d.await.unwrap();
+    let mut cnt = 0;
+
+    loop {
+        match data_recv.recv().await {
+            Some(DataChannelEvent::BufferedAmountLow) => (),
+            Some(DataChannelEvent::Message(mut buf, _)) => {
+                assert_eq!(1024, buf.len().unwrap());
+                std::io::Write::write_all(&mut std::io::stdout(), b".")
+                    .unwrap();
+                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                cnt += 1;
+                if cnt == MSG_CNT {
+                    break;
+                }
+            }
+            oth => panic!("{oth:?}"),
+        }
+    }
 
     rcv_done.wait().await;
 

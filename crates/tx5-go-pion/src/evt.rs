@@ -42,11 +42,73 @@ impl PeerConnectionState {
     }
 }
 
+pub(crate) struct EventSend<E: From<Error>> {
+    limit: Arc<tokio::sync::Semaphore>,
+    pub(crate) send: tokio::sync::mpsc::UnboundedSender<(
+        E,
+        Option<tokio::sync::OwnedSemaphorePermit>,
+    )>,
+}
+
+impl<E: From<Error>> Clone for EventSend<E> {
+    fn clone(&self) -> Self {
+        Self {
+            limit: self.limit.clone(),
+            send: self.send.clone(),
+        }
+    }
+}
+
+impl<E: From<Error>> EventSend<E> {
+    pub fn new(limit: u32) -> (Self, EventRecv<E>) {
+        let limit = Arc::new(tokio::sync::Semaphore::new(limit as usize));
+        let (send, recv) = tokio::sync::mpsc::unbounded_channel();
+        (EventSend { limit, send }, EventRecv(recv))
+    }
+
+    pub async fn send(&self, evt: E) -> Result<()> {
+        let permit = self
+            .limit
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| Error::id("Closed"))?;
+        self.send
+            .send((evt, Some(permit)))
+            .map_err(|_| Error::id("Closed"))
+    }
+
+    pub fn send_err(&self, err: Error) {
+        let _ = self.send.send((err.into(), None));
+    }
+}
+
+/// Receive incoming PeerConnection events.
+pub struct EventRecv<E: From<Error>>(
+    tokio::sync::mpsc::UnboundedReceiver<(
+        E,
+        Option<tokio::sync::OwnedSemaphorePermit>,
+    )>,
+);
+
+impl<E: From<Error>> std::fmt::Debug for EventRecv<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventRecv").finish()
+    }
+}
+
+impl<E: From<Error>> EventRecv<E> {
+    /// Receive incoming PeerConnection events.
+    pub async fn recv(&mut self) -> Option<E> {
+        self.0.recv().await.map(|v| v.0)
+    }
+}
+
 /// Incoming events related to a PeerConnection.
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
-    /// PeerConnection Error.
-    Error(std::io::Error),
+    /// PeerConnection error.
+    Error(Error),
 
     /// PeerConnectionState event.
     State(PeerConnectionState),
@@ -55,26 +117,38 @@ pub enum PeerConnectionEvent {
     ICECandidate(GoBuf),
 
     /// Received an incoming data channel.
-    DataChannel(DataChannelSeed),
+    DataChannel(DataChannel, EventRecv<DataChannelEvent>),
+}
+
+impl From<Error> for PeerConnectionEvent {
+    fn from(err: Error) -> Self {
+        Self::Error(err)
+    }
 }
 
 /// Incoming events related to a DataChannel.
 #[derive(Debug)]
 pub enum DataChannelEvent {
-    /// DataChannel Error.
-    Error(std::io::Error),
+    /// Data channel error.
+    Error(Error),
 
-    /// DataChannel is ready to send / receive.
+    /// Data channel has transitioned to "open".
     Open,
 
-    /// DataChannel is closed.
+    /// Data channel has transitioned to "closed".
     Close,
 
-    /// DataChannel incoming message.
+    /// Received incoming message on the data channel.
     Message(GoBuf, tokio::sync::OwnedSemaphorePermit),
 
-    /// DataChannel buffered amount is now low.
+    /// Data channel buffered amount is now low.
     BufferedAmountLow,
+}
+
+impl From<Error> for DataChannelEvent {
+    fn from(err: Error) -> Self {
+        Self::Error(err)
+    }
 }
 
 #[inline]
@@ -83,47 +157,79 @@ pub(crate) fn init_evt_manager() {
     let _ = &*MANAGER;
 }
 
-pub(crate) fn register_peer_con_evt_cb(
+struct Manager {
+    peer_con: HashMap<usize, peer_con::WeakPeerCon>,
+    data_chan: HashMap<usize, data_chan::WeakDataChan>,
+}
+
+impl Manager {
+    pub fn new() -> Mutex<Self> {
+        Mutex::new(Self {
+            peer_con: HashMap::new(),
+            data_chan: HashMap::new(),
+        })
+    }
+
+    pub fn register_peer_con(
+        &mut self,
+        id: usize,
+        peer_con: peer_con::WeakPeerCon,
+    ) {
+        self.peer_con.insert(id, peer_con);
+    }
+
+    pub fn unregister_peer_con(&mut self, id: usize) {
+        self.peer_con.remove(&id);
+    }
+
+    pub fn register_data_chan(
+        &mut self,
+        id: usize,
+        data_chan: data_chan::WeakDataChan,
+    ) {
+        self.data_chan.insert(id, data_chan);
+    }
+
+    pub fn unregister_data_chan(&mut self, id: usize) {
+        self.data_chan.remove(&id);
+    }
+}
+pub(crate) fn register_peer_con(id: usize, peer_con: peer_con::WeakPeerCon) {
+    MANAGER.lock().unwrap().register_peer_con(id, peer_con);
+}
+
+pub(crate) fn unregister_peer_con(id: usize) {
+    MANAGER.lock().unwrap().unregister_peer_con(id);
+}
+
+pub(crate) fn register_data_chan(
     id: usize,
-    cb: PeerConEvtCb,
-    limit: Arc<tokio::sync::Semaphore>,
+    data_chan: data_chan::WeakDataChan,
 ) {
-    MANAGER.lock().unwrap().peer_con.insert(id, (cb, limit));
+    MANAGER.lock().unwrap().register_data_chan(id, data_chan);
 }
 
-pub(crate) fn unregister_peer_con_evt_cb(id: usize) {
-    MANAGER.lock().unwrap().peer_con.remove(&id);
+pub(crate) fn unregister_data_chan(id: usize) {
+    MANAGER.lock().unwrap().unregister_data_chan(id);
 }
 
-pub(crate) fn register_data_chan_evt_cb(
-    id: usize,
-    cb: DataChanEvtCb,
-    limit: Arc<tokio::sync::Semaphore>,
-) {
-    MANAGER.lock().unwrap().data_chan.insert(id, (cb, limit));
+macro_rules! manager_access {
+    ($id:ident, $rt:ident, $map:ident, $code:expr) => {
+        let $map = MANAGER.lock().unwrap().$map.get(&$id).cloned();
+        if let Some($map) = &$map {
+            if let Err(err) = $rt.block_on(async move {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(18),
+                    $code,
+                )
+                .await
+                .map_err(|_| Error::id("AppSlow"))?
+            }) {
+                $map.close(err.into());
+            }
+        }
+    };
 }
-
-pub(crate) fn replace_data_chan_evt_cb<F>(
-    id: usize,
-    f: F,
-    limit: Arc<tokio::sync::Semaphore>,
-) where
-    F: FnOnce() -> DataChanEvtCb,
-{
-    let mut lock = MANAGER.lock().unwrap();
-    let cb = f();
-    lock.data_chan.insert(id, (cb, limit));
-}
-
-pub(crate) fn unregister_data_chan_evt_cb(id: usize) {
-    MANAGER.lock().unwrap().data_chan.remove(&id);
-}
-
-pub(crate) type PeerConEvtCb =
-    Arc<dyn Fn(PeerConnectionEvent) + 'static + Send + Sync>;
-
-pub(crate) type DataChanEvtCb =
-    Arc<dyn Fn(DataChannelEvent) + 'static + Send + Sync>;
 
 static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
     let runtime = tokio::runtime::Handle::current();
@@ -134,124 +240,86 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 peer_con_id,
                 candidate,
             } => {
-                let maybe_cb =
-                    MANAGER.lock().unwrap().peer_con.get(&peer_con_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb.0(PeerConnectionEvent::ICECandidate(GoBuf(candidate)));
-                }
+                manager_access!(peer_con_id, runtime, peer_con, {
+                    peer_con.send_evt(PeerConnectionEvent::ICECandidate(GoBuf(
+                        candidate,
+                    )))
+                });
             }
             SysEvent::PeerConStateChange {
                 peer_con_id,
                 peer_con_state,
             } => {
-                let maybe_cb =
-                    MANAGER.lock().unwrap().peer_con.get(&peer_con_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb.0(PeerConnectionEvent::State(
+                manager_access!(peer_con_id, runtime, peer_con, {
+                    peer_con.send_evt(PeerConnectionEvent::State(
                         PeerConnectionState::from_raw(peer_con_state),
-                    ));
-                }
+                    ))
+                });
             }
             SysEvent::PeerConDataChan {
                 peer_con_id,
                 data_chan_id,
             } => {
-                let maybe_cb =
-                    MANAGER.lock().unwrap().peer_con.get(&peer_con_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    let seed = DataChannelSeed::new(data_chan_id, cb.1.clone());
-                    cb.0(PeerConnectionEvent::DataChannel(seed));
-                } else {
-                    API.data_chan_free(data_chan_id);
-                }
+                manager_access!(peer_con_id, runtime, peer_con, async {
+                    let recv_limit = match peer_con.get_recv_limit() {
+                        Ok(recv_limit) => recv_limit,
+                        Err(err) => {
+                            API.data_chan_free(data_chan_id);
+                            return Err(err);
+                        }
+                    };
+
+                    let (chan, recv) =
+                        DataChannel::new(data_chan_id, recv_limit);
+
+                    peer_con
+                        .send_evt(PeerConnectionEvent::DataChannel(chan, recv))
+                        .await
+                });
             }
             SysEvent::DataChanClose(data_chan_id) => {
-                let maybe_cb = MANAGER
-                    .lock()
-                    .unwrap()
-                    .data_chan
-                    .get(&data_chan_id)
-                    .cloned();
-                if let Some(cb) = maybe_cb {
-                    cb.0(DataChannelEvent::Close);
-                }
+                manager_access!(data_chan_id, runtime, data_chan, {
+                    data_chan.send_evt(DataChannelEvent::Close)
+                });
             }
             SysEvent::DataChanOpen(data_chan_id) => {
-                let maybe_cb = MANAGER
-                    .lock()
-                    .unwrap()
-                    .data_chan
-                    .get(&data_chan_id)
-                    .cloned();
-                if let Some(cb) = maybe_cb {
-                    cb.0(DataChannelEvent::Open);
-                }
+                manager_access!(data_chan_id, runtime, data_chan, {
+                    data_chan.send_evt(DataChannelEvent::Open)
+                });
             }
             SysEvent::DataChanMessage {
                 data_chan_id,
                 buffer_id,
             } => {
                 let mut buf = GoBuf(buffer_id);
-                let maybe_cb = MANAGER
-                    .lock()
-                    .unwrap()
-                    .data_chan
-                    .get(&data_chan_id)
-                    .cloned();
-                if let Some(cb) = maybe_cb {
-                    match runtime.block_on(async {
-                        let len = buf.len()?;
-                        if len > 16 * 1024 {
-                            return Err(Error::id("MsgTooLarge"));
-                        }
-                        tokio::time::timeout(
-                            std::time::Duration::from_millis(18),
-                            async {
-                                cb.1.clone()
-                                    .acquire_many_owned(len as u32)
-                                    .await
-                                    .unwrap()
-                            },
-                        )
-                        .await
-                        .map_err(|_| Error::id("AppSlow"))
-                    }) {
-                        Err(err) => cb.0(DataChannelEvent::Error(err)),
-                        Ok(permit) => {
-                            cb.0(DataChannelEvent::Message(
-                                GoBuf(buffer_id),
-                                permit,
-                            ));
-                        }
+                manager_access!(data_chan_id, runtime, data_chan, async {
+                    let len = buf.len()?;
+                    if len > 16 * 1024 {
+                        return Err(Error::id("MsgTooLarge").into());
                     }
-                }
+
+                    let recv_limit = data_chan.get_recv_limit()?;
+
+                    let permit = recv_limit
+                        .acquire_many_owned(len as u32)
+                        .await
+                        .map_err(|_| {
+                            Error::from(Error::id(
+                                "DataChanMessageSemaphoreClosed",
+                            ))
+                        })?;
+
+                    data_chan
+                        .send_evt(DataChannelEvent::Message(buf, permit))
+                        .await
+                });
             }
             SysEvent::DataChanBufferedAmountLow(data_chan_id) => {
-                let maybe_cb = MANAGER
-                    .lock()
-                    .unwrap()
-                    .data_chan
-                    .get(&data_chan_id)
-                    .cloned();
-                if let Some(cb) = maybe_cb {
-                    cb.0(DataChannelEvent::BufferedAmountLow);
-                }
+                manager_access!(data_chan_id, runtime, data_chan, {
+                    data_chan.send_evt(DataChannelEvent::BufferedAmountLow)
+                });
             }
         });
     }
     Manager::new()
 });
-
-struct Manager {
-    peer_con: HashMap<usize, (PeerConEvtCb, Arc<tokio::sync::Semaphore>)>,
-    data_chan: HashMap<usize, (DataChanEvtCb, Arc<tokio::sync::Semaphore>)>,
-}
-
-impl Manager {
-    pub fn new() -> Mutex<Self> {
-        Mutex::new(Self {
-            peer_con: HashMap::new(),
-            data_chan: HashMap::new(),
-        })
-    }
-}

@@ -1,5 +1,5 @@
 use crate::*;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use tx5_go_pion_sys::API;
 
 /// ICE server configuration.
@@ -93,47 +93,139 @@ impl From<&AnswerConfig> for GoBufRef<'static> {
     }
 }
 
-/// A go pion webrtc PeerConnection.
-#[derive(Debug)]
-pub struct PeerConnection(usize, Arc<tokio::sync::Semaphore>);
+struct PeerConCore {
+    peer_con_id: usize,
+    recv_limit: Arc<tokio::sync::Semaphore>,
+    evt_send: EventSend<PeerConnectionEvent>,
+    drop_err: Error,
+}
 
-impl Drop for PeerConnection {
+impl Drop for PeerConCore {
     fn drop(&mut self) {
+        self.evt_send.send_err(self.drop_err.clone());
+        unregister_peer_con(self.peer_con_id);
         unsafe {
-            unregister_peer_con_evt_cb(self.0);
-            API.peer_con_free(self.0);
+            API.peer_con_free(self.peer_con_id);
         }
     }
 }
 
+impl PeerConCore {
+    pub fn new(
+        peer_con_id: usize,
+        recv_limit: Arc<tokio::sync::Semaphore>,
+        evt_send: EventSend<PeerConnectionEvent>,
+    ) -> Self {
+        Self {
+            peer_con_id,
+            recv_limit,
+            evt_send,
+            drop_err: Error::id("PeerConnectionDropped").into(),
+        }
+    }
+
+    pub fn close(&mut self, err: Error) {
+        // self.evt_send.send_err() is called in Drop impl
+        self.drop_err = err;
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct WeakPeerCon(
+    Weak<Mutex<std::result::Result<PeerConCore, Error>>>,
+);
+
+macro_rules! peer_con_strong_core {
+    ($inner:expr, $ident:ident, $block:block) => {
+        match &mut *$inner.lock().unwrap() {
+            Ok($ident) => $block,
+            Err(err) => Result::Err(err.clone().into()),
+        }
+    };
+}
+
+macro_rules! peer_con_weak_core {
+    ($inner:expr, $ident:ident, $block:block) => {
+        match $inner.upgrade() {
+            Some(strong) => peer_con_strong_core!(strong, $ident, $block),
+            None => Result::Err(Error::id("PeerConnectionClosed")),
+        }
+    };
+}
+
+impl WeakPeerCon {
+    pub fn close(&self, err: Error) {
+        if let Some(strong) = self.0.upgrade() {
+            let mut lock = strong.lock().unwrap();
+            if let Ok(core) = &mut *lock {
+                core.close(err.clone());
+            }
+            *lock = Err(err.into());
+        }
+    }
+
+    pub fn get_recv_limit(&self) -> Result<Arc<tokio::sync::Semaphore>> {
+        peer_con_weak_core!(self.0, core, { Ok(core.recv_limit.clone()) })
+    }
+
+    pub async fn send_evt(&self, evt: PeerConnectionEvent) -> Result<()> {
+        peer_con_weak_core!(self.0, core, { core.evt_send.send(evt).await })
+    }
+}
+
+/// A go pion webrtc PeerConnection.
+pub struct PeerConnection(Arc<Mutex<std::result::Result<PeerConCore, Error>>>);
+
 impl PeerConnection {
     /// Construct a new PeerConnection.
-    pub async fn new<'a, B, Cb>(
+    pub async fn new<'a, B>(
         config: B,
-        cb: Cb,
         recv_limit: Arc<tokio::sync::Semaphore>,
-    ) -> Result<Self>
+    ) -> Result<(Self, EventRecv<PeerConnectionEvent>)>
     where
         B: Into<GoBufRef<'a>>,
-        Cb: Fn(PeerConnectionEvent) + 'static + Send + Sync,
     {
         tx5_init().await.map_err(Error::err)?;
         init_evt_manager();
         r2id!(config);
-        let cb: PeerConEvtCb = Arc::new(cb);
         tokio::task::spawn_blocking(move || unsafe {
             let peer_con_id = API.peer_con_alloc(config)?;
-            register_peer_con_evt_cb(peer_con_id, cb, recv_limit.clone());
-            Ok(Self(peer_con_id, recv_limit))
+            let (evt_send, evt_recv) = EventSend::new(1024);
+
+            let strong = Arc::new(Mutex::new(Ok(PeerConCore::new(
+                peer_con_id,
+                recv_limit,
+                evt_send,
+            ))));
+
+            let weak = WeakPeerCon(Arc::downgrade(&strong));
+
+            register_peer_con(peer_con_id, weak);
+
+            Ok((Self(strong), evt_recv))
         })
         .await?
     }
 
+    /// Close this connection.
+    pub fn close(&mut self, err: Error) {
+        let mut lock = self.0.lock().unwrap();
+        if let Ok(core) = &mut *lock {
+            core.close(err.clone());
+        }
+        *lock = Err(err.into());
+    }
+
+    fn get_peer_con_id(&self) -> Result<usize> {
+        peer_con_strong_core!(self.0, core, { Ok(core.peer_con_id) })
+    }
+
     /// Get stats.
     pub async fn stats(&mut self) -> Result<GoBuf> {
-        let peer_con = self.0;
+        let peer_con_id = self.get_peer_con_id()?;
+
         tokio::task::spawn_blocking(move || unsafe {
-            API.peer_con_stats(peer_con).map(GoBuf)
+            API.peer_con_stats(peer_con_id).map(GoBuf)
         })
         .await?
     }
@@ -143,10 +235,11 @@ impl PeerConnection {
     where
         B: Into<GoBufRef<'a>>,
     {
-        let peer_con = self.0;
+        let peer_con_id = self.get_peer_con_id()?;
+
         r2id!(config);
         tokio::task::spawn_blocking(move || unsafe {
-            API.peer_con_create_offer(peer_con, config).map(GoBuf)
+            API.peer_con_create_offer(peer_con_id, config).map(GoBuf)
         })
         .await?
     }
@@ -156,10 +249,11 @@ impl PeerConnection {
     where
         B: Into<GoBufRef<'a>>,
     {
-        let peer_con = self.0;
+        let peer_con_id = self.get_peer_con_id()?;
+
         r2id!(config);
         tokio::task::spawn_blocking(move || unsafe {
-            API.peer_con_create_answer(peer_con, config).map(GoBuf)
+            API.peer_con_create_answer(peer_con_id, config).map(GoBuf)
         })
         .await?
     }
@@ -169,10 +263,11 @@ impl PeerConnection {
     where
         B: Into<GoBufRef<'a>>,
     {
-        let peer_con = self.0;
+        let peer_con_id = self.get_peer_con_id()?;
+
         r2id!(desc);
         tokio::task::spawn_blocking(move || unsafe {
-            API.peer_con_set_local_desc(peer_con, desc)
+            API.peer_con_set_local_desc(peer_con_id, desc)
         })
         .await?
     }
@@ -182,10 +277,11 @@ impl PeerConnection {
     where
         B: Into<GoBufRef<'a>>,
     {
-        let peer_con = self.0;
+        let peer_con_id = self.get_peer_con_id()?;
+
         r2id!(desc);
         tokio::task::spawn_blocking(move || unsafe {
-            API.peer_con_set_rem_desc(peer_con, desc)
+            API.peer_con_set_rem_desc(peer_con_id, desc)
         })
         .await?
     }
@@ -195,10 +291,11 @@ impl PeerConnection {
     where
         B: Into<GoBufRef<'a>>,
     {
-        let peer_con = self.0;
+        let peer_con_id = self.get_peer_con_id()?;
+
         r2id!(ice);
         tokio::task::spawn_blocking(move || unsafe {
-            API.peer_con_add_ice_candidate(peer_con, ice)
+            API.peer_con_add_ice_candidate(peer_con_id, ice)
         })
         .await?
     }
@@ -207,17 +304,19 @@ impl PeerConnection {
     pub async fn create_data_channel<'a, B>(
         &mut self,
         config: B,
-    ) -> Result<DataChannelSeed>
+    ) -> Result<(DataChannel, EventRecv<DataChannelEvent>)>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let peer_con = self.0;
-        let limit = self.1.clone();
+        let (peer_con_id, recv_limit) = peer_con_strong_core!(self.0, core, {
+            Ok((core.peer_con_id, core.recv_limit.clone()))
+        })?;
+
         r2id!(config);
         tokio::task::spawn_blocking(move || unsafe {
             let data_chan_id =
-                API.peer_con_create_data_chan(peer_con, config)?;
-            Ok(DataChannelSeed::new(data_chan_id, limit))
+                API.peer_con_create_data_chan(peer_con_id, config)?;
+            Ok(DataChannel::new(data_chan_id, recv_limit))
         })
         .await?
     }

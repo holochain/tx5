@@ -160,7 +160,7 @@ impl WeakPeerCon {
             if let Ok(core) = &mut *lock {
                 core.close(err.clone());
             }
-            *lock = Err(err.into());
+            *lock = Err(err);
         }
     }
 
@@ -169,7 +169,9 @@ impl WeakPeerCon {
     }
 
     pub async fn send_evt(&self, evt: PeerConnectionEvent) -> Result<()> {
-        peer_con_weak_core!(self.0, core, { core.evt_send.send(evt).await })
+        peer_con_weak_core!(self.0, core, { Ok(core.evt_send.clone()) })?
+            .send(evt)
+            .await
     }
 }
 
@@ -213,7 +215,7 @@ impl PeerConnection {
         if let Ok(core) = &mut *lock {
             core.close(err.clone());
         }
-        *lock = Err(err.into());
+        *lock = Err(err);
     }
 
     fn get_peer_con_id(&self) -> Result<usize> {

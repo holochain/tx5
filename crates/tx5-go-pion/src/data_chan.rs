@@ -69,7 +69,7 @@ impl WeakDataChan {
             if let Ok(core) = &mut *lock {
                 core.close(err.clone());
             }
-            *lock = Err(err.into());
+            *lock = Err(err);
         }
     }
 
@@ -78,7 +78,9 @@ impl WeakDataChan {
     }
 
     pub async fn send_evt(&self, evt: DataChannelEvent) -> Result<()> {
-        data_chan_weak_core!(self.0, core, { core.evt_send.send(evt).await })
+        data_chan_weak_core!(self.0, core, { Ok(core.evt_send.clone()) })?
+            .send(evt)
+            .await
     }
 }
 
@@ -116,6 +118,8 @@ impl DataChannel {
         if let Ok(ready_state) =
             unsafe { API.data_chan_ready_state(data_chan_id) }
         {
+            // this is a terrible suggestion clippy
+            #[allow(clippy::comparison_chain)]
             if ready_state == 2 {
                 let _ = evt_send.send.send((DataChannelEvent::Open, None));
             } else if ready_state > 2 {
@@ -132,7 +136,7 @@ impl DataChannel {
         if let Ok(core) = &mut *lock {
             core.close(err.clone());
         }
-        *lock = Err(err.into());
+        *lock = Err(err);
     }
 
     fn get_data_chan_id(&self) -> Result<usize> {

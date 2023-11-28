@@ -295,7 +295,7 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                 manager_access!(data_chan_id, runtime, data_chan, async {
                     let len = buf.len()?;
                     if len > 16 * 1024 {
-                        return Err(Error::id("MsgTooLarge").into());
+                        return Err(Error::id("MsgTooLarge"));
                     }
 
                     let recv_limit = data_chan.get_recv_limit()?;

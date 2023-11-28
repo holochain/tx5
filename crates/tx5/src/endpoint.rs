@@ -362,33 +362,16 @@ async fn new_conn_task(
     use tx5_go_pion::PeerConnectionEvent as PeerEvt;
     use tx5_go_pion::PeerConnectionState as PeerState;
 
-    enum MultiEvt {
-        OneSec,
-        Stats(
-            tokio::sync::oneshot::Sender<
-                Option<HashMap<String, BackendMetrics>>,
-            >,
-        ),
-        Peer(PeerEvt),
-        Data(DataEvt),
-    }
-
-    let (peer_snd, mut peer_rcv) = tokio::sync::mpsc::unbounded_channel();
-
-    let peer_snd2 = peer_snd.clone();
-    let mut peer = match async {
+    let (mut peer, mut peer_recv) = match async {
         let peer_config = BackBuf::from_json(ice_servers)?;
 
-        let peer = tx5_go_pion::PeerConnection::new(
+        let (peer, peer_recv) = tx5_go_pion::PeerConnection::new(
             peer_config.imp.buf,
-            move |evt| {
-                let _ = peer_snd2.send(MultiEvt::Peer(evt));
-            },
             seed.rcv_limit().clone(),
         )
         .await?;
 
-        Result::Ok(peer)
+        Result::Ok((peer, peer_recv))
     }
     .await
     {
@@ -419,37 +402,8 @@ async fn new_conn_task(
         }
     }
 
-    let peer_snd_task = peer_snd.clone();
-    tokio::task::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            if peer_snd_task.send(MultiEvt::OneSec).is_err() {
-                break;
-            }
-        }
-    });
-
     let slot: Arc<std::sync::Mutex<Option<HashMap<String, BackendMetrics>>>> =
         Arc::new(std::sync::Mutex::new(None));
-    let weak_slot = Arc::downgrade(&slot);
-    let peer_snd_task = peer_snd.clone();
-    tokio::task::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-            if let Some(slot) = weak_slot.upgrade() {
-                let (s, r) = tokio::sync::oneshot::channel();
-                if peer_snd_task.send(MultiEvt::Stats(s)).is_err() {
-                    break;
-                }
-                if let Ok(stats) = r.await {
-                    *slot.lock().unwrap() = stats;
-                }
-            } else {
-                break;
-            }
-        }
-    });
 
     let weak_slot = Arc::downgrade(&slot);
     let _unregister = {
@@ -541,6 +495,9 @@ async fn new_conn_task(
     };
 
     let mut data_chan: Option<tx5_go_pion::DataChannel> = None;
+    let mut data_chan_recv: Option<
+        tx5_go_pion::EventRecv<tx5_go_pion::DataChannelEvent>,
+    > = None;
     let mut data_chan_ready = false;
 
     let mut check_data_chan_ready =
@@ -565,41 +522,82 @@ async fn new_conn_task(
 
     tracing::debug!(?conn_uniq, "PEER CON OPEN");
 
+    let mut one_sec = tokio::time::interval(std::time::Duration::from_secs(1));
+    one_sec.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut five_sec = tokio::time::interval(std::time::Duration::from_secs(5));
+    five_sec.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     loop {
         tokio::select! {
-            msg = peer_rcv.recv() => {
+            _ = one_sec.tick() => {
+                if let Some(data_chan) = data_chan.as_mut() {
+                    if let Ok(buf) = data_chan.buffered_amount() {
+                        if buf <= config.per_data_chan_buf_low() {
+                            conn_state.check_send_waiting(Some(state::BufState::Low)).await;
+                        }
+                    }
+                }
+            }
+            _ = five_sec.tick() => {
+                if let Ok(mut buf) = peer.stats().await.map(BackBuf::from_raw) {
+                    if let Ok(val) = buf.to_json() {
+                        *slot.lock().unwrap() = Some(val);
+                    } else {
+                        *slot.lock().unwrap() = None;
+                    }
+                } else {
+                    *slot.lock().unwrap() = None;
+                }
+            }
+            msg = async {
+                if let Some(data_chan_recv) = &mut data_chan_recv {
+                    data_chan_recv.recv().await
+                } else {
+                    std::future::pending().await
+                }
+            } => {
                 match msg {
                     None => {
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
                     }
-                    Some(MultiEvt::OneSec) => {
-                        if let Some(data_chan) = data_chan.as_mut() {
-                            if let Ok(buf) = data_chan.buffered_amount() {
-                                if buf <= config.per_data_chan_buf_low() {
-                                    conn_state.check_send_waiting(Some(state::BufState::Low)).await;
-                                }
-                            }
-                        }
-                    }
-                    Some(MultiEvt::Stats(resp)) => {
-                        if let Ok(mut buf) = peer.stats().await.map(BackBuf::from_raw) {
-                            if let Ok(val) = buf.to_json() {
-                                let _ = resp.send(Some(val));
-                            } else {
-                                let _ = resp.send(None);
-                            }
-                        } else {
-                            let _ = resp.send(None);
-                        }
-                    }
-                    Some(MultiEvt::Peer(PeerEvt::Error(err)))
-                    | Some(MultiEvt::Data(DataEvt::Error(err))) => {
+                    Some(DataEvt::Error(err)) => {
                         tracing::warn!(?err, "ConnectionError");
-                        conn_state.close(err);
+                        conn_state.close(err.into());
                         break;
                     }
-                    Some(MultiEvt::Peer(PeerEvt::State(peer_state))) => {
+                    Some(DataEvt::Open) => {
+                        if check_data_chan_ready(&mut data_chan).is_err() {
+                            break;
+                        }
+                    }
+                    Some(DataEvt::Close) => {
+                        conn_state.close(Error::id("DataChanClosed"));
+                        break;
+                    }
+                    Some(DataEvt::Message(buf, permit)) => {
+                        if conn_state.rcv_data(BackBuf::from_raw(buf), permit).is_err() {
+                            break;
+                        }
+                    }
+                    Some(DataEvt::BufferedAmountLow) => {
+                        tracing::debug!(?conn_uniq, "BufferedAmountLow");
+                        conn_state.check_send_waiting(Some(state::BufState::Low)).await;
+                    }
+                }
+            }
+            msg = peer_recv.recv() => {
+                match msg {
+                    None => {
+                        conn_state.close(Error::id("PeerConClosed"));
+                        break;
+                    }
+                    Some(PeerEvt::Error(err)) => {
+                        tracing::warn!(?err, "ConnectionError");
+                        conn_state.close(err.into());
+                        break;
+                    }
+                    Some(PeerEvt::State(peer_state)) => {
                         match peer_state {
                             PeerState::New
                             | PeerState::Connecting
@@ -614,38 +612,18 @@ async fn new_conn_task(
                             }
                         }
                     }
-                    Some(MultiEvt::Peer(PeerEvt::ICECandidate(buf))) => {
+                    Some(PeerEvt::ICECandidate(buf)) => {
                         let buf = BackBuf::from_raw(buf);
                         if conn_state.ice(buf).is_err() {
                             break;
                         }
                     }
-                    Some(MultiEvt::Peer(PeerEvt::DataChannel(chan))) => {
-                        let peer_snd = peer_snd.clone();
-                        data_chan = Some(chan.handle(move |evt| {
-                            let _ = peer_snd.send(MultiEvt::Data(evt));
-                        }));
+                    Some(PeerEvt::DataChannel(chan, chan_recv)) => {
+                        data_chan = Some(chan);
+                        data_chan_recv = Some(chan_recv);
                         if check_data_chan_ready(&mut data_chan).is_err() {
                             break;
                         }
-                    }
-                    Some(MultiEvt::Data(DataEvt::Open)) => {
-                        if check_data_chan_ready(&mut data_chan).is_err() {
-                            break;
-                        }
-                    }
-                    Some(MultiEvt::Data(DataEvt::Close)) => {
-                        conn_state.close(Error::id("DataChanClosed"));
-                        break;
-                    }
-                    Some(MultiEvt::Data(DataEvt::Message(buf, permit))) => {
-                        if conn_state.rcv_data(BackBuf::from_raw(buf), permit).is_err() {
-                            break;
-                        }
-                    }
-                    Some(MultiEvt::Data(DataEvt::BufferedAmountLow)) => {
-                        tracing::debug!(?conn_uniq, "BufferedAmountLow");
-                        conn_state.check_send_waiting(Some(state::BufState::Low)).await;
                     }
                 }
             }
@@ -654,17 +632,16 @@ async fn new_conn_task(
                     Some(Ok(state::ConnStateEvt::CreateOffer(mut resp))) => {
                         let peer = &mut peer;
                         let data_chan_w = &mut data_chan;
-                        let peer_snd = peer_snd.clone();
+                        let data_chan_recv_w = &mut data_chan_recv;
                         resp.with(move || async move {
-                            let chan = peer.create_data_channel(
+                            let (chan, chan_recv) = peer.create_data_channel(
                                 tx5_go_pion::DataChannelConfig {
                                     label: Some("data".into()),
                                 }
                             ).await?;
 
-                            *data_chan_w = Some(chan.handle(move |evt| {
-                                let _ = peer_snd.send(MultiEvt::Data(evt));
-                            }));
+                            *data_chan_w = Some(chan);
+                            *data_chan_recv_w = Some(chan_recv);
 
                             let mut buf = peer.create_offer(
                                 tx5_go_pion::OfferConfig::default(),

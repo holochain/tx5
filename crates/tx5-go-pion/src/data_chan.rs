@@ -121,9 +121,11 @@ impl DataChannel {
             // this is a terrible suggestion clippy
             #[allow(clippy::comparison_chain)]
             if ready_state == 2 {
-                let _ = evt_send.send.send((DataChannelEvent::Open, None));
+                let permit = evt_send.try_permit().unwrap();
+                let _ = evt_send.send_permit(DataChannelEvent::Open, permit);
             } else if ready_state > 2 {
-                let _ = evt_send.send.send((DataChannelEvent::Close, None));
+                let permit = evt_send.try_permit().unwrap();
+                let _ = evt_send.send_permit(DataChannelEvent::Close, permit);
             }
         }
 

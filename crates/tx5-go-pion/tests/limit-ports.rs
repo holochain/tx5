@@ -26,7 +26,10 @@ async fn limit_ports() {
 
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while let Some(evt) = r.recv().await {
-            if let tx5_go_pion::PeerConnectionEvent::ICECandidate(mut ice) = evt
+            if let (
+                tx5_go_pion::PeerConnectionEvent::ICECandidate(mut ice),
+                _p,
+            ) = evt
             {
                 let ice = ice.to_vec().unwrap();
                 let ice = String::from_utf8_lossy(&ice);

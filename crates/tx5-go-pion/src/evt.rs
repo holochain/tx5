@@ -1,7 +1,7 @@
 use crate::*;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tx5_go_pion_sys::Event as SysEvent;
 use tx5_go_pion_sys::API;
 
@@ -42,67 +42,8 @@ impl PeerConnectionState {
     }
 }
 
-pub(crate) struct EventSend<E: From<Error>> {
-    limit: Arc<tokio::sync::Semaphore>,
-    pub(crate) send: tokio::sync::mpsc::UnboundedSender<(
-        E,
-        Option<tokio::sync::OwnedSemaphorePermit>,
-    )>,
-}
-
-impl<E: From<Error>> Clone for EventSend<E> {
-    fn clone(&self) -> Self {
-        Self {
-            limit: self.limit.clone(),
-            send: self.send.clone(),
-        }
-    }
-}
-
-impl<E: From<Error>> EventSend<E> {
-    pub fn new(limit: u32) -> (Self, EventRecv<E>) {
-        let limit = Arc::new(tokio::sync::Semaphore::new(limit as usize));
-        let (send, recv) = tokio::sync::mpsc::unbounded_channel();
-        (EventSend { limit, send }, EventRecv(recv))
-    }
-
-    pub async fn send(&self, evt: E) -> Result<()> {
-        let permit = self
-            .limit
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| Error::id("Closed"))?;
-        self.send
-            .send((evt, Some(permit)))
-            .map_err(|_| Error::id("Closed"))
-    }
-
-    pub fn send_err(&self, err: Error) {
-        let _ = self.send.send((err.into(), None));
-    }
-}
-
-/// Receive incoming PeerConnection events.
-pub struct EventRecv<E: From<Error>>(
-    tokio::sync::mpsc::UnboundedReceiver<(
-        E,
-        Option<tokio::sync::OwnedSemaphorePermit>,
-    )>,
-);
-
-impl<E: From<Error>> std::fmt::Debug for EventRecv<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventRecv").finish()
-    }
-}
-
-impl<E: From<Error>> EventRecv<E> {
-    /// Receive incoming PeerConnection events.
-    pub async fn recv(&mut self) -> Option<E> {
-        self.0.recv().await.map(|v| v.0)
-    }
-}
+pub(crate) use tx5_core::EventSend;
+pub use tx5_core::{EventPermit, EventRecv};
 
 /// Incoming events related to a PeerConnection.
 #[derive(Debug)]

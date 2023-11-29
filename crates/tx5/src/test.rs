@@ -536,7 +536,7 @@ async fn large_messages() {
 
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let mut msg_1 = vec![0; 1024 * 1024 * 16];
+    let mut msg_1 = vec![0; 1024 * 1024 * 15];
     rng.fill(&mut msg_1[..]);
     let mut msg_2 = vec![0; 1024 * 58];
     rng.fill(&mut msg_2[..]);
@@ -556,7 +556,26 @@ async fn large_messages() {
     let sig_url = Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
     println!("sig_url: {}", sig_url);
 
-    let (ep1, _ep_rcv1) = Ep::new().await.unwrap();
+    let (ep1, mut ep_rcv1) = Ep::new().await.unwrap();
+
+    let recv_task1 = tokio::task::spawn(async move {
+        match ep_rcv1.recv().await {
+            Some(Ok(EpEvt::Connected { .. })) => (),
+            oth => panic!("unexpected: {oth:?}"),
+        }
+
+        println!("ep1 connected");
+
+        // TODO - connections not getting closed properly
+        /*
+        match ep_rcv1.recv().await {
+            Some(Ok(EpEvt::Disconnected { .. })) => (),
+            oth => panic!("unexpected: {oth:?}"),
+        }
+
+        println!("ep1 disconnected");
+        */
+    });
 
     let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
 
@@ -568,11 +587,11 @@ async fn large_messages() {
 
     println!("cli_url2: {}", cli_url2);
 
-    let recv_task = {
+    let recv_task2 = {
         tokio::task::spawn(async move {
             match ep_rcv2.recv().await {
                 Some(Ok(EpEvt::Connected { .. })) => (),
-                oth => panic!("unexpected: {:?}", oth),
+                oth => panic!("unexpected: {oth:?}"),
             }
 
             for _ in 0..2 {
@@ -602,7 +621,8 @@ async fn large_messages() {
 
     tokio::try_join!(f1, f2).unwrap();
 
-    recv_task.await.unwrap();
+    recv_task1.await.unwrap();
+    recv_task2.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

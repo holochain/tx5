@@ -110,11 +110,7 @@ impl<T: 'static + Send> Actor<T> {
 
     /// Close this actor, stopping the task with an error if it is running.
     pub fn close(&self, err: std::io::Error) {
-        let mut l = self.0.lock();
-        if let Some(s) = &*l {
-            let _ = s.send(Err(err));
-        }
-        let _ = l.take();
+        let _ = self.send(Err(err));
     }
 
     /// Send a message to the actor task.

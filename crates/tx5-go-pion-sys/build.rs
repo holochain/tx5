@@ -1,4 +1,4 @@
-use std::{process::Command, path::Path};
+use std::{path::Path, process::Command};
 
 #[derive(Debug)]
 enum LinkType {
@@ -158,7 +158,8 @@ fn go_build_cmd(
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     if target_os == "ios" {
         // Determine Xcode directory path
-        let xcode_select_output = Command::new("xcode-select").arg("-p").output().unwrap();
+        let xcode_select_output =
+            Command::new("xcode-select").arg("-p").output().unwrap();
         if !xcode_select_output.status.success() {
             panic!("Failed to run xcode-select -p");
         }

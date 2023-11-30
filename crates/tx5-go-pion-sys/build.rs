@@ -155,8 +155,7 @@ fn go_build_cmd(
 
     cmd.env("CGO_ENABLED", "1");
 
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-    if target_os == "ios" {
+    if TARGET.go_os == "ios" {
         // Determine Xcode directory path
         let xcode_select_output =
             Command::new("xcode-select").arg("-p").output().unwrap();

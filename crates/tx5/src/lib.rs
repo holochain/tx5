@@ -231,6 +231,37 @@ impl bytes::Buf for BytesList {
     }
 }
 
+/// Tx5 Configuration.
+pub struct Config2 {
+    /// Max connection count.
+    pub connection_count_max: u32,
+
+    /// Initial backoff interval.
+    pub backoff_interval_start: std::time::Duration,
+
+    /// Max backoff interval.
+    pub backoff_interval_max: std::time::Duration,
+
+    /// Backoff factor.
+    pub backoff_fact: f64,
+}
+
+impl Default for Config2 {
+    fn default() -> Self {
+        Self {
+            connection_count_max: 255,
+            backoff_interval_start: std::time::Duration::from_secs(1),
+            backoff_interval_max: std::time::Duration::from_secs(60 * 5),
+            backoff_fact: 2.0,
+        }
+    }
+}
+
+pub mod state2;
+
+mod ep2;
+pub use ep2::*;
+
 pub mod state;
 
 mod config;

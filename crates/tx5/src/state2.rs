@@ -4,12 +4,15 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use tx5_core::{Error, Id, Tx5Url, Result};
+use tx5_core::{Error, Id, Result, Tx5Url};
 
 use crate::{BackBuf, Config2};
 
 /// Signal server url.
 pub type SigUrl = Tx5Url;
+
+/// Peer Url.
+pub type PeerUrl = Tx5Url;
 
 /// Signal connection identifier.
 pub type SigUniq = u64;
@@ -34,28 +37,47 @@ pub enum State2Evt {
         sig_uniq: SigUniq,
         err: Error,
     },
+
+    /// Open a new peer connection.
+    PeerCreate {
+        sig_url: SigUrl,
+        sig_uniq: SigUniq,
+        peer_id: Id,
+        peer_uniq: PeerUniq,
+        ice_servers: Arc<serde_json::Value>,
+    },
+
+    /// Close a peer connection.
+    PeerClose {
+        peer_id: Id,
+        peer_uniq: PeerUniq,
+        err: Error,
+    },
 }
 
 /// Input peer sub commands for the tx5 v2 state machine.
-pub enum PeerCmd {
-    /// Send a message.
-    SendMsg {
-        permit: tokio::sync::OwnedSemaphorePermit,
-        data: BackBuf,
-        resp: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Result<()>>>>>,
-    },
-}
+pub enum PeerCmd {}
 
 /// Input sig sub commands for the tx5 v2 state machine.
 pub enum SigCmd {
     /// Notify of a open and ready signal server connection.
-    Open { id: Id },
+    Open {
+        this_id: Id,
+        ice_servers: Arc<serde_json::Value>,
+    },
 
     /// Make sure we have a peer connection.
     PeerAssert {
         peer_id: Id,
         is_polite: bool,
         is_outgoing: bool,
+    },
+
+    /// Close a peer connection.
+    PeerClose {
+        peer_id: Id,
+        peer_uniq: PeerUniq,
+        err: Error,
     },
 
     /// Peer sub command.
@@ -72,10 +94,7 @@ pub enum State2Cmd {
     Tick,
 
     /// Make sure we have a signal server connection.
-    SigAssert {
-        sig_url: SigUrl,
-        is_listening: bool,
-    },
+    SigAssert { sig_url: SigUrl, is_listening: bool },
 
     /// Close a signal server connection.
     SigClose {
@@ -127,7 +146,7 @@ impl SigMap {
         assoc: &mut Assoc<'_, '_, '_>,
         sig_url: SigUrl,
         is_listening: bool,
-    ) -> SigUniq {
+    ) -> &mut Sig {
         let r = self
             .0
             .entry(sig_url.clone())
@@ -135,7 +154,7 @@ impl SigMap {
         if is_listening {
             r.set_is_listening();
         }
-        r.sig_uniq
+        r
     }
 
     pub fn sig_close(
@@ -177,6 +196,20 @@ impl SigMap {
         }
     }
 
+    pub fn get_sig(
+        &mut self,
+        sig_url: &SigUrl,
+        sig_uniq: SigUniq,
+    ) -> Option<&mut Sig> {
+        self.0.get_mut(sig_url).and_then(|sig| {
+            if sig.sig_uniq == sig_uniq {
+                Some(sig)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn sig_cmd(
         &mut self,
         assoc: &mut Assoc<'_, '_, '_>,
@@ -184,11 +217,7 @@ impl SigMap {
         sig_uniq: SigUniq,
         sig_cmd: SigCmd,
     ) {
-        if let Some(sig) = self.0.get_mut(&sig_url) {
-            if sig.sig_uniq != sig_uniq {
-                return;
-            }
-
+        if let Some(sig) = self.get_sig(&sig_url, sig_uniq) {
             sig.cmd(assoc, sig_cmd);
         }
     }
@@ -204,28 +233,15 @@ impl SigMap {
         resp: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Result<()>>>>>,
     ) {
         let is_polite = &peer_id > assoc.this_id;
-        let sig_uniq = self.sig_assert(assoc, sig_url.clone(), false);
-        let _peer_uniq = self.sig_cmd(assoc, sig_url.clone(), sig_uniq, SigCmd::PeerAssert {
-            peer_id,
-            is_polite,
-            is_outgoing: true,
-        });
-        #[allow(unreachable_code)]
-        self.sig_cmd(assoc, sig_url, sig_uniq, SigCmd::PeerCmd {
-            peer_id,
-            peer_uniq: todo!(),
-            peer_cmd: PeerCmd::SendMsg {
-                permit,
-                data,
-                resp,
-            },
-        });
+        let sig = self.sig_assert(assoc, sig_url.clone(), false);
+        let peer = sig.peer_assert(assoc, peer_id, is_polite, true);
+        peer.send_msg(assoc, permit, data, resp);
     }
 }
 
 /// Tx5 v2 state machine.
 pub struct State2 {
-    config: Config2,
+    config: Arc<Config2>,
     this_id: Id,
     cmd_list: VecDeque<State2Cmd>,
     sig_map: SigMap,
@@ -233,7 +249,7 @@ pub struct State2 {
 }
 
 impl State2 {
-    pub fn new(config: Config2, this_id: Id) -> Self {
+    pub fn new(config: Arc<Config2>, this_id: Id) -> Self {
         Self {
             config,
             this_id,
@@ -291,7 +307,8 @@ impl State2 {
                     permit,
                     data,
                     resp,
-                } => sig_map.send_msg(&mut assoc, sig_url, peer_id, permit, data, resp),
+                } => sig_map
+                    .send_msg(&mut assoc, sig_url, peer_id, permit, data, resp),
             }
         }
 
@@ -316,16 +333,21 @@ mod tests {
         let this_id = Id([0; 32]);
         let peer_id = Id([1; 32]);
 
-        let mut s = State2::new(Config2::default(), this_id);
+        let mut s = State2::new(Arc::new(Config2::default()), this_id);
         let mut evt = VecDeque::new();
-        let limit = Arc::new(tokio::sync::Semaphore::new(tokio::sync::Semaphore::MAX_PERMITS));
+        let limit = Arc::new(tokio::sync::Semaphore::new(
+            tokio::sync::Semaphore::MAX_PERMITS,
+        ));
 
         let sig_url = Tx5Url::new("wss://bla").unwrap();
 
-        s.cmd(State2Cmd::SigAssert {
-            sig_url: sig_url.clone(),
-            is_listening: true,
-        }, &mut evt);
+        s.cmd(
+            State2Cmd::SigAssert {
+                sig_url: sig_url.clone(),
+                is_listening: true,
+            },
+            &mut evt,
+        );
 
         let permit = limit.clone().try_acquire_owned().unwrap();
 
@@ -333,12 +355,15 @@ mod tests {
 
         let resp = Arc::new(Mutex::new(Some(resp)));
 
-        s.cmd(State2Cmd::SendMsg {
-            sig_url: sig_url.clone(),
-            peer_id,
-            permit,
-            data: BackBuf::from_slice(b"hello").unwrap(),
-            resp,
-        }, &mut evt);
+        s.cmd(
+            State2Cmd::SendMsg {
+                sig_url: sig_url.clone(),
+                peer_id,
+                permit,
+                data: BackBuf::from_slice(b"hello").unwrap(),
+                resp,
+            },
+            &mut evt,
+        );
     }
 }

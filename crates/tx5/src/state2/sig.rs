@@ -7,15 +7,49 @@ impl PeerMap {
     pub fn peer_assert(
         &mut self,
         assoc: &mut Assoc<'_, '_, '_>,
+        sig_url: SigUrl,
+        sig_uniq: SigUniq,
         peer_id: Id,
         is_polite: bool,
         is_outgoing: bool,
-    ) -> PeerUniq {
-        let r = self
-            .0
-            .entry(peer_id)
-            .or_insert_with(|| Peer::new(assoc, peer_id, is_polite, is_outgoing));
-        r.peer_uniq
+        ice_servers: Arc<serde_json::Value>,
+    ) -> &mut Peer {
+        let r = self.0.entry(peer_id).or_insert_with(|| {
+            Peer::new(assoc, sig_url, sig_uniq, peer_id, is_polite, is_outgoing, ice_servers)
+        });
+        r
+    }
+
+    pub fn peer_close(
+        &mut self,
+        assoc: &mut Assoc<'_, '_, '_>,
+        peer_id: Id,
+        peer_uniq: PeerUniq,
+        err: Error,
+    ) {
+        if let Some(mut peer) = self.0.remove(&peer_id) {
+            if peer.peer_uniq != peer_uniq {
+                // woops!
+                self.0.insert(peer_id, peer);
+                return;
+            }
+
+            peer.close(assoc, err);
+        }
+    }
+
+    pub fn tick(&mut self, assoc: &mut Assoc<'_, '_, '_>) {
+        let mut rm = Vec::new();
+
+        for (peer_id, peer) in self.0.iter_mut() {
+            if let Err(err) = peer.tick(assoc) {
+                rm.push((*peer_id, peer.peer_uniq, err));
+            }
+        }
+
+        for (peer_id, peer_uniq, err) in rm {
+            self.peer_close(assoc, peer_id, peer_uniq, err.into());
+        }
     }
 
     pub fn peer_cmd(
@@ -74,6 +108,7 @@ impl Sig {
     }
 
     pub fn close(&mut self, assoc: &mut Assoc<'_, '_, '_>, err: Error) {
+        tracing::info!(?self.sig_uniq, %self.sig_url, "Signal Connection Close");
         if self.state == SigState::Disconnected {
             return;
         }
@@ -110,11 +145,17 @@ impl Sig {
         {
             self.sig_uniq = uniq();
             self.state = SigState::Connecting;
+            self.connect_timeout_at = now + assoc.config.timeout;
+
+            tracing::info!(?self.sig_uniq, %self.sig_url, "New Signal Connection");
+
             assoc.evt_list.push_back(State2Evt::SigCreate {
                 sig_url: self.sig_url.clone(),
                 sig_uniq: self.sig_uniq,
             });
         }
+
+        self.peer_map.tick(assoc);
 
         Ok(())
     }
@@ -125,17 +166,37 @@ impl Sig {
 
     pub fn cmd(&mut self, assoc: &mut Assoc<'_, '_, '_>, cmd: SigCmd) {
         match cmd {
-            SigCmd::Open { id } => self.open(assoc, id),
-            SigCmd::PeerAssert { peer_id, is_polite, is_outgoing } => {
+            SigCmd::Open {
+                this_id,
+                ice_servers,
+            } => self.open(assoc, this_id, ice_servers),
+            SigCmd::PeerAssert {
+                peer_id,
+                is_polite,
+                is_outgoing,
+            } => {
                 self.peer_assert(assoc, peer_id, is_polite, is_outgoing);
             }
-            SigCmd::PeerCmd { peer_id, peer_uniq, peer_cmd } =>
-                self.peer_map.peer_cmd(assoc, peer_id, peer_uniq, peer_cmd),
+            SigCmd::PeerClose {
+                peer_id,
+                peer_uniq,
+                err,
+            } => self.peer_map.peer_close(assoc, peer_id, peer_uniq, err),
+            SigCmd::PeerCmd {
+                peer_id,
+                peer_uniq,
+                peer_cmd,
+            } => self.peer_map.peer_cmd(assoc, peer_id, peer_uniq, peer_cmd),
         }
     }
 
-    pub fn open(&mut self, assoc: &mut Assoc<'_, '_, '_>, id: Id) {
-        if assoc.this_id != &id {
+    pub fn open(
+        &mut self,
+        assoc: &mut Assoc<'_, '_, '_>,
+        this_id: Id,
+        _ice_servers: Arc<serde_json::Value>,
+    ) {
+        if assoc.this_id != &this_id {
             assoc.evt_list.push_back(State2Evt::SigClose {
                 sig_url: self.sig_url.clone(),
                 sig_uniq: self.sig_uniq,
@@ -155,7 +216,15 @@ impl Sig {
         peer_id: Id,
         is_polite: bool,
         is_outgoing: bool,
-    ) -> PeerUniq {
-        self.peer_map.peer_assert(assoc, peer_id, is_polite, is_outgoing)
+        ice_
+    ) -> &mut Peer {
+        self.peer_map.peer_assert(
+            assoc,
+            self.sig_url.clone(),
+            self.sig_uniq,
+            peer_id,
+            is_polite,
+            is_outgoing,
+        )
     }
 }

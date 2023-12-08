@@ -236,6 +236,9 @@ pub struct Config2 {
     /// Max connection count.
     pub connection_count_max: u32,
 
+    /// Max byte count allowed in memory per connection in or out.
+    pub byte_count_max: u32,
+
     /// Initial backoff interval.
     pub backoff_interval_start: std::time::Duration,
 
@@ -244,15 +247,20 @@ pub struct Config2 {
 
     /// Backoff factor.
     pub backoff_fact: f64,
+
+    /// Timeout.
+    pub timeout: std::time::Duration,
 }
 
 impl Default for Config2 {
     fn default() -> Self {
         Self {
             connection_count_max: 255,
+            byte_count_max: 16 * 1024 * 1024,
             backoff_interval_start: std::time::Duration::from_secs(1),
             backoff_interval_max: std::time::Duration::from_secs(60 * 5),
             backoff_fact: 2.0,
+            timeout: std::time::Duration::from_secs(60),
         }
     }
 }

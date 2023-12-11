@@ -106,10 +106,14 @@ fn go_check_version() {
     let ver: f64 = String::from_utf8_lossy(&go_version.stdout[13..17])
         .parse()
         .expect("error parsing go version");
-    assert!(
-        ver >= 1.20,
-        "go executable version must be >= 1.20, got: {ver}",
-    );
+
+    // Only check the go version if this is NOT a DOCS_RS build.
+    if std::env::var("DOCS_RS").is_err() {
+        assert!(
+            ver >= 1.20,
+            "go executable version must be >= 1.20, got: {ver}",
+        );
+    }
 }
 
 fn go_unzip_vendor() {

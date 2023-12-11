@@ -100,16 +100,16 @@ mod tests {
             serde_json::from_str(&format!("{{\"iceServers\":[{ice}]}}"))
                 .unwrap();
 
-        let (mut peer1, mut prcv1) =
+        let (peer1, mut prcv1) =
             PeerConnection::new(&config, rcv_limit.clone())
                 .await
                 .unwrap();
-        let (mut peer2, mut prcv2) =
+        let (peer2, mut prcv2) =
             PeerConnection::new(&config, rcv_limit.clone())
                 .await
                 .unwrap();
 
-        let (mut data1, mut drcv1) = peer1
+        let (data1, mut drcv1) = peer1
             .create_data_channel(DataChannelConfig {
                 label: Some("data".into()),
             })
@@ -131,7 +131,7 @@ mod tests {
             .unwrap();
         peer1.set_remote_description(answer).await.unwrap();
 
-        let (mut data2, mut drcv2) = loop {
+        let (data2, mut drcv2) = loop {
             if let Some((evt, _permit)) = prcv2.recv().await {
                 match evt {
                     PeerConnectionEvent::Error(err) => panic!("{err:?}"),
@@ -267,11 +267,61 @@ mod tests {
             }
         }
 
+        let data1 = Arc::new(data1);
+
+        let mut all = Vec::new();
+
+        const COUNT: usize = 10;
+
+        let bar = Arc::new(tokio::sync::Barrier::new(COUNT));
+
+        for i in 0..COUNT {
+            let hnd = tokio::runtime::Handle::current();
+            let bar = bar.clone();
+            let data1 = data1.clone();
+            all.push(std::thread::spawn(move || {
+                hnd.block_on(async move {
+                    println!("send {i}");
+                    bar.wait().await;
+                    data1
+                        .send(GoBuf::from_slice(b"hello").unwrap())
+                        .await
+                        .unwrap();
+                    println!("sent {i}");
+                });
+            }));
+        }
+
+        let mut r_count = 0;
+        while let Some(evt) = drcv2.recv().await {
+            println!("{evt:?}");
+            if matches!(evt, (DataChannelEvent::Message(_, _), _)) {
+                r_count += 1;
+                println!("got {r_count}");
+                if r_count >= COUNT {
+                    break;
+                }
+            }
+        }
+
+        for (i, t) in all.into_iter().enumerate() {
+            println!("await thread {i}");
+            t.join().unwrap();
+            println!("thread {i} complete");
+        }
+
+        println!("close data 1");
         data1.close(Error::id("").into());
+        println!("close data 2");
         data2.close(Error::id("").into());
+        println!("close peer 1");
         peer1.close(Error::id("").into());
+        println!("close peer 2");
         peer2.close(Error::id("").into());
 
+        println!("close turn");
         turn.stop().await.unwrap();
+
+        println!("all done.");
     }
 }

@@ -331,7 +331,7 @@ async fn gather_ice(
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             async move {
-                let (mut con, mut r) = tx5_go_pion::PeerConnection::new(
+                let (con, mut r) = tx5_go_pion::PeerConnection::new(
                     config,
                     std::sync::Arc::new(tokio::sync::Semaphore::new(
                         usize::MAX >> 3,

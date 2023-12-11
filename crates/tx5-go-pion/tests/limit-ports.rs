@@ -7,7 +7,7 @@ async fn limit_ports() {
     .set_as_global_default()
     .unwrap();
 
-    let (mut con, mut r) = tx5_go_pion::PeerConnection::new(
+    let (con, mut r) = tx5_go_pion::PeerConnection::new(
         tx5_go_pion::PeerConnectionConfig::default(),
         std::sync::Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3)),
     )

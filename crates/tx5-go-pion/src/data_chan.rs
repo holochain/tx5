@@ -65,11 +65,18 @@ macro_rules! data_chan_weak_core {
 impl WeakDataChan {
     pub fn close(&self, err: Error) {
         if let Some(strong) = self.0.upgrade() {
-            let mut lock = strong.lock().unwrap();
-            if let Ok(core) = &mut *lock {
-                core.close(err.clone());
+            let mut tmp = Err(err.clone());
+
+            {
+                let mut lock = strong.lock().unwrap();
+                if let Ok(core) = &mut *lock {
+                    core.close(err);
+                }
+                std::mem::swap(&mut *lock, &mut tmp);
             }
-            *lock = Err(err);
+
+            // make sure the above lock is released before this is dropped
+            drop(tmp);
         }
     }
 
@@ -133,12 +140,19 @@ impl DataChannel {
     }
 
     /// Close this data channel.
-    pub fn close(&mut self, err: Error) {
-        let mut lock = self.0.lock().unwrap();
-        if let Ok(core) = &mut *lock {
-            core.close(err.clone());
+    pub fn close(&self, err: Error) {
+        let mut tmp = Err(err.clone());
+
+        {
+            let mut lock = self.0.lock().unwrap();
+            if let Ok(core) = &mut *lock {
+                core.close(err);
+            }
+            std::mem::swap(&mut *lock, &mut tmp);
         }
-        *lock = Err(err);
+
+        // make sure the above lock is released before this is dropped
+        drop(tmp);
     }
 
     fn get_data_chan_id(&self) -> Result<usize> {
@@ -147,13 +161,13 @@ impl DataChannel {
 
     /// Get the label of this DataChannel.
     #[inline]
-    pub fn label(&mut self) -> Result<GoBuf> {
+    pub fn label(&self) -> Result<GoBuf> {
         unsafe { Ok(GoBuf(API.data_chan_label(self.get_data_chan_id()?)?)) }
     }
 
     /// Get the ready state of this DataChannel.
     #[inline]
-    pub fn ready_state(&mut self) -> Result<usize> {
+    pub fn ready_state(&self) -> Result<usize> {
         unsafe { API.data_chan_ready_state(self.get_data_chan_id()?) }
     }
 
@@ -161,7 +175,7 @@ impl DataChannel {
     /// Returns the current BufferedAmount.
     #[inline]
     pub fn set_buffered_amount_low_threshold(
-        &mut self,
+        &self,
         threshold: usize,
     ) -> Result<usize> {
         unsafe {
@@ -174,13 +188,13 @@ impl DataChannel {
 
     /// Returns the current BufferedAmount.
     #[inline]
-    pub fn buffered_amount(&mut self) -> Result<usize> {
+    pub fn buffered_amount(&self) -> Result<usize> {
         unsafe { API.data_chan_buffered_amount(self.get_data_chan_id()?) }
     }
 
     /// Send data to the remote peer on this DataChannel.
     /// Returns the current BufferedAmount.
-    pub async fn send<'a, B>(&mut self, data: B) -> Result<usize>
+    pub async fn send<'a, B>(&self, data: B) -> Result<usize>
     where
         B: Into<GoBufRef<'a>>,
     {

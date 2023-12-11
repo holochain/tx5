@@ -156,11 +156,18 @@ macro_rules! peer_con_weak_core {
 impl WeakPeerCon {
     pub fn close(&self, err: Error) {
         if let Some(strong) = self.0.upgrade() {
-            let mut lock = strong.lock().unwrap();
-            if let Ok(core) = &mut *lock {
-                core.close(err.clone());
+            let mut tmp = Err(err.clone());
+
+            {
+                let mut lock = strong.lock().unwrap();
+                if let Ok(core) = &mut *lock {
+                    core.close(err.clone());
+                }
+                std::mem::swap(&mut *lock, &mut tmp);
             }
-            *lock = Err(err);
+
+            // make sure the above lock is released before this is dropped
+            drop(tmp);
         }
     }
 
@@ -210,12 +217,19 @@ impl PeerConnection {
     }
 
     /// Close this connection.
-    pub fn close(&mut self, err: Error) {
-        let mut lock = self.0.lock().unwrap();
-        if let Ok(core) = &mut *lock {
-            core.close(err.clone());
+    pub fn close(&self, err: Error) {
+        let mut tmp = Err(err.clone());
+
+        {
+            let mut lock = self.0.lock().unwrap();
+            if let Ok(core) = &mut *lock {
+                core.close(err.clone());
+            }
+            std::mem::swap(&mut *lock, &mut tmp);
         }
-        *lock = Err(err);
+
+        // make sure the above lock is released before this is dropped
+        drop(tmp);
     }
 
     fn get_peer_con_id(&self) -> Result<usize> {
@@ -223,7 +237,7 @@ impl PeerConnection {
     }
 
     /// Get stats.
-    pub async fn stats(&mut self) -> Result<GoBuf> {
+    pub async fn stats(&self) -> Result<GoBuf> {
         let peer_con_id = self.get_peer_con_id()?;
 
         tokio::task::spawn_blocking(move || unsafe {
@@ -233,7 +247,7 @@ impl PeerConnection {
     }
 
     /// Create offer.
-    pub async fn create_offer<'a, B>(&mut self, config: B) -> Result<GoBuf>
+    pub async fn create_offer<'a, B>(&self, config: B) -> Result<GoBuf>
     where
         B: Into<GoBufRef<'a>>,
     {
@@ -247,7 +261,7 @@ impl PeerConnection {
     }
 
     /// Create answer.
-    pub async fn create_answer<'a, B>(&mut self, config: B) -> Result<GoBuf>
+    pub async fn create_answer<'a, B>(&self, config: B) -> Result<GoBuf>
     where
         B: Into<GoBufRef<'a>>,
     {
@@ -261,7 +275,7 @@ impl PeerConnection {
     }
 
     /// Set local description.
-    pub async fn set_local_description<'a, B>(&mut self, desc: B) -> Result<()>
+    pub async fn set_local_description<'a, B>(&self, desc: B) -> Result<()>
     where
         B: Into<GoBufRef<'a>>,
     {
@@ -275,7 +289,7 @@ impl PeerConnection {
     }
 
     /// Set remote description.
-    pub async fn set_remote_description<'a, B>(&mut self, desc: B) -> Result<()>
+    pub async fn set_remote_description<'a, B>(&self, desc: B) -> Result<()>
     where
         B: Into<GoBufRef<'a>>,
     {
@@ -289,7 +303,7 @@ impl PeerConnection {
     }
 
     /// Add ice candidate.
-    pub async fn add_ice_candidate<'a, B>(&mut self, ice: B) -> Result<()>
+    pub async fn add_ice_candidate<'a, B>(&self, ice: B) -> Result<()>
     where
         B: Into<GoBufRef<'a>>,
     {
@@ -304,7 +318,7 @@ impl PeerConnection {
 
     /// Create data channel.
     pub async fn create_data_channel<'a, B>(
-        &mut self,
+        &self,
         config: B,
     ) -> Result<(DataChannel, EventRecv<DataChannelEvent>)>
     where

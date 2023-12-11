@@ -68,7 +68,7 @@ async fn main() {
 
     let start = std::time::Instant::now();
 
-    let (mut c1, mut evt1) = spawn_peer(config.clone()).await;
+    let (c1, mut evt1) = spawn_peer(config.clone()).await;
     tokio::task::spawn(async move {
         while let Some((evt, _p)) = evt1.recv().await {
             o2o_snd.send(Cmd::PeerEvt(evt)).unwrap();
@@ -145,7 +145,7 @@ async fn main() {
 
     let mut ice_buf = Some(Vec::new());
 
-    let (mut c2, mut evt2) = spawn_peer(config.clone()).await;
+    let (c2, mut evt2) = spawn_peer(config.clone()).await;
     tokio::task::spawn(async move {
         while let Some((evt, _p)) = evt2.recv().await {
             t2t_snd.send(Cmd::PeerEvt(evt)).unwrap();
@@ -218,7 +218,7 @@ async fn spawn_peer(
 }
 
 async fn spawn_chan(
-    mut data_chan: DataChannel,
+    data_chan: DataChannel,
     mut data_recv: EventRecv<DataChannelEvent>,
     start: std::time::Instant,
     chan_ready: Arc<tokio::sync::Barrier>,

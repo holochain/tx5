@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{path::Path, process::Command};
 
 #[derive(Debug)]
 enum LinkType {
@@ -154,6 +154,28 @@ fn go_build_cmd(
     }
 
     cmd.env("CGO_ENABLED", "1");
+
+    if TARGET.go_os == "ios" {
+        // Determine Xcode directory path
+        let xcode_select_output =
+            Command::new("xcode-select").arg("-p").output().unwrap();
+        if !xcode_select_output.status.success() {
+            panic!("Failed to run xcode-select -p");
+        }
+        let xcode_dir = String::from_utf8(xcode_select_output.stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+
+        // Determine SDK directory paths
+        let sdk_dir_ios = Path::new(&xcode_dir)
+            .join("Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        cmd.env("CGO_CFLAGS", format!(" -isysroot {sdk_dir_ios}"));
+    }
 
     // grr, clippy, the debug symbols belong in one arg
     #[allow(clippy::suspicious_command_arg_space)]

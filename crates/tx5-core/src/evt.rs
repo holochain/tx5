@@ -80,8 +80,8 @@ impl<E: From<Error>> std::fmt::Debug for EventRecv<E> {
 
 impl<E: From<Error>> EventRecv<E> {
     /// Receive incoming PeerConnection events.
-    pub async fn recv(&mut self) -> Option<(E, EventPermit)> {
-        self.0.recv().await
+    pub async fn recv(&mut self) -> Option<E> {
+        self.0.recv().await.map(|r| r.0)
     }
 }
 

@@ -70,7 +70,7 @@ async fn main() {
 
     let (c1, mut evt1) = spawn_peer(config.clone()).await;
     tokio::task::spawn(async move {
-        while let Some((evt, _p)) = evt1.recv().await {
+        while let Some(evt) = evt1.recv().await {
             o2o_snd.send(Cmd::PeerEvt(evt)).unwrap();
         }
     });
@@ -147,7 +147,7 @@ async fn main() {
 
     let (c2, mut evt2) = spawn_peer(config.clone()).await;
     tokio::task::spawn(async move {
-        while let Some((evt, _p)) = evt2.recv().await {
+        while let Some(evt) = evt2.recv().await {
             t2t_snd.send(Cmd::PeerEvt(evt)).unwrap();
         }
     });
@@ -226,8 +226,8 @@ async fn spawn_chan(
 ) {
     loop {
         match data_recv.recv().await {
-            Some((DataChannelEvent::Open, _p)) => break,
-            Some((DataChannelEvent::BufferedAmountLow, _p)) => (),
+            Some(DataChannelEvent::Open) => break,
+            Some(DataChannelEvent::BufferedAmountLow) => (),
             oth => panic!("{oth:?}"),
         }
     }
@@ -247,8 +247,8 @@ async fn spawn_chan(
 
     loop {
         match data_recv.recv().await {
-            Some((DataChannelEvent::BufferedAmountLow, _p)) => (),
-            Some((DataChannelEvent::Message(mut buf, _), _p)) => {
+            Some(DataChannelEvent::BufferedAmountLow) => (),
+            Some(DataChannelEvent::Message(mut buf, _)) => {
                 assert_eq!(1024, buf.len().unwrap());
                 std::io::Write::write_all(&mut std::io::stdout(), b".")
                     .unwrap();

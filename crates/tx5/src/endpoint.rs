@@ -561,26 +561,26 @@ async fn new_conn_task(
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
                     }
-                    Some((DataEvt::Error(err), _p)) => {
+                    Some(DataEvt::Error(err)) => {
                         tracing::warn!(?err, "ConnectionError");
                         conn_state.close(err.into());
                         break;
                     }
-                    Some((DataEvt::Open, _p)) => {
+                    Some(DataEvt::Open) => {
                         if check_data_chan_ready(&mut data_chan).is_err() {
                             break;
                         }
                     }
-                    Some((DataEvt::Close, _p)) => {
+                    Some(DataEvt::Close) => {
                         conn_state.close(Error::id("DataChanClosed"));
                         break;
                     }
-                    Some((DataEvt::Message(buf, permit), _p)) => {
+                    Some(DataEvt::Message(buf, permit)) => {
                         if conn_state.rcv_data(BackBuf::from_raw(buf), permit).is_err() {
                             break;
                         }
                     }
-                    Some((DataEvt::BufferedAmountLow, _p)) => {
+                    Some(DataEvt::BufferedAmountLow) => {
                         tracing::debug!(?conn_uniq, "BufferedAmountLow");
                         conn_state.check_send_waiting(Some(state::BufState::Low)).await;
                     }
@@ -592,12 +592,12 @@ async fn new_conn_task(
                         conn_state.close(Error::id("PeerConClosed"));
                         break;
                     }
-                    Some((PeerEvt::Error(err), _p)) => {
+                    Some(PeerEvt::Error(err)) => {
                         tracing::warn!(?err, "ConnectionError");
                         conn_state.close(err.into());
                         break;
                     }
-                    Some((PeerEvt::State(peer_state), _p)) => {
+                    Some(PeerEvt::State(peer_state)) => {
                         match peer_state {
                             PeerState::New
                             | PeerState::Connecting
@@ -612,13 +612,13 @@ async fn new_conn_task(
                             }
                         }
                     }
-                    Some((PeerEvt::ICECandidate(buf), _p)) => {
+                    Some(PeerEvt::ICECandidate(buf)) => {
                         let buf = BackBuf::from_raw(buf);
                         if conn_state.ice(buf).is_err() {
                             break;
                         }
                     }
-                    Some((PeerEvt::DataChannel(chan, chan_recv), _p)) => {
+                    Some(PeerEvt::DataChannel(chan, chan_recv)) => {
                         data_chan = Some(chan);
                         data_chan_recv = Some(chan_recv);
                         if check_data_chan_ready(&mut data_chan).is_err() {

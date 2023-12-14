@@ -72,19 +72,24 @@ impl Default for Config3 {
     }
 }
 
-/// Tx5 endpoint version 3.
-pub struct Ep3 {
-    ep_uniq: u64,
+struct EpShared {
     config: Arc<Config3>,
     this_id: Id,
-    sig_limit: Arc<tokio::sync::Semaphore>,
-    peer_limit: Arc<tokio::sync::Semaphore>,
-    sig_map: Arc<Mutex<SigMap>>,
+    ep_uniq: u64,
     lair_tag: Arc<str>,
     lair_client: LairClient,
-    _lair_keystore: lair_keystore_api::in_proc_keystore::InProcKeystore,
-    listen_sigs: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    sig_limit: Arc<tokio::sync::Semaphore>,
+    peer_limit: Arc<tokio::sync::Semaphore>,
+    weak_sig_map: Weak<Mutex<SigMap>>,
     evt_send: EventSend<Ep3Event>,
+}
+
+/// Tx5 endpoint version 3.
+pub struct Ep3 {
+    ep: Arc<EpShared>,
+    _lair_keystore: lair_keystore_api::in_proc_keystore::InProcKeystore,
+    _sig_map: Arc<Mutex<SigMap>>,
+    listen_sigs: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Drop for Ep3 {
@@ -146,18 +151,24 @@ impl Ep3 {
 
         let (evt_send, evt_recv) = EventSend::new(1024);
 
+        let sig_map = Arc::new(Mutex::new(HashMap::new()));
+        let weak_sig_map = Arc::downgrade(&sig_map);
+
         let this = Self {
-            ep_uniq: next_uniq(),
-            config,
-            this_id,
-            sig_limit,
-            peer_limit,
-            sig_map: Arc::new(Mutex::new(HashMap::new())),
-            lair_tag,
-            lair_client,
+            ep: Arc::new(EpShared {
+                config,
+                this_id,
+                ep_uniq: next_uniq(),
+                lair_tag,
+                lair_client,
+                sig_limit,
+                peer_limit,
+                weak_sig_map,
+                evt_send,
+            }),
             _lair_keystore,
+            _sig_map: sig_map,
             listen_sigs: Arc::new(Mutex::new(Vec::new())),
-            evt_send,
         };
 
         (this, evt_recv)
@@ -171,18 +182,8 @@ impl Ep3 {
             return Err(Error::str("Expected SigUrl, got PeerUrl"));
         }
 
-        let ep_uniq = self.ep_uniq;
-        let peer_url = sig_url.to_client(self.this_id);
-
-        let config = self.config.clone();
-        let sig_limit = self.sig_limit.clone();
-        let peer_limit = self.peer_limit.clone();
-        let weak_sig_map = Arc::downgrade(&self.sig_map);
-
-        let this_id = self.this_id;
-        let lair_tag = self.lair_tag.clone();
-        let lair_client = self.lair_client.clone();
-        let evt_send = self.evt_send.clone();
+        let ep = self.ep.clone();
+        let peer_url = sig_url.to_client(ep.this_id);
 
         self.listen_sigs
             .lock()
@@ -194,35 +195,16 @@ impl Ep3 {
                     std::time::Duration::from_secs(60);
                 let mut backoff = B_START;
                 loop {
-                    if let Some(sig_map) = weak_sig_map.upgrade() {
-                        if assert_sig(
-                            ep_uniq,
-                            &config,
-                            &sig_limit,
-                            &peer_limit,
-                            &sig_map,
-                            this_id,
-                            &lair_tag,
-                            &lair_client,
-                            &sig_url,
-                            &evt_send,
-                        )
-                        .await
-                        .is_ok()
-                        {
-                            // if the conn is still open it's essentially
-                            // a no-op to assert it again, so it's
-                            // okay to do that quickly.
-                            backoff = B_START;
-                        } else {
-                            backoff *= 2;
-                            if backoff > B_MAX {
-                                backoff = B_MAX;
-                            }
-                        }
+                    if assert_sig(&ep, &sig_url).await.is_ok() {
+                        // if the conn is still open it's essentially
+                        // a no-op to assert it again, so it's
+                        // okay to do that quickly.
+                        backoff = B_START;
                     } else {
-                        // endpoint closed
-                        break;
+                        backoff *= 2;
+                        if backoff > B_MAX {
+                            backoff = B_MAX;
+                        }
                     }
 
                     tokio::time::sleep(backoff).await;
@@ -247,19 +229,7 @@ impl Ep3 {
         let sig_url = peer_url.to_server();
         let peer_id = peer_url.id().unwrap();
 
-        let sig = assert_sig(
-            self.ep_uniq,
-            &self.config,
-            &self.sig_limit,
-            &self.peer_limit,
-            &self.sig_map,
-            self.this_id,
-            &self.lair_tag,
-            &self.lair_client,
-            &sig_url,
-            &self.evt_send,
-        )
-        .await?;
+        let sig = assert_sig(&self.ep, &sig_url).await?;
 
         let peer = sig
             .assert_peer(peer_url, peer_id, PeerDir::ActiveOrOutgoing)
@@ -269,51 +239,32 @@ impl Ep3 {
     }
 }
 
-async fn assert_sig(
-    ep_uniq: u64,
-    config: &Arc<Config3>,
-    sig_limit: &Arc<tokio::sync::Semaphore>,
-    peer_limit: &Arc<tokio::sync::Semaphore>,
-    sig_map: &Arc<Mutex<SigMap>>,
-    this_id: Id,
-    lair_tag: &Arc<str>,
-    lair_client: &LairClient,
-    sig_url: &SigUrl,
-    evt_send: &EventSend<Ep3Event>,
-) -> CRes<Arc<Sig>> {
+async fn assert_sig(ep: &Arc<EpShared>, sig_url: &SigUrl) -> CRes<Arc<Sig>> {
+    let sig_map = match ep.weak_sig_map.upgrade() {
+        Some(sig_map) => sig_map,
+        None => {
+            return Err(Error::str(
+                "Signal connection failed due to closed endpoint",
+            )
+            .into())
+        }
+    };
+
     let (_sig_uniq, fut) = sig_map
         .lock()
         .unwrap()
         .entry(sig_url.clone())
         .or_insert_with(|| {
             let sig_uniq = next_uniq();
-            let config = config.clone();
-            let sig_limit = sig_limit.clone();
-            let peer_limit = peer_limit.clone();
-            let weak_sig_map = Arc::downgrade(sig_map);
             let sig_url = sig_url.clone();
-            let lair_tag = lair_tag.clone();
-            let lair_client = lair_client.clone();
-            let evt_send = evt_send.clone();
+            let ep = ep.clone();
             (
                 sig_uniq,
                 futures::future::FutureExt::shared(
                     futures::future::FutureExt::boxed(async move {
                         tokio::time::timeout(
-                            config.timeout,
-                            Sig::new(
-                                ep_uniq,
-                                sig_uniq,
-                                config,
-                                sig_limit,
-                                peer_limit,
-                                weak_sig_map,
-                                this_id,
-                                sig_url,
-                                lair_tag,
-                                lair_client,
-                                evt_send,
-                            ),
+                            ep.config.timeout,
+                            Sig::new(ep, sig_uniq, sig_url),
                         )
                         .await
                         .map_err(|_| {
@@ -373,30 +324,38 @@ type AnswerSend =
 type SharedPeer = Shared<BoxFuture<'static, CRes<Arc<Peer>>>>;
 type PeerMap = HashMap<Id, (u64, PeerCmdSend, AnswerSend, SharedPeer)>;
 
-struct Sig {
-    this_id: Id,
+struct SigShared {
+    ep: Arc<EpShared>,
     weak_sig: Weak<Sig>,
-    ep_uniq: u64,
     sig_uniq: u64,
-    config: Arc<Config3>,
-    _permit: tokio::sync::OwnedSemaphorePermit,
-    weak_sig_map: Weak<Mutex<SigMap>>,
     sig_url: SigUrl,
+    weak_peer_map: Weak<Mutex<PeerMap>>,
+}
+
+impl std::ops::Deref for SigShared {
+    type Target = Arc<EpShared>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ep
+    }
+}
+
+struct Sig {
+    sig: Arc<SigShared>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
     recv_task: tokio::task::JoinHandle<()>,
     ice_servers: Arc<serde_json::Value>,
-    peer_limit: Arc<tokio::sync::Semaphore>,
     peer_map: Arc<Mutex<PeerMap>>,
-    sig: tx5_signal::Cli,
-    evt_send: EventSend<Ep3Event>,
+    sig_cli: tx5_signal::Cli,
 }
 
 impl Drop for Sig {
     fn drop(&mut self) {
-        tracing::info!(%self.ep_uniq, %self.sig_uniq, %self.sig_url, "Signal Connection Close");
+        tracing::info!(%self.sig.ep_uniq, %self.sig.sig_uniq, %self.sig.sig_url, "Signal Connection Close");
 
         self.recv_task.abort();
 
-        close_sig(&self.weak_sig_map, &self.sig_url, self.sig_uniq);
+        close_sig(&self.sig.weak_sig_map, &self.sig.sig_url, self.sig.sig_uniq);
     }
 }
 
@@ -404,45 +363,38 @@ impl std::ops::Deref for Sig {
     type Target = tx5_signal::Cli;
 
     fn deref(&self) -> &Self::Target {
-        &self.sig
+        &self.sig_cli
     }
 }
 
 impl Sig {
     pub async fn new(
-        ep_uniq: u64,
+        ep: Arc<EpShared>,
         sig_uniq: u64,
-        config: Arc<Config3>,
-        sig_limit: Arc<tokio::sync::Semaphore>,
-        peer_limit: Arc<tokio::sync::Semaphore>,
-        weak_sig_map: Weak<Mutex<SigMap>>,
-        this_id: Id,
         sig_url: SigUrl,
-        lair_tag: Arc<str>,
-        lair_client: LairClient,
-        evt_send: EventSend<Ep3Event>,
     ) -> CRes<Arc<Self>> {
-        tracing::info!(%ep_uniq, %sig_uniq, %sig_url, "Signal Connection Connecting");
+        tracing::info!(%ep.ep_uniq, %sig_uniq, %sig_url, "Signal Connection Connecting");
 
-        let _permit = sig_limit.acquire_owned().await.map_err(|_| {
-            Error::str(
-                "Endpoint closed while acquiring signal connection permit",
-            )
-        })?;
+        let _permit =
+            ep.sig_limit.clone().acquire_owned().await.map_err(|_| {
+                Error::str(
+                    "Endpoint closed while acquiring signal connection permit",
+                )
+            })?;
 
-        let (sig, mut sig_recv) = tx5_signal::Cli::builder()
-            .with_lair_tag(lair_tag)
-            .with_lair_client(lair_client)
+        let (sig_cli, mut sig_recv) = tx5_signal::Cli::builder()
+            .with_lair_tag(ep.lair_tag.clone())
+            .with_lair_client(ep.lair_client.clone())
             .with_url(sig_url.to_string().parse().unwrap())
             .build()
             .await?;
 
-        let peer_url = Tx5Url::new(sig.local_addr())?;
-        if peer_url.id().unwrap() != this_id {
+        let peer_url = Tx5Url::new(sig_cli.local_addr())?;
+        if peer_url.id().unwrap() != ep.this_id {
             return Err(Error::str("Invalid signal server peer Id").into());
         }
 
-        let ice_servers = sig.ice_servers();
+        let ice_servers = sig_cli.ice_servers();
 
         let peer_map: Arc<Mutex<PeerMap>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -450,8 +402,8 @@ impl Sig {
 
         Ok(Arc::new_cyclic(move |weak_sig: &Weak<Sig>| {
             let recv_task = {
+                let ep = ep.clone();
                 let weak_sig = weak_sig.clone();
-                let weak_sig_map = weak_sig_map.clone();
                 let sig_url = sig_url.clone();
                 tokio::task::spawn(async move {
                     while let Some(msg) = sig_recv.recv().await {
@@ -459,7 +411,7 @@ impl Sig {
                         match msg {
                             Demo { .. } => (),
                             Offer { rem_pub, offer } => {
-                                tracing::trace!(%ep_uniq, %sig_uniq, ?rem_pub, ?offer, "Sig Recv Offer");
+                                tracing::trace!(%ep.ep_uniq, %sig_uniq, ?rem_pub, ?offer, "Sig Recv Offer");
                                 if let Some(sig) = weak_sig.upgrade() {
                                     let peer_url = sig_url.to_client(rem_pub);
                                     // fire and forget this
@@ -477,7 +429,7 @@ impl Sig {
                                 }
                             }
                             Answer { rem_pub, answer } => {
-                                tracing::trace!(%ep_uniq, %sig_uniq, ?rem_pub, ?answer, "Sig Recv Answer");
+                                tracing::trace!(%ep.ep_uniq, %sig_uniq, ?rem_pub, ?answer, "Sig Recv Answer");
                                 if let Some(peer_map) = weak_peer_map.upgrade()
                                 {
                                     let r = peer_map
@@ -497,7 +449,7 @@ impl Sig {
                                 }
                             }
                             Ice { rem_pub, ice } => {
-                                tracing::trace!(%ep_uniq, %sig_uniq, ?rem_pub, ?ice, "Sig Recv ICE");
+                                tracing::trace!(%ep.ep_uniq, %sig_uniq, ?rem_pub, ?ice, "Sig Recv ICE");
                                 if let Some(peer_map) = weak_peer_map.upgrade()
                                 {
                                     let r = peer_map
@@ -529,27 +481,27 @@ impl Sig {
                         }
                     }
 
-                    close_sig(&weak_sig_map, &sig_url, sig_uniq);
+                    close_sig(&ep.weak_sig_map, &sig_url, sig_uniq);
                 })
             };
 
-            tracing::info!(%ep_uniq, %sig_uniq, %sig_url, "Signal Connection Open");
+            let weak_peer_map = Arc::downgrade(&peer_map);
+
+            tracing::info!(%ep.ep_uniq, %sig_uniq, %sig_url, "Signal Connection Open");
 
             Self {
-                this_id,
-                weak_sig: weak_sig.clone(),
-                ep_uniq,
-                sig_uniq,
-                config,
+                sig: Arc::new(SigShared {
+                    ep,
+                    weak_sig: weak_sig.clone(),
+                    sig_uniq,
+                    sig_url,
+                    weak_peer_map,
+                }),
                 _permit,
-                weak_sig_map,
-                sig_url,
                 recv_task,
                 ice_servers,
-                peer_limit,
                 peer_map,
-                sig,
-                evt_send,
+                sig_cli,
             }
         }))
     }
@@ -560,7 +512,7 @@ impl Sig {
         peer_id: Id,
         peer_dir: PeerDir,
     ) -> CRes<Arc<Peer>> {
-        if peer_id == self.this_id {
+        if peer_id == self.sig.this_id {
             return Err(Error::str("Cannot establish connection with remote peer id matching this id").into());
         }
 
@@ -571,7 +523,7 @@ impl Sig {
 
             if peer_dir.is_incoming() && lock.contains_key(&peer_id) {
                 // we need to check negotiation
-                if peer_id > self.this_id {
+                if peer_id > self.sig.this_id {
                     // we are the polite node, drop our existing connection
                     tmp = lock.remove(&peer_id);
                 }
@@ -592,16 +544,9 @@ impl Sig {
                             NewPeerDir::Incoming { offer }
                         }
                     };
-                    let weak_sig = self.weak_sig.clone();
-                    let timeout = self.config.timeout;
-                    let ep_uniq = self.ep_uniq;
-                    let sig_uniq = self.sig_uniq;
+                    let sig = self.sig.clone();
                     let peer_uniq = next_uniq();
-                    let config = self.config.clone();
-                    let peer_limit = self.peer_limit.clone();
-                    let weak_peer_map = Arc::downgrade(&self.peer_map);
                     let ice_servers = self.ice_servers.clone();
-                    let evt_send = self.evt_send.clone();
                     let (peer_cmd_send, peer_cmd_recv) = EventSend::new(1024);
                     (
                         peer_uniq,
@@ -610,21 +555,15 @@ impl Sig {
                         futures::future::FutureExt::shared(
                             futures::future::FutureExt::boxed(async move {
                                 tokio::time::timeout(
-                                    timeout,
+                                    sig.config.timeout,
                                     Peer::new(
-                                        weak_sig,
+                                        sig,
                                         peer_url,
                                         peer_id,
-                                        ep_uniq,
-                                        sig_uniq,
                                         peer_uniq,
-                                        config,
-                                        peer_limit,
-                                        weak_peer_map,
                                         ice_servers,
                                         new_peer_dir,
                                         peer_cmd_recv,
-                                        evt_send,
                                     ),
                                 )
                                 .await
@@ -696,13 +635,10 @@ enum NewPeerDir {
 }
 
 struct Peer {
-    config: Arc<Config3>,
+    sig: Arc<SigShared>,
     peer_id: Id,
-    ep_uniq: u64,
-    sig_uniq: u64,
     peer_uniq: u64,
     _permit: tokio::sync::OwnedSemaphorePermit,
-    weak_peer_map: Weak<Mutex<PeerMap>>,
     cmd_task: tokio::task::JoinHandle<()>,
     recv_task: tokio::task::JoinHandle<()>,
     data_task: tokio::task::JoinHandle<()>,
@@ -714,46 +650,43 @@ struct Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
-        tracing::info!(%self.ep_uniq, %self.sig_uniq, %self.peer_uniq, ?self.peer_id, "Peer Connection Close");
+        tracing::info!(%self.sig.ep_uniq, %self.sig.sig_uniq, %self.peer_uniq, ?self.peer_id, "Peer Connection Close");
 
         self.cmd_task.abort();
         self.recv_task.abort();
         self.data_task.abort();
 
-        close_peer(&self.weak_peer_map, self.peer_id, self.peer_uniq);
+        close_peer(&self.sig.weak_peer_map, self.peer_id, self.peer_uniq);
     }
 }
 
 impl Peer {
     pub async fn new(
-        weak_sig: Weak<Sig>,
+        sig: Arc<SigShared>,
         peer_url: PeerUrl,
         peer_id: Id,
-        ep_uniq: u64,
-        sig_uniq: u64,
         peer_uniq: u64,
-        config: Arc<Config3>,
-        peer_limit: Arc<tokio::sync::Semaphore>,
-        weak_peer_map: Weak<Mutex<PeerMap>>,
         ice_servers: Arc<serde_json::Value>,
         new_peer_dir: NewPeerDir,
         mut peer_cmd_recv: EventRecv<PeerCmd>,
-        evt_send: EventSend<Ep3Event>,
     ) -> CRes<Arc<Self>> {
-        tracing::info!(%ep_uniq, %sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Connecting");
+        tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Connecting");
 
-        let _permit = peer_limit.acquire_owned().await.map_err(|_| {
-            Error::str("Endpoint closed while acquiring peer connection permit")
-        })?;
+        let _permit =
+            sig.peer_limit.clone().acquire_owned().await.map_err(|_| {
+                Error::str(
+                    "Endpoint closed while acquiring peer connection permit",
+                )
+            })?;
 
-        let sig = match weak_sig.upgrade() {
+        let sig_hnd = match sig.weak_sig.upgrade() {
             None => {
                 return Err(Error::str(
                     "Sig shutdown while opening peer connection",
                 )
                 .into())
             }
-            Some(sig) => sig,
+            Some(sig_hnd) => sig_hnd,
         };
 
         let peer_config = BackBuf::from_json(ice_servers)?;
@@ -761,7 +694,7 @@ impl Peer {
         let (peer, mut peer_recv) = tx5_go_pion::PeerConnection::new(
             peer_config.imp.buf,
             Arc::new(tokio::sync::Semaphore::new(
-                config.connection_bytes_max as usize,
+                sig.config.connection_bytes_max as usize,
             )),
         )
         .await?;
@@ -791,7 +724,7 @@ impl Peer {
 
                 tracing::debug!(?offer_json, "create_offer");
 
-                sig.offer(peer_id, offer_json).await?;
+                sig_hnd.offer(peer_id, offer_json).await?;
 
                 peer.set_local_description(offer).await?;
 
@@ -815,7 +748,7 @@ impl Peer {
 
                 tracing::debug!(?answer_json, "create_answer");
 
-                sig.answer(peer_id, answer_json).await?;
+                sig_hnd.answer(peer_id, answer_json).await?;
 
                 peer.set_local_description(answer).await?;
             }
@@ -823,9 +756,9 @@ impl Peer {
 
         let cmd_task = {
             let weak_peer = Arc::downgrade(&peer);
-            let weak_peer_map = weak_peer_map.clone();
+            let sig = sig.clone();
             tokio::task::spawn(async move {
-                while let Some((cmd, _p)) = peer_cmd_recv.recv().await {
+                while let Some(cmd) = peer_cmd_recv.recv().await {
                     match cmd {
                         PeerCmd::Error(err) => {
                             tracing::warn!(?err);
@@ -848,14 +781,14 @@ impl Peer {
                     }
                 }
 
-                close_peer(&weak_peer_map, peer_id, peer_uniq);
+                close_peer(&sig.weak_peer_map, peer_id, peer_uniq);
             })
         };
 
         let recv_task = {
-            let weak_peer_map = weak_peer_map.clone();
+            let sig = sig.clone();
             tokio::task::spawn(async move {
-                while let Some((evt, _p)) = peer_recv.recv().await {
+                while let Some(evt) = peer_recv.recv().await {
                     use tx5_go_pion::PeerConnectionEvent as Evt;
                     match evt {
                         Evt::Error(err) => {
@@ -871,8 +804,8 @@ impl Peer {
                                 }
                                 Ok(ice) => ice,
                             };
-                            if let Some(sig) = weak_sig.upgrade() {
-                                if sig.ice(peer_id, ice).await.is_err() {
+                            if let Some(sig_hnd) = sig.weak_sig.upgrade() {
+                                if sig_hnd.ice(peer_id, ice).await.is_err() {
                                     break;
                                 }
                             } else {
@@ -890,7 +823,7 @@ impl Peer {
                     }
                 }
 
-                close_peer(&weak_peer_map, peer_id, peer_uniq);
+                close_peer(&sig.weak_peer_map, peer_id, peer_uniq);
             })
         };
 
@@ -901,9 +834,9 @@ impl Peer {
         let data_chan = Arc::new(data_chan);
 
         let data_task = {
-            let weak_peer_map = weak_peer_map.clone();
+            let sig = sig.clone();
             tokio::task::spawn(async move {
-                while let Some((evt, _p)) = data_recv.recv().await {
+                while let Some(evt) = data_recv.recv().await {
                     use tx5_go_pion::DataChannelEvent::*;
                     match evt {
                         Error(err) => {
@@ -914,7 +847,8 @@ impl Peer {
                         Close => break,
                         Message(message, permit) => {
                             let message = BackBuf::from_raw(message);
-                            if evt_send
+                            if sig
+                                .evt_send
                                 .send(Ep3Event::Message {
                                     peer_url: peer_url.clone(),
                                     message,
@@ -930,7 +864,7 @@ impl Peer {
                     }
                 }
 
-                close_peer(&weak_peer_map, peer_id, peer_uniq);
+                close_peer(&sig.weak_peer_map, peer_id, peer_uniq);
             })
         };
 
@@ -954,16 +888,13 @@ impl Peer {
             .into());
         }
 
-        tracing::info!(%ep_uniq, %sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Open");
+        tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Open");
 
         Ok(Arc::new(Self {
-            config,
+            sig,
             peer_id,
-            ep_uniq,
-            sig_uniq,
             peer_uniq,
             _permit,
-            weak_peer_map,
             cmd_task,
             recv_task,
             data_task,
@@ -990,7 +921,7 @@ impl Peer {
 
             loop {
                 if self.data_chan.buffered_amount()?
-                    <= self.config.connection_bytes_max as usize
+                    <= self.sig.config.connection_bytes_max as usize
                 {
                     break;
                 }
@@ -1054,7 +985,7 @@ mod ep3_tests {
 
         let res = ep2_recv.recv().await.unwrap();
         match res {
-            (Ep3Event::Message { mut message, .. }, _pe) => {
+            Ep3Event::Message { mut message, .. } => {
                 assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
             }
             _ => panic!(),

@@ -132,7 +132,7 @@ mod tests {
         peer1.set_remote_description(answer).await.unwrap();
 
         let (data2, mut drcv2) = loop {
-            if let Some((evt, _permit)) = prcv2.recv().await {
+            if let Some(evt) = prcv2.recv().await {
                 match evt {
                     PeerConnectionEvent::Error(err) => panic!("{err:?}"),
                     PeerConnectionEvent::State(_) => (),
@@ -182,22 +182,22 @@ mod tests {
         loop {
             tokio::select! {
                 evt = prcv1.recv() => match evt {
-                    Some((PeerConnectionEvent::State(_), _p)) => (),
-                    Some((PeerConnectionEvent::ICECandidate(ice), _p)) => {
+                    Some(PeerConnectionEvent::State(_)) => (),
+                    Some(PeerConnectionEvent::ICECandidate(ice)) => {
                         peer2.add_ice_candidate(ice).await.unwrap();
                     }
                     oth => panic!("unexpected: {oth:?}"),
                 },
                 evt = prcv2.recv() => match evt {
-                    Some((PeerConnectionEvent::State(_), _p)) => (),
-                    Some((PeerConnectionEvent::ICECandidate(ice), _p)) => {
+                    Some(PeerConnectionEvent::State(_)) => (),
+                    Some(PeerConnectionEvent::ICECandidate(ice)) => {
                         peer1.add_ice_candidate(ice).await.unwrap();
                     }
                     oth => panic!("unexpected: {oth:?}"),
                 },
                 evt = drcv1.recv() => match evt {
-                    Some((DataChannelEvent::BufferedAmountLow, _p)) => (),
-                    Some((DataChannelEvent::Open, _p)) => {
+                    Some(DataChannelEvent::BufferedAmountLow) => (),
+                    Some(DataChannelEvent::Open) => {
                         assert_eq!(
                             "data",
                             &String::from_utf8_lossy(
@@ -212,7 +212,7 @@ mod tests {
                             data1.send(GoBuf::from_slice(b"hello").unwrap()).await.unwrap(),
                         );
                     }
-                    Some((DataChannelEvent::Message(mut buf, _permit), _p)) => {
+                    Some(DataChannelEvent::Message(mut buf, _permit)) => {
                         assert_eq!(
                             "world",
                             &String::from_utf8_lossy(&buf.to_vec().unwrap()),
@@ -223,8 +223,8 @@ mod tests {
                     oth => panic!("unexpected: {oth:?}"),
                 },
                 evt = drcv2.recv() => match evt {
-                    Some((DataChannelEvent::BufferedAmountLow, _p)) => (),
-                    Some((DataChannelEvent::Open, _p)) => {
+                    Some(DataChannelEvent::BufferedAmountLow) => (),
+                    Some(DataChannelEvent::Open) => {
                         assert_eq!(
                             "data",
                             &String::from_utf8_lossy(
@@ -239,7 +239,7 @@ mod tests {
                             data2.send(GoBuf::from_slice(b"world").unwrap()).await.unwrap(),
                         );
                     }
-                    Some((DataChannelEvent::Message(mut buf, _permit), _p)) => {
+                    Some(DataChannelEvent::Message(mut buf, _permit)) => {
                         assert_eq!(
                             "hello",
                             &String::from_utf8_lossy(&buf.to_vec().unwrap()),
@@ -295,7 +295,7 @@ mod tests {
         let mut r_count = 0;
         while let Some(evt) = drcv2.recv().await {
             println!("{evt:?}");
-            if matches!(evt, (DataChannelEvent::Message(_, _), _)) {
+            if matches!(evt, DataChannelEvent::Message(_, _)) {
                 r_count += 1;
                 println!("got {r_count}");
                 if r_count >= COUNT {

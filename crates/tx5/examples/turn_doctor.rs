@@ -357,7 +357,7 @@ async fn gather_ice(
                     pub candidate: String,
                 }
 
-                while let Some((evt, _p)) = r.recv().await {
+                while let Some(evt) = r.recv().await {
                     if let tx5_go_pion::PeerConnectionEvent::ICECandidate(
                         mut ice,
                     ) = evt

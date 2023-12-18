@@ -41,6 +41,20 @@ impl From<Error> for Ep3Event {
     }
 }
 
+impl std::fmt::Debug for Ep3Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Error(err) => {
+                f.debug_struct("Error").field("err", err).finish()
+            }
+            Self::Message { peer_url, .. } => {
+                let url = format!("{peer_url}");
+                f.debug_struct("Message").field("peer_url", &url).finish()
+            }
+        }
+    }
+}
+
 /// A signal server url.
 pub type SigUrl = Tx5Url;
 
@@ -938,67 +952,4 @@ impl Peer {
 }
 
 #[cfg(test)]
-mod ep3_tests {
-    use super::*;
-
-    fn init_tracing() {
-        let subscriber = tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(
-                tracing_subscriber::filter::EnvFilter::from_default_env(),
-            )
-            .with_file(true)
-            .with_line_number(true)
-            .finish();
-        let _ = tracing::subscriber::set_global_default(subscriber);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn ep3_sanity() {
-        init_tracing();
-
-        let mut srv_config = tx5_signal_srv::Config::default();
-        srv_config.port = 0;
-
-        let (srv_driver, addr_list, _) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
-        let sig_task = tokio::task::spawn(srv_driver);
-
-        let sig_port = addr_list.get(0).unwrap().port();
-
-        let sig_url =
-            Tx5Url::new(format!("ws://localhost:{}", sig_port)).unwrap();
-        println!("sig_url: {sig_url}");
-
-        let (ep1, _) = Ep3::new(Arc::new(Config3::default())).await;
-
-        let cli_url1 = ep1.listen(sig_url.clone()).unwrap();
-        println!("cli_url1: {cli_url1}");
-
-        let (ep2, mut ep2_recv) = Ep3::new(Arc::new(Config3::default())).await;
-
-        let cli_url2 = ep2.listen(sig_url).unwrap();
-        println!("cli_url2: {cli_url2}");
-
-        ep1.send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
-            .await
-            .unwrap();
-
-        let res = ep2_recv.recv().await.unwrap();
-        match res {
-            Ep3Event::Message { mut message, .. } => {
-                assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
-            }
-            _ => panic!(),
-        }
-
-        println!("drop1");
-        drop(ep1);
-        println!("drop2");
-        drop(ep2);
-
-        println!("abort sig");
-        sig_task.abort();
-
-        println!("all done.");
-    }
-}
+mod test;

@@ -128,6 +128,29 @@ impl Default for Config3 {
     }
 }
 
+#[derive(Default)]
+struct BanMap(HashMap<Id, tokio::time::Instant>);
+
+impl BanMap {
+    fn set_ban(&mut self, id: Id, until: tokio::time::Instant) {
+        self.0.insert(id, until);
+    }
+
+    fn is_banned(&mut self, id: Id) -> bool {
+        let now = tokio::time::Instant::now();
+        if let Some(until) = self.0.get(&id).cloned() {
+            if now < until {
+                true
+            } else {
+                self.0.remove(&id);
+                false
+            }
+        } else {
+            false
+        }
+    }
+}
+
 pub(crate) struct EpShared {
     config: Arc<Config3>,
     this_id: Id,
@@ -138,6 +161,7 @@ pub(crate) struct EpShared {
     peer_limit: Arc<tokio::sync::Semaphore>,
     weak_sig_map: Weak<Mutex<SigMap>>,
     evt_send: EventSend<Ep3Event>,
+    ban_map: Mutex<BanMap>,
 }
 
 /// Tx5 endpoint version 3.
@@ -221,6 +245,7 @@ impl Ep3 {
                 peer_limit,
                 weak_sig_map,
                 evt_send,
+                ban_map: Mutex::new(BanMap::default()),
             }),
             _lair_keystore,
             _sig_map: sig_map,
@@ -270,6 +295,37 @@ impl Ep3 {
         Ok(peer_url)
     }
 
+    /// Close down all connections to, fail all outgoing messages to,
+    /// and drop all incoming messages from, the given remote id,
+    /// for the specified ban time period.
+    pub fn ban(&self, rem_id: Id, span: std::time::Duration) {
+        self.ep
+            .ban_map
+            .lock()
+            .unwrap()
+            .set_ban(rem_id, tokio::time::Instant::now() + span);
+
+        let fut_list = self
+            ._sig_map
+            .lock()
+            .unwrap()
+            .values()
+            .map(|v| v.1.clone())
+            .collect::<Vec<_>>();
+        for fut in fut_list {
+            let ep = self.ep.clone();
+            // fire and forget
+            tokio::task::spawn(async move {
+                if let Ok(sig) = fut.await {
+                    // see if we are still banning this id.
+                    if ep.ban_map.lock().unwrap().is_banned(rem_id) {
+                        sig.ban(rem_id);
+                    }
+                }
+            });
+        }
+    }
+
     /// Send data to a remote on this tx5 endpoint.
     /// The future returned from this method will resolve when
     /// the data is handed off to our networking backend.
@@ -284,6 +340,10 @@ impl Ep3 {
 
         let sig_url = peer_url.to_server();
         let peer_id = peer_url.id().unwrap();
+
+        if self.ep.ban_map.lock().unwrap().is_banned(peer_id) {
+            return Err(Error::str("Peer is currently banned"));
+        }
 
         let sig = assert_sig(&self.ep, &sig_url).await?;
 

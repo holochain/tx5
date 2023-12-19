@@ -360,6 +360,10 @@ impl Peer {
     }
 
     pub async fn send(&self, data: Vec<BackBuf>) -> Result<()> {
+        if self.sig.ban_map.lock().unwrap().is_banned(self.peer_id) {
+            return Err(Error::str("Peer is currently banned"));
+        }
+
         // size 1 semaphore makes sure blocks of messages are contiguous
         let _permit = self
             .send_limit

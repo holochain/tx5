@@ -198,6 +198,10 @@ impl Sig {
             return Err(Error::str("Cannot establish connection with remote peer id matching this id").into());
         }
 
+        if self.sig.ban_map.lock().unwrap().is_banned(peer_id) {
+            return Err(Error::str("Peer is currently banned").into());
+        }
+
         let mut tmp = None;
 
         let (_peer_uniq, _peer_cmd_send, _answer_send, fut) = {
@@ -267,6 +271,13 @@ impl Sig {
         drop(tmp);
 
         fut.await
+    }
+
+    pub fn ban(&self, id: Id) {
+        let r = self.peer_map.lock().unwrap().get(&id).cloned();
+        if let Some((uniq, _, _, _)) = r {
+            close_peer(&self.sig.weak_peer_map, id, uniq);
+        }
     }
 }
 

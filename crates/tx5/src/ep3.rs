@@ -3,6 +3,7 @@
 use crate::deps::lair_keystore_api;
 use crate::deps::sodoken;
 use crate::BackBuf;
+use crate::BytesList;
 use futures::future::{BoxFuture, Shared};
 use lair_keystore_api::prelude::*;
 use std::collections::HashMap;
@@ -64,6 +65,34 @@ pub type PeerUrl = Tx5Url;
 type SharedSig = Shared<BoxFuture<'static, CRes<Arc<Sig>>>>;
 type SigMap = HashMap<SigUrl, (u64, SharedSig)>;
 
+/// Callback in charge of sending preflight data if any.
+pub type PreflightSendCb = Arc<
+    dyn Fn(&PeerUrl) -> BoxFuture<'static, Result<Option<Vec<BackBuf>>>>
+        + 'static
+        + Send
+        + Sync,
+>;
+
+/// Response type for preflight check callback.
+pub enum PreflightCheckResponse {
+    /// Indicate at least one additional message must be received.
+    NeedMoreData,
+
+    /// The preflight was invalid, the connection should be closed.
+    Invalid(Error),
+
+    /// The connection was valid, proceed to normal operation.
+    Valid,
+}
+
+/// Callback in charge of validating preflight data if any.
+pub type PreflightCheckCb = Arc<
+    dyn Fn(&PeerUrl, &BytesList) -> BoxFuture<'static, PreflightCheckResponse>
+        + 'static
+        + Send
+        + Sync,
+>;
+
 /// Tx5 endpoint version 3 configuration.
 pub struct Config3 {
     /// Maximum count of open connections. Default 255.
@@ -74,6 +103,12 @@ pub struct Config3 {
 
     /// Default timeout for network operations. Default 60 seconds.
     pub timeout: std::time::Duration,
+
+    /// Callback in charge of sending preflight data if any.
+    pub preflight_send_cb: PreflightSendCb,
+
+    /// Callback in charge of validating preflight data if any.
+    pub preflight_check_cb: PreflightCheckCb,
 }
 
 impl Default for Config3 {
@@ -82,6 +117,13 @@ impl Default for Config3 {
             connection_count_max: 255,
             connection_bytes_max: 16 * 1024 * 1024,
             timeout: std::time::Duration::from_secs(60),
+            preflight_send_cb: Arc::new(|_| {
+                futures::future::FutureExt::boxed(async move { Ok(None) })
+            }),
+            preflight_check_cb: Arc::new(|_, _| {
+                use PreflightCheckResponse::Valid;
+                futures::future::FutureExt::boxed(async move { Valid })
+            }),
         }
     }
 }

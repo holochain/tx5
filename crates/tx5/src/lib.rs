@@ -88,10 +88,9 @@ impl FinishExt for u64 {
     }
 }
 
-/// A set of distinct chunks of bytes that can be treated as a single unit
-//#[derive(Clone, Default)]
+/// A set of distinct chunks of bytes that can be treated as a single unit.
 #[derive(Default)]
-struct BytesList(pub std::collections::VecDeque<bytes::Bytes>);
+pub struct BytesList(pub std::collections::VecDeque<bytes::Bytes>);
 
 impl BytesList {
     /// Construct a new BytesList.
@@ -99,12 +98,10 @@ impl BytesList {
         Self::default()
     }
 
-    /*
-        /// Construct a new BytesList with given capacity.
-        pub fn with_capacity(capacity: usize) -> Self {
-            Self(std::collections::VecDeque::with_capacity(capacity))
-        }
-    */
+    /// Clear the data.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
 
     /// Push a new bytes::Bytes into this BytesList.
     pub fn push(&mut self, data: bytes::Bytes) {
@@ -118,87 +115,16 @@ impl BytesList {
         Box::new(self)
     }
 
-    /*
-        /// Copy data into a Vec<u8>. You should avoid this if possible.
-        pub fn to_vec(&self) -> Vec<u8> {
-            use std::io::Read;
-            let mut out = Vec::with_capacity(self.remaining());
-            // data is local, it can't error, safe to unwrap
-            self.clone().reader().read_to_end(&mut out).unwrap();
-            out
+    /// Copy data into a Vec<u8>. You should avoid this if possible.
+    pub fn to_vec(&self) -> Vec<u8> {
+        use bytes::Buf;
+        let mut out = Vec::with_capacity(self.remaining());
+        for b in self.0.iter() {
+            out.extend_from_slice(b);
         }
-
-        /// Extract the contents of this BytesList into a new one
-        pub fn extract(&mut self) -> Self {
-            Self(std::mem::take(&mut self.0))
-        }
-
-        /// Remove specified byte cnt from the front of this list as a new list.
-        /// Panics if self doesn't contain enough bytes.
-        #[allow(clippy::comparison_chain)] // clearer written explicitly
-        pub fn take_front(&mut self, mut cnt: usize) -> Self {
-            let mut out = BytesList::new();
-            loop {
-                let mut item = match self.0.pop_front() {
-                    Some(item) => item,
-                    None => panic!("UnexpectedEof"),
-                };
-
-                let rem = item.remaining();
-                if rem == cnt {
-                    out.push(item);
-                    return out;
-                } else if rem < cnt {
-                    out.push(item);
-                    cnt -= rem;
-                } else if rem > cnt {
-                    out.push(item.split_to(cnt));
-                    self.0.push_front(item);
-                    return out;
-                }
-            }
-        }
-    */
-}
-
-/*
-impl From<std::collections::VecDeque<bytes::Bytes>> for BytesList {
-    #[inline(always)]
-    fn from(v: std::collections::VecDeque<bytes::Bytes>) -> Self {
-        Self(v)
+        out
     }
 }
-
-impl From<bytes::Bytes> for BytesList {
-    #[inline(always)]
-    fn from(b: bytes::Bytes) -> Self {
-        let mut out = std::collections::VecDeque::with_capacity(8);
-        out.push_back(b);
-        out.into()
-    }
-}
-
-impl From<Vec<u8>> for BytesList {
-    #[inline(always)]
-    fn from(v: Vec<u8>) -> Self {
-        bytes::Bytes::from(v).into()
-    }
-}
-
-impl From<&[u8]> for BytesList {
-    #[inline(always)]
-    fn from(b: &[u8]) -> Self {
-        bytes::Bytes::copy_from_slice(b).into()
-    }
-}
-
-impl<const N: usize> From<&[u8; N]> for BytesList {
-    #[inline(always)]
-    fn from(b: &[u8; N]) -> Self {
-        bytes::Bytes::copy_from_slice(&b[..]).into()
-    }
-}
-*/
 
 impl bytes::Buf for BytesList {
     fn remaining(&self) -> usize {

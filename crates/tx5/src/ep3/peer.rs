@@ -231,33 +231,83 @@ impl Peer {
         let data_chan = Arc::new(data_chan);
 
         let data_task = {
+            let peer_url = peer_url.clone();
             let sig = sig.clone();
             tokio::task::spawn(async move {
-                while let Some(evt) = data_recv.recv().await {
-                    use tx5_go_pion::DataChannelEvent::*;
-                    match evt {
-                        Error(err) => {
-                            tracing::warn!(?err);
-                            break;
-                        }
-                        Open => (),
-                        Close => break,
-                        Message(message, permit) => {
-                            let message = BackBuf::from_raw(message);
-                            if sig
-                                .evt_send
-                                .send(Ep3Event::Message {
-                                    peer_url: peer_url.clone(),
-                                    message,
-                                    permit,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                break;
+                let mut preflight = true;
+
+                let mut preflight_bytes = BytesList::default();
+
+                macro_rules! check_preflight {
+                    () => {
+                        match (sig.config.preflight_check_cb)(
+                            &peer_url,
+                            &preflight_bytes,
+                        )
+                        .await
+                        {
+                            PreflightCheckResponse::NeedMoreData => Ok(()),
+                            PreflightCheckResponse::Valid => {
+                                preflight = false;
+                                preflight_bytes.clear();
+                                Ok(())
+                            }
+                            PreflightCheckResponse::Invalid(err) => {
+                                tracing::debug!(?err);
+                                Err(err)
                             }
                         }
-                        BufferedAmountLow => (),
+                    };
+                }
+
+                if check_preflight!().is_ok() {
+                    while let Some(evt) = data_recv.recv().await {
+                        use tx5_go_pion::DataChannelEvent::*;
+                        match evt {
+                            Error(err) => {
+                                tracing::warn!(?err);
+                                break;
+                            }
+                            Open => (),
+                            Close => break,
+                            Message(message, permit) => {
+                                let mut message = BackBuf::from_raw(message);
+                                // clippy, you keep trying to make
+                                // things harder to read
+                                #[allow(clippy::collapsible_else_if)]
+                                if preflight {
+                                    use bytes::BufMut;
+                                    let len = message.len().unwrap();
+                                    let mut bm =
+                                        bytes::BytesMut::with_capacity(len)
+                                            .writer();
+                                    if std::io::copy(&mut message, &mut bm)
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                    preflight_bytes
+                                        .push(bm.into_inner().freeze());
+                                    if check_preflight!().is_err() {
+                                        break;
+                                    }
+                                } else {
+                                    if sig
+                                        .evt_send
+                                        .send(Ep3Event::Message {
+                                            peer_url: peer_url.clone(),
+                                            message,
+                                            permit,
+                                        })
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                            BufferedAmountLow => (),
+                        }
                     }
                 }
 
@@ -287,7 +337,7 @@ impl Peer {
 
         tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Open");
 
-        Ok(Arc::new(Self {
+        let this = Arc::new(Self {
             sig,
             peer_id,
             peer_uniq,
@@ -298,7 +348,15 @@ impl Peer {
             peer,
             data_chan,
             send_limit: Arc::new(tokio::sync::Semaphore::new(1)),
-        }))
+        });
+
+        if let Some(preflight) =
+            (this.sig.config.preflight_send_cb)(&peer_url).await?
+        {
+            this.send(preflight).await?;
+        }
+
+        Ok(this)
     }
 
     pub async fn send(&self, data: Vec<BackBuf>) -> Result<()> {
@@ -333,4 +391,3 @@ impl Peer {
         Ok(())
     }
 }
-

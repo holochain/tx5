@@ -41,8 +41,11 @@ impl Test {
         Test { sig_task, sig_url }
     }
 
-    pub async fn ep(&self) -> (PeerUrl, Ep3, EventRecv<Ep3Event>) {
-        let (ep, recv) = Ep3::new(Arc::new(Config3::default())).await;
+    pub async fn ep(
+        &self,
+        config: Arc<Config3>,
+    ) -> (PeerUrl, Ep3, EventRecv<Ep3Event>) {
+        let (ep, recv) = Ep3::new(config).await;
         let url = ep.listen(self.sig_url.clone()).unwrap();
 
         (url, ep, recv)
@@ -51,10 +54,11 @@ impl Test {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ep3_sanity() {
+    let config = Arc::new(Config3::default());
     let test = Test::new().await;
 
-    let (_cli_url1, ep1, _ep1_recv) = test.ep().await;
-    let (cli_url2, _ep2, mut ep2_recv) = test.ep().await;
+    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
+    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
 
     ep1.send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
         .await
@@ -71,9 +75,10 @@ async fn ep3_sanity() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ep3_messages_contiguous() {
+    let config = Arc::new(Config3::default());
     let test = Test::new().await;
 
-    let (dest_url, _dest_ep, mut dest_recv) = test.ep().await;
+    let (dest_url, _dest_ep, mut dest_recv) = test.ep(config.clone()).await;
 
     const NODE_COUNT: usize = 3; // 3 nodes
     const SEND_COUNT: usize = 10; // sending 10 messages
@@ -88,7 +93,7 @@ async fn ep3_messages_contiguous() {
         let dest_url = dest_url.clone();
         let start = start.clone();
         let stop = stop.clone();
-        let (_url, ep, _recv) = test.ep().await;
+        let (_url, ep, _recv) = test.ep(config.clone()).await;
         all_tasks.push(tokio::task::spawn(async move {
             let _recv = _recv;
 
@@ -173,5 +178,47 @@ async fn ep3_messages_contiguous() {
 
     for task in all_tasks {
         task.await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ep3_preflight_happy() {
+    let mut config = Config3::default();
+    config.preflight_send_cb = Arc::new(|_| {
+        Box::pin(async move {
+            Ok(Some(vec![
+                BackBuf::from_slice(b"0").unwrap(),
+                BackBuf::from_slice(b"1").unwrap(),
+                BackBuf::from_slice(b"2").unwrap(),
+                BackBuf::from_slice(b"3").unwrap(),
+            ]))
+        })
+    });
+    config.preflight_check_cb = Arc::new(|_, bytes| {
+        let res = if bytes.0.len() == 4 {
+            let r = String::from_utf8_lossy(&bytes.to_vec()).to_string();
+            assert_eq!("0123", r);
+            PreflightCheckResponse::Valid
+        } else {
+            PreflightCheckResponse::NeedMoreData
+        };
+        Box::pin(async move { res })
+    });
+    let config = Arc::new(config);
+    let test = Test::new().await;
+
+    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
+    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
+
+    ep1.send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
+        .await
+        .unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { mut message, .. } => {
+            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        }
+        _ => panic!(),
     }
 }

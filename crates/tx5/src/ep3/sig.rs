@@ -300,6 +300,39 @@ impl Sig {
             close_peer(&self.sig.weak_peer_map, id, uniq);
         }
     }
+
+    pub async fn broadcast(&self, mut data: Vec<BackBuf>) {
+        let mut task_list = Vec::new();
+
+        let fut_list = self
+            .peer_map
+            .lock()
+            .unwrap()
+            .values()
+            .map(|v| v.3.clone())
+            .collect::<Vec<_>>();
+
+        for fut in fut_list {
+            let mut clone_data = Vec::new();
+            for msg in data.iter_mut() {
+                if let Ok(msg) = msg.try_clone() {
+                    clone_data.push(msg);
+                } else {
+                    continue;
+                }
+            }
+
+            task_list.push(async move {
+                // timeouts are built into this future as well
+                // as the peer.send function
+                if let Ok(peer) = fut.await {
+                    let _ = peer.send(clone_data).await;
+                }
+            });
+        }
+
+        futures::future::join_all(task_list).await;
+    }
 }
 
 pub(crate) fn close_peer(

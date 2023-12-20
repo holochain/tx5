@@ -353,6 +353,44 @@ impl Ep3 {
 
         peer.send(data).await
     }
+
+    /// Broadcast data to all connections that happen to be open.
+    /// If no connections are open, no data will be broadcast.
+    /// The future returned from this method will resolve when all
+    /// broadcast messages have been handed off to our networking backend
+    /// (or have timed out).
+    pub async fn broadcast(&self, mut data: Vec<BackBuf>) {
+        let mut task_list = Vec::new();
+
+        let fut_list = self
+            ._sig_map
+            .lock()
+            .unwrap()
+            .values()
+            .map(|v| v.1.clone())
+            .collect::<Vec<_>>();
+
+        for fut in fut_list {
+            let mut clone_data = Vec::new();
+            for msg in data.iter_mut() {
+                if let Ok(msg) = msg.try_clone() {
+                    clone_data.push(msg);
+                } else {
+                    continue;
+                }
+            }
+
+            task_list.push(async move {
+                // timeouts are built into this future as well
+                // as the sig.broadcast function
+                if let Ok(sig) = fut.await {
+                    sig.broadcast(clone_data).await;
+                }
+            });
+        }
+
+        futures::future::join_all(task_list).await;
+    }
 }
 
 async fn assert_sig(ep: &Arc<EpShared>, sig_url: &SigUrl) -> CRes<Arc<Sig>> {

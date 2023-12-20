@@ -4,13 +4,13 @@ type PeerCmdSend = EventSend<PeerCmd>;
 type AnswerSend =
     Arc<Mutex<Option<tokio::sync::oneshot::Sender<serde_json::Value>>>>;
 type SharedPeer = Shared<BoxFuture<'static, CRes<Arc<Peer>>>>;
-type PeerMap = HashMap<Id, (u64, PeerCmdSend, AnswerSend, SharedPeer)>;
+pub(crate) type PeerMap =
+    HashMap<Id, (u64, PeerCmdSend, AnswerSend, SharedPeer)>;
 
 pub(crate) struct SigShared {
     pub ep: Arc<EpShared>,
     pub weak_sig: Weak<Sig>,
     pub sig_uniq: u64,
-    pub sig_url: SigUrl,
     pub weak_peer_map: Weak<Mutex<PeerMap>>,
 }
 
@@ -22,7 +22,23 @@ impl std::ops::Deref for SigShared {
     }
 }
 
+pub(crate) struct SigDrop {
+    pub ep_uniq: u64,
+    pub sig_uniq: u64,
+    pub sig_url: SigUrl,
+    pub weak_sig_map: Weak<Mutex<SigMap>>,
+}
+
+impl Drop for SigDrop {
+    fn drop(&mut self) {
+        tracing::info!(%self.ep_uniq, %self.sig_uniq, %self.sig_url, "Signal Connection Close");
+
+        close_sig(&self.weak_sig_map, &self.sig_url, self.sig_uniq);
+    }
+}
+
 pub(crate) struct Sig {
+    _sig_drop: SigDrop,
     sig: Arc<SigShared>,
     _permit: tokio::sync::OwnedSemaphorePermit,
     recv_task: tokio::task::JoinHandle<()>,
@@ -33,11 +49,7 @@ pub(crate) struct Sig {
 
 impl Drop for Sig {
     fn drop(&mut self) {
-        tracing::info!(%self.sig.ep_uniq, %self.sig.sig_uniq, %self.sig.sig_url, "Signal Connection Close");
-
         self.recv_task.abort();
-
-        close_sig(&self.sig.weak_sig_map, &self.sig.sig_url, self.sig.sig_uniq);
     }
 }
 
@@ -51,6 +63,7 @@ impl std::ops::Deref for Sig {
 
 impl Sig {
     pub async fn new(
+        _sig_drop: SigDrop,
         ep: Arc<EpShared>,
         sig_uniq: u64,
         sig_url: SigUrl,
@@ -172,11 +185,11 @@ impl Sig {
             tracing::info!(%ep.ep_uniq, %sig_uniq, %sig_url, "Signal Connection Open");
 
             Self {
+                _sig_drop,
                 sig: Arc::new(SigShared {
                     ep,
                     weak_sig: weak_sig.clone(),
                     sig_uniq,
-                    sig_url,
                     weak_peer_map,
                 }),
                 _permit,
@@ -234,6 +247,13 @@ impl Sig {
                     let peer_uniq = next_uniq();
                     let ice_servers = self.ice_servers.clone();
                     let (peer_cmd_send, peer_cmd_recv) = EventSend::new(1024);
+                    let _peer_drop = PeerDrop {
+                        ep_uniq: sig.ep_uniq,
+                        sig_uniq: sig.sig_uniq,
+                        peer_uniq,
+                        peer_id,
+                        weak_peer_map: sig.weak_peer_map.clone(),
+                    };
                     (
                         peer_uniq,
                         peer_cmd_send,
@@ -243,6 +263,7 @@ impl Sig {
                                 tokio::time::timeout(
                                     sig.config.timeout,
                                     Peer::new(
+                                        _peer_drop,
                                         sig,
                                         peer_url,
                                         peer_id,

@@ -31,10 +31,26 @@ pub(crate) enum NewPeerDir {
     },
 }
 
+pub(crate) struct PeerDrop {
+    pub ep_uniq: u64,
+    pub sig_uniq: u64,
+    pub peer_uniq: u64,
+    pub peer_id: Id,
+    pub weak_peer_map: Weak<Mutex<PeerMap>>,
+}
+
+impl Drop for PeerDrop {
+    fn drop(&mut self) {
+        tracing::info!(%self.ep_uniq, %self.sig_uniq, %self.peer_uniq, ?self.peer_id, "Peer Connection Close");
+
+        close_peer(&self.weak_peer_map, self.peer_id, self.peer_uniq);
+    }
+}
+
 pub(crate) struct Peer {
+    _peer_drop: PeerDrop,
     sig: Arc<SigShared>,
     peer_id: Id,
-    peer_uniq: u64,
     _permit: tokio::sync::OwnedSemaphorePermit,
     cmd_task: tokio::task::JoinHandle<()>,
     recv_task: tokio::task::JoinHandle<()>,
@@ -47,18 +63,16 @@ pub(crate) struct Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
-        tracing::info!(%self.sig.ep_uniq, %self.sig.sig_uniq, %self.peer_uniq, ?self.peer_id, "Peer Connection Close");
-
         self.cmd_task.abort();
         self.recv_task.abort();
         self.data_task.abort();
-
-        close_peer(&self.sig.weak_peer_map, self.peer_id, self.peer_uniq);
     }
 }
 
 impl Peer {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
+        _peer_drop: PeerDrop,
         sig: Arc<SigShared>,
         peer_url: PeerUrl,
         peer_id: Id,
@@ -338,9 +352,9 @@ impl Peer {
         tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Open");
 
         let this = Arc::new(Self {
+            _peer_drop,
             sig,
             peer_id,
-            peer_uniq,
             _permit,
             cmd_task,
             recv_task,
@@ -365,31 +379,39 @@ impl Peer {
         }
 
         // size 1 semaphore makes sure blocks of messages are contiguous
-        let _permit = self
-            .send_limit
-            .acquire()
-            .await
-            .map_err(|_| Error::str("Failed to acquire send permit"))?;
+        let _permit = tokio::time::timeout(
+            self.sig.config.timeout,
+            self.send_limit.acquire(),
+        )
+        .await
+        .map_err(|_| Error::str("Timeout acquiring send permit"))?
+        .map_err(|_| Error::str("Failed to acquire send permit"))?;
 
         for mut buf in data {
             if buf.len()? > 16 * 1024 {
                 return Err(Error::str("Buffer cannot be larger than 16 KiB"));
             }
 
-            let mut backoff = std::time::Duration::from_millis(1);
+            tokio::time::timeout(self.sig.config.timeout, async {
+                let mut backoff = std::time::Duration::from_millis(1);
 
-            loop {
-                if self.data_chan.buffered_amount()?
-                    <= self.sig.config.connection_bytes_max as usize
-                {
-                    break;
+                loop {
+                    if self.data_chan.buffered_amount()?
+                        <= self.sig.config.connection_bytes_max as usize
+                    {
+                        break;
+                    }
+
+                    tokio::time::sleep(backoff).await;
+                    backoff *= 2;
                 }
 
-                tokio::time::sleep(backoff).await;
-                backoff *= 2;
-            }
-
-            self.data_chan.send(buf.imp.buf).await?;
+                self.data_chan.send(buf.imp.buf).await
+            })
+            .await
+            .map_err(|_| {
+                Error::str("Timeout sending data to backend data channel")
+            })??;
         }
 
         Ok(())

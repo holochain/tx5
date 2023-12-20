@@ -374,13 +374,19 @@ async fn assert_sig(ep: &Arc<EpShared>, sig_url: &SigUrl) -> CRes<Arc<Sig>> {
             let sig_uniq = next_uniq();
             let sig_url = sig_url.clone();
             let ep = ep.clone();
+            let _sig_drop = SigDrop {
+                ep_uniq: ep.ep_uniq,
+                sig_uniq,
+                sig_url: sig_url.clone(),
+                weak_sig_map: ep.weak_sig_map.clone(),
+            };
             (
                 sig_uniq,
                 futures::future::FutureExt::shared(
                     futures::future::FutureExt::boxed(async move {
                         tokio::time::timeout(
                             ep.config.timeout,
-                            Sig::new(ep, sig_uniq, sig_url),
+                            Sig::new(_sig_drop, ep, sig_uniq, sig_url),
                         )
                         .await
                         .map_err(|_| {

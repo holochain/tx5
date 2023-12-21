@@ -162,6 +162,8 @@ pub(crate) struct EpShared {
     weak_sig_map: Weak<Mutex<SigMap>>,
     evt_send: EventSend<Ep3Event>,
     ban_map: Mutex<BanMap>,
+    metric_conn_count:
+        influxive_otel_atomic_obs::AtomicObservableUpDownCounterI64,
 }
 
 /// Tx5 endpoint version 3.
@@ -184,6 +186,9 @@ impl Drop for Ep3 {
 impl Ep3 {
     /// Construct a new tx5 endpoint version 3.
     pub async fn new(config: Arc<Config3>) -> (Self, EventRecv<Ep3Event>) {
+        use influxive_otel_atomic_obs::MeterExt;
+        use opentelemetry_api::metrics::MeterProvider;
+
         let sig_limit = Arc::new(tokio::sync::Semaphore::new(
             config.connection_count_max as usize,
         ));
@@ -234,11 +239,30 @@ impl Ep3 {
         let sig_map = Arc::new(Mutex::new(HashMap::new()));
         let weak_sig_map = Arc::downgrade(&sig_map);
 
+        let ep_uniq = next_uniq();
+
+        let meter = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![opentelemetry_api::KeyValue::new(
+                    "ep_uniq",
+                    ep_uniq.to_string(),
+                )]),
+            );
+
+        let metric_conn_count = meter
+            .i64_observable_up_down_counter_atomic("tx5.endpoint.conn.count", 0)
+            .with_description("Count of open connections managed by endpoint")
+            .init()
+            .0;
+
         let this = Self {
             ep: Arc::new(EpShared {
                 config,
                 this_id,
-                ep_uniq: next_uniq(),
+                ep_uniq,
                 lair_tag,
                 lair_client,
                 sig_limit,
@@ -246,6 +270,7 @@ impl Ep3 {
                 weak_sig_map,
                 evt_send,
                 ban_map: Mutex::new(BanMap::default()),
+                metric_conn_count,
             }),
             _lair_keystore,
             _sig_map: sig_map,

@@ -60,6 +60,9 @@ pub(crate) struct Peer {
     peer: Arc<tx5_go_pion::PeerConnection>,
     data_chan: Arc<tx5_go_pion::DataChannel>,
     send_limit: Arc<tokio::sync::Semaphore>,
+    metric_bytes_send: influxive_otel_atomic_obs::AtomicObservableCounterU64,
+    metric_unreg:
+        Option<Box<dyn opentelemetry_api::metrics::CallbackRegistration>>,
 }
 
 impl Drop for Peer {
@@ -67,6 +70,9 @@ impl Drop for Peer {
         self.cmd_task.abort();
         self.recv_task.abort();
         self.data_task.abort();
+        if let Some(mut metric_unreg) = self.metric_unreg.take() {
+            let _ = metric_unreg.unregister();
+        }
     }
 }
 
@@ -82,9 +88,47 @@ impl Peer {
         new_peer_dir: NewPeerDir,
         mut peer_cmd_recv: EventRecv<PeerCmd>,
     ) -> CRes<Arc<Self>> {
+        use influxive_otel_atomic_obs::MeterExt;
+        use opentelemetry_api::metrics::MeterProvider;
+
         tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Connecting");
 
         let created_at = tokio::time::Instant::now();
+
+        let meter = opentelemetry_api::global::meter_provider()
+            .versioned_meter(
+                "tx5",
+                None::<&'static str>,
+                None::<&'static str>,
+                Some(vec![
+                    opentelemetry_api::KeyValue::new(
+                        "ep_uniq",
+                        sig.ep_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "sig_uniq",
+                        sig.sig_uniq.to_string(),
+                    ),
+                    opentelemetry_api::KeyValue::new(
+                        "peer_uniq",
+                        peer_uniq.to_string(),
+                    ),
+                ]),
+            );
+
+        let metric_bytes_send = meter
+            .u64_observable_counter_atomic("tx5.endpoint.conn.send", 0)
+            .with_description("Outgoing bytes sent on this connection")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init()
+            .0;
+
+        let metric_bytes_recv = meter
+            .u64_observable_counter_atomic("tx5.endpoint.conn.recv", 0)
+            .with_description("Incoming bytes received on this connection")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init()
+            .0;
 
         let _permit =
             sig.peer_limit.clone().acquire_owned().await.map_err(|_| {
@@ -114,6 +158,114 @@ impl Peer {
         .await?;
 
         let peer = Arc::new(peer);
+
+        #[derive(Debug, serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct BackendMetrics {
+            #[serde(default)]
+            messages_sent: u64,
+            #[serde(default)]
+            messages_received: u64,
+            #[serde(default)]
+            bytes_sent: u64,
+            #[serde(default)]
+            bytes_received: u64,
+        }
+
+        let data_snd = meter
+            .u64_observable_counter("tx5.conn.data.send")
+            .with_description("Bytes sent on data channel")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init();
+        let data_rcv = meter
+            .u64_observable_counter("tx5.conn.data.recv")
+            .with_description("Bytes received on data channel")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init();
+        let data_snd_msg = meter
+            .u64_observable_counter("tx5.conn.data.send.message.count")
+            .with_description("Message count sent on data channel")
+            .init();
+        let data_rcv_msg = meter
+            .u64_observable_counter("tx5.conn.data.recv.message.count")
+            .with_description("Message count received on data channel")
+            .init();
+        let ice_snd = meter
+            .u64_observable_counter("tx5.conn.ice.send")
+            .with_description("Bytes sent on ice channel")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init();
+        let ice_rcv = meter
+            .u64_observable_counter("tx5.conn.ice.recv")
+            .with_description("Bytes received on ice channel")
+            .with_unit(opentelemetry_api::metrics::Unit::new("By"))
+            .init();
+
+        let metric_unreg = {
+            let peer = peer.clone();
+            let data: Arc<Mutex<Option<HashMap<String, BackendMetrics>>>> =
+                Arc::new(Mutex::new(None));
+            meter
+                .register_callback(
+                    &[
+                        data_snd.as_any(),
+                        data_rcv.as_any(),
+                        data_snd_msg.as_any(),
+                        data_rcv_msg.as_any(),
+                        ice_snd.as_any(),
+                        ice_rcv.as_any(),
+                    ],
+                    move |obs| {
+                        let data2 = data.clone();
+                        let peer2 = peer.clone();
+                        tokio::task::spawn(async move {
+                            if let Ok(mut stats) = peer2.stats().await {
+                                if let Ok(stats) = stats.as_json() {
+                                    *data2.lock().unwrap() = Some(stats);
+                                }
+                            }
+                        });
+                        if let Some(stats) = data.lock().unwrap().take() {
+                            for (k, v) in stats.iter() {
+                                if k.starts_with("DataChannel") {
+                                    obs.observe_u64(
+                                        &data_snd,
+                                        v.bytes_sent,
+                                        &[],
+                                    );
+                                    obs.observe_u64(
+                                        &data_rcv,
+                                        v.bytes_received,
+                                        &[],
+                                    );
+                                    obs.observe_u64(
+                                        &data_snd_msg,
+                                        v.messages_sent,
+                                        &[],
+                                    );
+                                    obs.observe_u64(
+                                        &data_rcv_msg,
+                                        v.messages_received,
+                                        &[],
+                                    );
+                                } else if k.starts_with("iceTransport") {
+                                    obs.observe_u64(
+                                        &ice_snd,
+                                        v.bytes_sent,
+                                        &[],
+                                    );
+                                    obs.observe_u64(
+                                        &ice_rcv,
+                                        v.bytes_received,
+                                        &[],
+                                    );
+                                }
+                            }
+                        }
+                    },
+                )
+                .map_err(Error::err)?
+        };
 
         let (chan_send, chan_recv) = tokio::sync::oneshot::channel();
         let mut chan_send = Some(chan_send);
@@ -289,12 +441,16 @@ impl Peer {
                             Close => break,
                             Message(message, permit) => {
                                 let mut message = BackBuf::from_raw(message);
+
+                                let len = message.len().unwrap();
+
+                                metric_bytes_recv.add(len as u64);
+
                                 // clippy, you keep trying to make
                                 // things harder to read
                                 #[allow(clippy::collapsible_else_if)]
                                 if preflight {
                                     use bytes::BufMut;
-                                    let len = message.len().unwrap();
                                     let mut bm =
                                         bytes::BytesMut::with_capacity(len)
                                             .writer();
@@ -366,6 +522,8 @@ impl Peer {
             peer,
             data_chan,
             send_limit: Arc::new(tokio::sync::Semaphore::new(1)),
+            metric_bytes_send,
+            metric_unreg: Some(metric_unreg),
         });
 
         if let Some(preflight) =
@@ -392,7 +550,8 @@ impl Peer {
         .map_err(|_| Error::str("Failed to acquire send permit"))?;
 
         for mut buf in data {
-            if buf.len()? > 16 * 1024 {
+            let len = buf.len()?;
+            if len > 16 * 1024 {
                 return Err(Error::str("Buffer cannot be larger than 16 KiB"));
             }
 
@@ -409,6 +568,8 @@ impl Peer {
                     tokio::time::sleep(backoff).await;
                     backoff *= 2;
                 }
+
+                self.metric_bytes_send.add(len as u64);
 
                 self.data_chan.send(buf.imp.buf).await
             })

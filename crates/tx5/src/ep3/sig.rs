@@ -49,6 +49,7 @@ pub(crate) struct Sig {
 
 impl Drop for Sig {
     fn drop(&mut self) {
+        self.sig.metric_conn_count.add(-1);
         self.recv_task.abort();
     }
 }
@@ -68,6 +69,8 @@ impl Sig {
         sig_uniq: u64,
         sig_url: SigUrl,
     ) -> CRes<Arc<Self>> {
+        ep.metric_conn_count.add(1);
+
         tracing::info!(%ep.ep_uniq, %sig_uniq, %sig_url, "Signal Connection Connecting");
 
         let _permit =

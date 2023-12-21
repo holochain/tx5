@@ -49,6 +49,7 @@ impl Drop for PeerDrop {
 
 pub(crate) struct Peer {
     _peer_drop: PeerDrop,
+    created_at: tokio::time::Instant,
     sig: Arc<SigShared>,
     peer_id: Id,
     _permit: tokio::sync::OwnedSemaphorePermit,
@@ -82,6 +83,8 @@ impl Peer {
         mut peer_cmd_recv: EventRecv<PeerCmd>,
     ) -> CRes<Arc<Self>> {
         tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Connecting");
+
+        let created_at = tokio::time::Instant::now();
 
         let _permit =
             sig.peer_limit.clone().acquire_owned().await.map_err(|_| {
@@ -353,6 +356,7 @@ impl Peer {
 
         let this = Arc::new(Self {
             _peer_drop,
+            created_at,
             sig,
             peer_id,
             _permit,
@@ -415,5 +419,20 @@ impl Peer {
         }
 
         Ok(())
+    }
+
+    pub async fn stats(&self) -> Result<serde_json::Value> {
+        self.peer.stats().await.map(|mut s| {
+            let mut out: serde_json::Value = s.as_json()?;
+
+            if let Some(map) = out.as_object_mut() {
+                map.insert(
+                    "ageSeconds".into(),
+                    self.created_at.elapsed().as_secs_f64().into(),
+                );
+            }
+
+            Ok(out)
+        })?
     }
 }

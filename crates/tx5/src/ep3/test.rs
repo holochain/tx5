@@ -71,6 +71,10 @@ async fn ep3_sanity() {
         }
         _ => panic!(),
     }
+
+    let stats = ep1.get_stats().await;
+
+    println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -252,6 +256,10 @@ async fn ep3_ban_after_connected_outgoing_side() {
         .send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
         .await
         .is_err());
+
+    let stats = ep1.get_stats().await;
+
+    println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]

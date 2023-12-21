@@ -391,6 +391,61 @@ impl Ep3 {
 
         futures::future::join_all(task_list).await;
     }
+
+    /// Get stats.
+    pub async fn get_stats(&self) -> serde_json::Value {
+        let mut task_list = Vec::new();
+
+        let mut ban_map = serde_json::Map::new();
+
+        let now = tokio::time::Instant::now();
+        for (id, until) in self.ep.ban_map.lock().unwrap().0.iter() {
+            ban_map.insert(id.to_string(), (*until - now).as_secs_f64().into());
+        }
+
+        let fut_list = self
+            ._sig_map
+            .lock()
+            .unwrap()
+            .values()
+            .map(|v| v.1.clone())
+            .collect::<Vec<_>>();
+
+        for fut in fut_list {
+            task_list.push(async move {
+                if let Ok(sig) = fut.await {
+                    Some(sig.get_stats().await)
+                } else {
+                    None
+                }
+            });
+        }
+
+        let res: Vec<(Id, serde_json::Value)> =
+            futures::future::join_all(task_list)
+                .await
+                .into_iter()
+                .flatten()
+                .flatten()
+                .collect();
+
+        let mut map = serde_json::Map::default();
+
+        #[cfg(feature = "backend-go-pion")]
+        const BACKEND: &str = "go-pion";
+        #[cfg(feature = "backend-webrtc-rs")]
+        const BACKEND: &str = "webrtc-rs";
+
+        map.insert("backend".into(), BACKEND.into());
+        map.insert("thisId".into(), self.ep.this_id.to_string().into());
+        map.insert("banned".into(), ban_map.into());
+
+        for (id, v) in res {
+            map.insert(id.to_string(), v);
+        }
+
+        serde_json::Value::Object(map)
+    }
 }
 
 async fn assert_sig(ep: &Arc<EpShared>, sig_url: &SigUrl) -> CRes<Arc<Sig>> {

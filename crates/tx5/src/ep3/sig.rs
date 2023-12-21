@@ -333,6 +333,37 @@ impl Sig {
 
         futures::future::join_all(task_list).await;
     }
+
+    pub async fn get_stats(&self) -> Vec<(Id, serde_json::Value)> {
+        let mut task_list = Vec::new();
+
+        let fut_list = self
+            .peer_map
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (*k, v.3.clone()))
+            .collect::<Vec<_>>();
+
+        for (peer_id, fut) in fut_list {
+            task_list.push(async move {
+                if let Ok(peer) = fut.await {
+                    match peer.stats().await {
+                        Ok(s) => Some((peer_id, s)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+        }
+
+        futures::future::join_all(task_list)
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
+    }
 }
 
 pub(crate) fn close_peer(

@@ -66,6 +66,12 @@ async fn ep3_sanity() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
         Ep3Event::Message { mut message, .. } => {
             assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
         }
@@ -124,9 +130,12 @@ async fn ep3_messages_contiguous() {
 
     let mut sort: HashMap<String, Vec<(usize, usize, usize)>> = HashMap::new();
 
-    for _ in 0..NODE_COUNT * SEND_COUNT * CHUNK_COUNT {
+    let mut count = 0;
+
+    loop {
         let res = dest_recv.recv().await.unwrap();
         match res {
+            Ep3Event::Connected { .. } => (),
             Ep3Event::Message {
                 peer_url,
                 mut message,
@@ -142,6 +151,12 @@ async fn ep3_messages_contiguous() {
                 sort.entry(peer_url.to_string())
                     .or_default()
                     .push((node, msg, chunk));
+
+                count += 1;
+
+                if count >= NODE_COUNT * SEND_COUNT * CHUNK_COUNT {
+                    break;
+                }
             }
             _ => panic!(),
         }
@@ -220,6 +235,12 @@ async fn ep3_preflight_happy() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
         Ep3Event::Message { mut message, .. } => {
             assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
         }
@@ -241,6 +262,12 @@ async fn ep3_ban_after_connected_outgoing_side() {
     )
     .await
     .unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -287,9 +314,21 @@ async fn ep3_broadcast_happy() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
         Ep3Event::Message { mut message, .. } => {
             assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
         }
+        _ => panic!(),
+    }
+
+    let res = ep3_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
         _ => panic!(),
     }
 

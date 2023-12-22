@@ -1,6 +1,7 @@
 //! Opens a connection to a running signal server, and sits idle.
 //! This is useful to test our keepalive logic.
 
+use std::sync::Arc;
 use tx5::*;
 
 fn init_tracing() {
@@ -23,9 +24,9 @@ async fn main() {
     let sig_url = Tx5Url::new(sig_url).unwrap();
     println!("{sig_url}");
 
-    let (ep, _ep_rcv) = Ep::new().await.unwrap();
+    let (ep, _ep_rcv) = Ep3::new(Arc::new(Config3::default())).await;
 
-    ep.listen(sig_url).await.unwrap();
+    ep.listen(sig_url).unwrap();
 
     let (_s, r) = tokio::sync::oneshot::channel::<()>();
     r.await.unwrap();

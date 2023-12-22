@@ -5,10 +5,10 @@
 
 const DASH_TX5: &[u8] = include_bytes!("influxive-dashboards/tx5.json");
 
-use bytes::Buf;
 use clap::Parser;
 use std::collections::HashMap;
-use tx5::{Ep, EpEvt, Result, Tx5Url};
+use std::sync::Arc;
+use tx5::{BackBuf, Config3, Ep3, Ep3Event, Result, Tx5Url};
 
 #[derive(Debug, Parser)]
 #[clap(name = "tx5-demo", version, about = "Holochain Tx5 WebRTC Demo Cli")]
@@ -47,15 +47,14 @@ enum Message {
 }
 
 impl Message {
-    pub fn encode(&self) -> Result<bytes::Bytes> {
-        let b = serde_json::to_vec(self)?;
-        let mut o = bytes::BytesMut::with_capacity(b.len());
-        o.extend_from_slice(&b);
-        Ok(o.freeze())
+    pub fn encode(&self) -> Result<BackBuf> {
+        let mut w = tx5::BackBufWriter::new()?;
+        serde_json::to_writer(&mut w, self)?;
+        Ok(w.finish())
     }
 
-    pub fn decode(data: bytes::Bytes) -> Result<Self> {
-        Ok(serde_json::from_slice(&data)?)
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        Ok(serde_json::from_slice(data)?)
     }
 
     pub fn hello(known_peers: &HashMap<Tx5Url, PeerInfo>) -> Self {
@@ -66,7 +65,7 @@ impl Message {
 
     pub fn big() -> Self {
         use rand::Rng;
-        let mut big = vec![0; (1024 * 1024 * 15 * 3) / 4]; // 15 MiB but base64
+        let mut big = vec![0; (1024 * 15 * 3) / 4]; // 15 KiB but base64
         rand::thread_rng().fill(&mut big[..]);
         let big = base64::encode(&big);
         Message::Big(big)
@@ -177,12 +176,22 @@ impl Node {
         }
     }
 
-    pub fn send(&self, ep: &Ep, rem_url: &Tx5Url, data: bytes::Bytes) {
+    pub fn send(
+        &self,
+        ep: &Arc<Ep3>,
+        rem_url: &Tx5Url,
+        mut data: Vec<BackBuf>,
+    ) {
         let ep = ep.clone();
         let rem_url = rem_url.clone();
         tokio::task::spawn(async move {
-            let len = data.remaining();
+            let mut len = 0;
+            for b in data.iter_mut() {
+                len += b.len().unwrap();
+            }
+
             let id = rem_url.id().unwrap();
+
             if let Err(err) = ep.send(rem_url, data).await {
                 d!(
                     error,
@@ -195,13 +204,13 @@ impl Node {
         });
     }
 
-    pub fn broadcast_hello(&self, ep: &Ep) -> Result<()> {
-        let hello = Message::hello(&self.known_peers).encode()?;
+    pub fn broadcast_hello(&self, ep: &Arc<Ep3>) -> Result<()> {
+        let mut hello = Message::hello(&self.known_peers).encode()?;
         for url in self.known_peers.keys() {
             if url == &self.this_url {
                 continue;
             }
-            self.send(ep, url, hello.clone());
+            self.send(ep, url, vec![hello.try_clone()?]);
         }
         Ok(())
     }
@@ -213,7 +222,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn five_sec(&mut self, ep: &Ep) -> Result<()> {
+    pub fn five_sec(&mut self, ep: &Arc<Ep3>) -> Result<()> {
         {
             let this = self.known_peers.get_mut(&self.this_url).unwrap();
             this.last_seen = std::time::Instant::now();
@@ -233,12 +242,12 @@ impl Node {
         self.known_peers.get_mut(&url).unwrap().last_sent =
             std::time::Instant::now();
         let hello = Message::hello(&self.known_peers).encode()?;
-        self.send(ep, &url, hello);
+        self.send(ep, &url, vec![hello]);
 
         Ok(())
     }
 
-    pub fn thirty_sec(&mut self, ep: &Ep) -> Result<()> {
+    pub fn thirty_sec(&mut self, ep: &Arc<Ep3>) -> Result<()> {
         let mut v = Vec::new();
 
         for peer in self.known_peers.keys() {
@@ -252,8 +261,15 @@ impl Node {
         }
 
         rand::seq::SliceRandom::shuffle(&mut v[..], &mut rand::thread_rng());
-        let big = Message::big().encode()?;
-        self.send(ep, v.get(0).unwrap(), big);
+
+        let mut out = Vec::new();
+
+        // make it 15 MiB
+        for _ in 0..1024 {
+            out.push(Message::big().encode()?);
+        }
+
+        self.send(ep, v.get(0).unwrap(), out);
 
         Ok(())
     }
@@ -317,8 +333,9 @@ async fn main_err() -> Result<()> {
 
     let sig_url = Tx5Url::new(sig_url)?;
 
-    let (ep, mut evt) = tx5::Ep::new().await?;
-    let this_addr = ep.listen(sig_url.clone()).await?;
+    let (ep, mut evt) = tx5::Ep3::new(Arc::new(Config3::default())).await;
+    let ep = Arc::new(ep);
+    let this_addr = ep.listen(sig_url.clone())?;
 
     let mut node = Node::new(this_addr.clone(), peer_urls);
 
@@ -337,7 +354,7 @@ async fn main_err() -> Result<()> {
     enum Cmd {
         FiveSec,
         ThirtySec,
-        EpEvt(Result<EpEvt>),
+        EpEvt(Ep3Event),
     }
 
     let (cmd_s, mut cmd_r) = tokio::sync::mpsc::unbounded_channel();
@@ -384,31 +401,31 @@ async fn main_err() -> Result<()> {
                 d!(info, "FIVE_SEC", "{node:?}");
                 tracing::info!(
                     "{}",
-                    serde_json::to_string(&ep.get_stats().await.unwrap())
-                        .unwrap()
+                    serde_json::to_string(&ep.get_stats().await).unwrap()
                 );
             }
             Cmd::ThirtySec => node.thirty_sec(&ep)?,
-            Cmd::EpEvt(Err(err)) => panic!("{err:?}"),
-            Cmd::EpEvt(Ok(EpEvt::Connected { rem_cli_url })) => {
-                node.add_known_peer(rem_cli_url);
+            Cmd::EpEvt(Ep3Event::Error(err)) => panic!("{err:?}"),
+            Cmd::EpEvt(Ep3Event::Connected { peer_url }) => {
+                node.add_known_peer(peer_url);
             }
-            Cmd::EpEvt(Ok(EpEvt::Disconnected { rem_cli_url })) => {
-                d!(info, "DISCONNECTED", "{:?}", rem_cli_url.id().unwrap());
+            Cmd::EpEvt(Ep3Event::Disconnected { peer_url }) => {
+                d!(info, "DISCONNECTED", "{:?}", peer_url.id().unwrap());
             }
-            Cmd::EpEvt(Ok(EpEvt::Data {
-                rem_cli_url,
-                mut data,
+            Cmd::EpEvt(Ep3Event::Message {
+                peer_url,
+                mut message,
                 ..
-            })) => {
-                node.add_known_peer(rem_cli_url.clone());
-                match Message::decode(data.copy_to_bytes(data.remaining())) {
+            }) => {
+                node.add_known_peer(peer_url.clone());
+                let message = message.to_vec().unwrap();
+                match Message::decode(&message) {
                     Err(err) => d!(error, "RECV_ERROR", "{err:?}"),
                     Ok(Message::Hello { known_peers: kp }) => {
                         for peer in kp {
                             node.add_known_peer(Tx5Url::new(peer).unwrap());
                         }
-                        node.recv_hello(rem_cli_url)?;
+                        node.recv_hello(peer_url)?;
                     }
                     Ok(Message::Big(d)) => {
                         d!(
@@ -416,12 +433,11 @@ async fn main_err() -> Result<()> {
                             "RECV_BIG",
                             "len:{} {:?}",
                             d.as_bytes().len(),
-                            rem_cli_url.id().unwrap()
+                            peer_url.id().unwrap()
                         );
                     }
                 }
             }
-            Cmd::EpEvt(_) => (),
         }
     }
 

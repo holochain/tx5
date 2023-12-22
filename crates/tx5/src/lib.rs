@@ -37,19 +37,20 @@ pub mod deps {
     pub use tx5_signal::deps::*;
 }
 
-use deps::{serde, serde_json};
+//use deps::{serde, serde_json};
 
-use tx5_core::Uniq;
+//use tx5_core::Uniq;
 pub use tx5_core::{Error, ErrorExt, Id, Result, Tx5InitConfig, Tx5Url};
 
 mod ep3;
 pub use ep3::*;
 
-pub mod actor;
+//pub mod actor;
 
 mod back_buf;
 pub use back_buf::*;
 
+/*
 /// Helper extension trait for `Box<dyn bytes::Buf + 'static + Send>`.
 pub trait BytesBufExt {
     /// Convert into a `Vec<u8>`.
@@ -87,6 +88,7 @@ impl FinishExt for u64 {
         *self & FINISH > 0
     }
 }
+*/
 
 /// A set of distinct chunks of bytes that can be treated as a single unit.
 #[derive(Default)]
@@ -160,6 +162,7 @@ impl bytes::Buf for BytesList {
     }
 }
 
+/*
 pub mod state;
 
 mod config;
@@ -224,3 +227,4 @@ fn divide_send<B: bytes::Buf>(
 
 #[cfg(test)]
 mod test;
+*/

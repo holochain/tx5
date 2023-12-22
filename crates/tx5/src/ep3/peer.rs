@@ -52,6 +52,7 @@ pub(crate) struct Peer {
     created_at: tokio::time::Instant,
     sig: Arc<SigShared>,
     peer_id: Id,
+    peer_url: PeerUrl,
     _permit: tokio::sync::OwnedSemaphorePermit,
     cmd_task: tokio::task::JoinHandle<()>,
     recv_task: tokio::task::JoinHandle<()>,
@@ -67,6 +68,13 @@ pub(crate) struct Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
+        let evt_send = self.sig.evt_send.clone();
+        let msg = Ep3Event::Disconnected {
+            peer_url: self.peer_url.clone(),
+        };
+        tokio::task::spawn(async move {
+            let _ = evt_send.send(msg).await;
+        });
         self.cmd_task.abort();
         self.recv_task.abort();
         self.data_task.abort();
@@ -399,6 +407,32 @@ impl Peer {
 
         let data_chan = Arc::new(data_chan);
 
+        let mut ready_state = data_chan.ready_state()?;
+        let mut backoff = std::time::Duration::from_millis(10);
+
+        loop {
+            if ready_state >= 2 {
+                break;
+            }
+
+            tokio::time::sleep(backoff).await;
+            backoff *= 2;
+            ready_state = data_chan.ready_state()?;
+        }
+
+        if ready_state > 2 {
+            return Err(Error::str(
+                "Data channel closed while connecting peer",
+            )
+            .into());
+        }
+
+        sig.evt_send
+            .send(Ep3Event::Connected {
+                peer_url: peer_url.clone(),
+            })
+            .await?;
+
         let data_task = {
             let peer_url = peer_url.clone();
             let sig = sig.clone();
@@ -488,26 +522,6 @@ impl Peer {
             })
         };
 
-        let mut ready_state = data_chan.ready_state()?;
-        let mut backoff = std::time::Duration::from_millis(10);
-
-        loop {
-            if ready_state >= 2 {
-                break;
-            }
-
-            tokio::time::sleep(backoff).await;
-            backoff *= 2;
-            ready_state = data_chan.ready_state()?;
-        }
-
-        if ready_state > 2 {
-            return Err(Error::str(
-                "Data channel closed while connecting peer",
-            )
-            .into());
-        }
-
         tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Open");
 
         let this = Arc::new(Self {
@@ -515,6 +529,7 @@ impl Peer {
             created_at,
             sig,
             peer_id,
+            peer_url: peer_url.clone(),
             _permit,
             cmd_task,
             recv_task,

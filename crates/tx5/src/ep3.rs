@@ -23,6 +23,18 @@ pub enum Ep3Event {
     /// An fatal error indicating the endpoint is no longer viable.
     Error(Error),
 
+    /// Connection established.
+    Connected {
+        /// Url of the remote peer.
+        peer_url: PeerUrl,
+    },
+
+    /// Connection closed.
+    Disconnected {
+        /// Url of the remote peer.
+        peer_url: PeerUrl,
+    },
+
     /// Receiving an incoming message from a remote peer.
     Message {
         /// Url of the remote peer.
@@ -47,6 +59,16 @@ impl std::fmt::Debug for Ep3Event {
         match self {
             Self::Error(err) => {
                 f.debug_struct("Error").field("err", err).finish()
+            }
+            Self::Connected { peer_url } => {
+                let url = format!("{peer_url}");
+                f.debug_struct("Connected").field("peer_url", &url).finish()
+            }
+            Self::Disconnected { peer_url } => {
+                let url = format!("{peer_url}");
+                f.debug_struct("Disconnected")
+                    .field("peer_url", &url)
+                    .finish()
             }
             Self::Message { peer_url, .. } => {
                 let url = format!("{peer_url}");

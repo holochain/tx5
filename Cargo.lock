@@ -1401,9 +1401,9 @@ checksum = "f93e7192158dbcda357bdec5fb5788eebf8bbac027f3f33e719d29135ae84156"
 
 [[package]]
 name = "hc_seed_bundle"
-version = "0.1.7"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ded13e388a81713db6919cd750e6113acf2fe5afbaedf8aff79780ec4fc47425"
+checksum = "397f372672597305f39af2b2abf389a077077489bc4f412e7ed574214c268208"
 dependencies = [
  "futures",
  "one_err",
@@ -1838,9 +1838,9 @@ dependencies = [
 
 [[package]]
 name = "lair_keystore_api"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5829f25d0eab6309ae4307aa645f123a64e568a41ec17c358dcbd65dec207e10"
+checksum = "af33456610975b9138a8a8b2051fdeab69743f63d32adbb3f47d5fb8ce329663"
 dependencies = [
  "base64 0.13.1",
  "dunce",
@@ -2911,9 +2911,9 @@ dependencies = [
 
 [[package]]
 name = "rmp-serde"
-version = "1.1.2"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bffea85eea980d8a74453e5d02a8d93028f3c34725de143085a844ebe953258a"
+checksum = "723ecff9ad04f4ad92fe1c8ca6c20d2196d9286e9c60727c4cb5511629260e9d"
 dependencies = [
  "byteorder",
  "rmp",
@@ -3965,7 +3965,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "backtrace",
  "better-panic",
@@ -3997,7 +3997,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-core"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "base64 0.13.1",
  "dirs",
@@ -4014,7 +4014,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "base64 0.13.1",
  "bytes",
@@ -4036,7 +4036,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "futures",
  "parking_lot",
@@ -4051,7 +4051,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-sys"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "Inflector",
  "base64 0.13.1",
@@ -4069,7 +4069,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-turn"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "base64 0.13.1",
  "dirs",
@@ -4086,7 +4086,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-online"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "once_cell",
  "rand",
@@ -4097,7 +4097,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "futures",
  "lair_keystore_api",
@@ -4127,7 +4127,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal-srv"
-version = "0.0.5-alpha"
+version = "0.0.6-alpha"
 dependencies = [
  "clap",
  "dirs",

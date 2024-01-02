@@ -37,58 +37,13 @@ pub mod deps {
     pub use tx5_signal::deps::*;
 }
 
-//use deps::{serde, serde_json};
-
-//use tx5_core::Uniq;
 pub use tx5_core::{Error, ErrorExt, Id, Result, Tx5InitConfig, Tx5Url};
 
 mod ep3;
 pub use ep3::*;
 
-//pub mod actor;
-
 mod back_buf;
 pub use back_buf::*;
-
-/*
-/// Helper extension trait for `Box<dyn bytes::Buf + 'static + Send>`.
-pub trait BytesBufExt {
-    /// Convert into a `Vec<u8>`.
-    fn to_vec(self) -> Result<Vec<u8>>;
-}
-
-impl BytesBufExt for Box<dyn bytes::Buf + 'static + Send> {
-    fn to_vec(self) -> Result<Vec<u8>> {
-        use bytes::Buf;
-        use std::io::Read;
-        let mut out = Vec::with_capacity(self.remaining());
-        self.reader().read_to_end(&mut out)?;
-        Ok(out)
-    }
-}
-
-const FINISH: u64 = 1 << 63;
-
-trait FinishExt: Sized {
-    fn set_finish(&self) -> Self;
-    fn unset_finish(&self) -> Self;
-    fn is_finish(&self) -> bool;
-}
-
-impl FinishExt for u64 {
-    fn set_finish(&self) -> Self {
-        *self | FINISH
-    }
-
-    fn unset_finish(&self) -> Self {
-        *self & !FINISH
-    }
-
-    fn is_finish(&self) -> bool {
-        *self & FINISH > 0
-    }
-}
-*/
 
 /// A set of distinct chunks of bytes that can be treated as a single unit.
 #[derive(Default)]
@@ -117,7 +72,7 @@ impl BytesList {
         Box::new(self)
     }
 
-    /// Copy data into a Vec<u8>. You should avoid this if possible.
+    /// Copy data into a `Vec<u8>`. You should avoid this if possible.
     pub fn to_vec(&self) -> Vec<u8> {
         use bytes::Buf;
         let mut out = Vec::with_capacity(self.remaining());
@@ -161,70 +116,3 @@ impl bytes::Buf for BytesList {
         }
     }
 }
-
-/*
-pub mod state;
-
-mod config;
-pub use config::*;
-
-mod endpoint;
-pub use endpoint::*;
-
-fn divide_send<B: bytes::Buf>(
-    config: &dyn Config,
-    snd_ident: &std::sync::atomic::AtomicU64,
-    mut data: B,
-) -> Result<Vec<BackBuf>> {
-    use std::io::Write;
-
-    let max_send_bytes = config.max_send_bytes();
-
-    if bytes::Buf::remaining(&data) > max_send_bytes as usize {
-        Err(Error::id("DataTooLarge"))
-    } else {
-        (|| {
-            let ident =
-                snd_ident.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-            let mut buf_list = Vec::new();
-
-            const MAX_MSG: usize = (16 * 1024) - 8;
-            while data.has_remaining() {
-                let loc_len = std::cmp::min(data.remaining(), MAX_MSG);
-                let ident = if data.remaining() <= loc_len {
-                    ident.set_finish()
-                } else {
-                    ident.unset_finish()
-                };
-
-                tracing::trace!(ident=%ident.unset_finish(), is_finish=%ident.is_finish(), %loc_len, "prepare send");
-
-                let mut tmp =
-                    bytes::Buf::reader(bytes::Buf::take(data, loc_len));
-
-                // TODO - reserve the bytes before writing
-                let mut buf = BackBuf::from_writer()?;
-                buf.write_all(&ident.to_le_bytes())?;
-                std::io::copy(&mut tmp, &mut buf)?;
-
-                buf_list.push(buf.finish());
-
-                data = tmp.into_inner().into_inner();
-            }
-
-            if buf_list.is_empty() {
-                let ident = ident.set_finish();
-                let mut buf = BackBuf::from_writer()?;
-                buf.write_all(&ident.to_le_bytes())?;
-                buf_list.push(buf.finish());
-            }
-
-            Ok(buf_list)
-        })()
-    }
-}
-
-#[cfg(test)]
-mod test;
-*/

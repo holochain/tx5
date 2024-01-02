@@ -586,6 +586,10 @@ impl Peer {
 
                 self.metric_bytes_send.add(len as u64);
 
+                if self.sig.ban_map.lock().unwrap().is_banned(self.peer_id) {
+                    return Err(Error::str("Peer is currently banned"));
+                }
+
                 self.data_chan.send(buf.imp.buf).await
             })
             .await

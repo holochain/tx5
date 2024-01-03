@@ -506,7 +506,7 @@ async fn assert_sig(ep: &Arc<EpShared>, sig_url: &SigUrl) -> CRes<Arc<Sig>> {
         }
     };
 
-    let (_sig_uniq, fut) = sig_map
+    let (sig_uniq, fut) = sig_map
         .lock()
         .unwrap()
         .entry(sig_url.clone())
@@ -532,7 +532,21 @@ async fn assert_sig(ep: &Arc<EpShared>, sig_url: &SigUrl) -> CRes<Arc<Sig>> {
         })
         .clone();
 
-    fut.await
+    match fut.await {
+        Err(err) => {
+            // if a new sig got added in the mean time, return that instead
+            let r = sig_map.lock().unwrap().get(sig_url).cloned();
+
+            if let Some((new_sig_uniq, new_sig_fut)) = r {
+                if new_sig_uniq != sig_uniq {
+                    return new_sig_fut.await;
+                }
+            }
+
+            Err(err)
+        }
+        Ok(r) => Ok(r),
+    }
 }
 
 fn close_sig(

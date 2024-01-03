@@ -226,7 +226,7 @@ impl Sig {
 
         let mut tmp = None;
 
-        let (_peer_uniq, _peer_cmd_send, _answer_send, fut) = {
+        let (peer_uniq, _peer_cmd_send, _answer_send, fut) = {
             let mut lock = self.peer_map.lock().unwrap();
 
             if peer_dir.is_incoming() && lock.contains_key(&peer_id) {
@@ -293,7 +293,21 @@ impl Sig {
             drop(peer_fut);
         }
 
-        fut.await
+        match fut.await {
+            Err(err) => {
+                // if a new peer got added in the mean time, return that instead
+                let r = self.peer_map.lock().unwrap().get(&peer_id).cloned();
+
+                if let Some((new_peer_uniq, _cmd, _ans, new_peer_fut)) = r {
+                    if new_peer_uniq != peer_uniq {
+                        return new_peer_fut.await;
+                    }
+                }
+
+                Err(err)
+            }
+            Ok(r) => Ok(r),
+        }
     }
 
     pub fn ban(&self, id: Id) {

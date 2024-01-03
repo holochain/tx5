@@ -88,7 +88,7 @@ async fn ep3_sanity() {
 /// at the same time and see if we get all the messages.
 #[tokio::test(flavor = "multi_thread")]
 async fn ep3_negotiation() {
-    const NODE_COUNT: usize = 3;
+    const NODE_COUNT: usize = 9;
 
     let mut url_list = Vec::new();
     let mut ep_list = Vec::new();

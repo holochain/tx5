@@ -83,6 +83,67 @@ async fn ep3_sanity() {
     println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
 }
 
+/// Test negotiation (polite / impolite node logic) by setting up a lot
+/// of nodes and having them all try to make connections to each other
+/// at the same time and see if we get all the messages.
+#[tokio::test(flavor = "multi_thread")]
+async fn ep3_negotiation() {
+    const NODE_COUNT: usize = 3;
+
+    let mut url_list = Vec::new();
+    let mut ep_list = Vec::new();
+    let mut recv_list = Vec::new();
+
+    let config = Arc::new(Config3::default());
+    let test = Test::new().await;
+
+    let mut fut_list = Vec::new();
+    for _ in 0..NODE_COUNT {
+        fut_list.push(test.ep(config.clone()));
+    }
+
+    for (url, ep, recv) in futures::future::join_all(fut_list).await {
+        url_list.push(url);
+        ep_list.push(ep);
+        recv_list.push(recv);
+    }
+
+    let first_url = url_list.get(0).unwrap().clone();
+
+    // first, make sure all the connections are active
+    // by connecting to the first node
+    let mut fut_list = Vec::new();
+    for (i, ep) in ep_list.iter_mut().enumerate() {
+        if i != 0 {
+            fut_list.push(ep.send(
+                first_url.clone(),
+                vec![BackBuf::from_slice(b"hello").unwrap()],
+            ));
+        }
+    }
+
+    for r in futures::future::join_all(fut_list).await {
+        r.unwrap();
+    }
+
+    // now send messages between all the nodes
+    let mut fut_list = Vec::new();
+    for (i, ep) in ep_list.iter_mut().enumerate() {
+        for (j, url) in url_list.iter().enumerate() {
+            if i != j {
+                fut_list.push(ep.send(
+                    url.clone(),
+                    vec![BackBuf::from_slice(b"world").unwrap()],
+                ));
+            }
+        }
+    }
+
+    for r in futures::future::join_all(fut_list).await {
+        r.unwrap();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ep3_messages_contiguous() {
     let config = Arc::new(Config3::default());

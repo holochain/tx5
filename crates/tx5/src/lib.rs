@@ -116,3 +116,165 @@ impl bytes::Buf for BytesList {
         }
     }
 }
+
+#[derive(Clone)]
+struct DoDrop(std::sync::Arc<tokio::task::JoinHandle<()>>);
+
+impl Drop for DoDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn do_abort(
+    a: &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Error>>>,
+    e: Error,
+) {
+    let a = a.lock().unwrap().take();
+    if let Some(a) = a {
+        let _ = a.send(e);
+    }
+}
+
+/// Make a shared (clonable) future abortable and set up an automatic
+/// abort at a time in the future specified by a duration.
+struct AbortableTimedSharedFuture<T: Clone> {
+    f: futures::future::Shared<
+        futures::future::BoxFuture<'static, std::result::Result<T, Error>>,
+    >,
+    a: std::sync::Arc<
+        std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Error>>>,
+    >,
+    t: DoDrop,
+}
+
+impl<T: Clone> Clone for AbortableTimedSharedFuture<T> {
+    fn clone(&self) -> Self {
+        Self {
+            f: self.f.clone(),
+            a: self.a.clone(),
+            t: self.t.clone(),
+        }
+    }
+}
+
+impl<T: Clone> AbortableTimedSharedFuture<T> {
+    /// Construct a new AbortableTimedSharedFuture that will timeout
+    /// after the given duration.
+    pub fn new<F>(
+        timeout: std::time::Duration,
+        timeout_err: Error,
+        f: F,
+    ) -> Self
+    where
+        F: std::future::Future<Output = std::result::Result<T, Error>>
+            + 'static
+            + Send,
+    {
+        let (a, ar) = tokio::sync::oneshot::channel();
+        let a = std::sync::Arc::new(std::sync::Mutex::new(Some(a)));
+        let a2 = a.clone();
+        let t = DoDrop(std::sync::Arc::new(tokio::task::spawn(async move {
+            tokio::time::sleep(timeout).await;
+            do_abort(&a2, timeout_err);
+        })));
+        Self {
+            f: futures::future::FutureExt::shared(
+                futures::future::FutureExt::boxed(async move {
+                    tokio::select! {
+                        r = async {
+                            Err(ar.await.map_err(|_| Error::id("AbortHandleDropped"))?)
+                        } => r,
+                        r = f => r,
+                    }
+                }),
+            ),
+            a,
+            t,
+        }
+    }
+
+    /// Abort this future with the given error.
+    pub fn abort(&self, err: Error) {
+        do_abort(&self.a, err);
+    }
+}
+
+impl<T: Clone> std::future::Future for AbortableTimedSharedFuture<T> {
+    type Output = std::result::Result<T, Error>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.f).poll(cx)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_traits() {
+        fn check<F>(_f: F)
+        where
+            F: Send + Sync + Unpin,
+        {
+        }
+
+        let a = AbortableTimedSharedFuture::new(
+            std::time::Duration::from_millis(10),
+            Error::str("my timeout err").into(),
+            async move { Ok(()) },
+        );
+
+        check(a);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_happy() {
+        AbortableTimedSharedFuture::new(
+            std::time::Duration::from_secs(1),
+            Error::id("to").into(),
+            async move { Ok(()) },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_timeout() {
+        let r = AbortableTimedSharedFuture::new(
+            std::time::Duration::from_millis(1),
+            Error::id("to").into(),
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!("to", r.unwrap_err().to_string());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_abort() {
+        let a = AbortableTimedSharedFuture::new(
+            std::time::Duration::from_secs(1),
+            Error::id("to").into(),
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                Ok(())
+            },
+        );
+        {
+            let a = a.clone();
+            tokio::task::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                a.abort(Error::id("abort").into());
+            });
+        }
+        let r = a.await;
+        assert_eq!("abort", r.unwrap_err().to_string());
+    }
+}

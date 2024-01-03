@@ -3,9 +3,15 @@ use super::*;
 type PeerCmdSend = EventSend<PeerCmd>;
 type AnswerSend =
     Arc<Mutex<Option<tokio::sync::oneshot::Sender<serde_json::Value>>>>;
-type SharedPeer = Shared<BoxFuture<'static, CRes<Arc<Peer>>>>;
-pub(crate) type PeerMap =
-    HashMap<Id, (u64, PeerCmdSend, AnswerSend, SharedPeer)>;
+pub(crate) type PeerMap = HashMap<
+    Id,
+    (
+        u64,
+        PeerCmdSend,
+        AnswerSend,
+        AbortableTimedSharedFuture<Arc<Peer>>,
+    ),
+>;
 
 pub(crate) struct SigShared {
     pub ep: Arc<EpShared>,
@@ -261,30 +267,20 @@ impl Sig {
                         peer_uniq,
                         peer_cmd_send,
                         Arc::new(Mutex::new(answer_send)),
-                        futures::future::FutureExt::shared(
-                            futures::future::FutureExt::boxed(async move {
-                                tokio::time::timeout(
-                                    sig.config.timeout,
-                                    Peer::new(
-                                        _peer_drop,
-                                        sig,
-                                        peer_url,
-                                        peer_id,
-                                        peer_uniq,
-                                        ice_servers,
-                                        new_peer_dir,
-                                        peer_cmd_recv,
-                                    ),
-                                )
-                                .await
-                                .map_err(
-                                    |_| {
-                                        Error::str(
-                                            "Timeout awaiting peer connection",
-                                        )
-                                    },
-                                )?
-                            }),
+                        AbortableTimedSharedFuture::new(
+                            sig.config.timeout,
+                            Error::str("Timeout awaiting peer connection")
+                                .into(),
+                            Peer::new(
+                                _peer_drop,
+                                sig,
+                                peer_url,
+                                peer_id,
+                                peer_uniq,
+                                ice_servers,
+                                new_peer_dir,
+                                peer_cmd_recv,
+                            ),
                         ),
                     )
                 })
@@ -292,7 +288,10 @@ impl Sig {
         };
 
         // make sure to drop this after releasing our mutex lock
-        drop(tmp);
+        if let Some((_peer_uniq, _cmd, _ans, peer_fut)) = tmp {
+            peer_fut.abort(Error::str("Dropping connection because we are the polite node and received an offer from the remote").into());
+            drop(peer_fut);
+        }
 
         fut.await
     }
@@ -392,5 +391,8 @@ pub(crate) fn close_peer(
     }
 
     // make sure nothing is dropped while we're holding the mutex lock
-    drop(tmp);
+    if let Some((_peer_uniq, _cmd, _ans, peer_fut)) = tmp {
+        peer_fut.abort(Error::id("Close").into());
+        drop(peer_fut);
+    }
 }

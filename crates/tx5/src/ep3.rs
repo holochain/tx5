@@ -2,9 +2,10 @@
 
 use crate::deps::lair_keystore_api;
 use crate::deps::sodoken;
+use crate::AbortableTimedSharedFuture;
 use crate::BackBuf;
 use crate::BytesList;
-use futures::future::{BoxFuture, Shared};
+use futures::future::BoxFuture;
 use lair_keystore_api::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -84,8 +85,7 @@ pub type SigUrl = Tx5Url;
 /// A peer connection url.
 pub type PeerUrl = Tx5Url;
 
-type SharedSig = Shared<BoxFuture<'static, CRes<Arc<Sig>>>>;
-type SigMap = HashMap<SigUrl, (u64, SharedSig)>;
+type SigMap = HashMap<SigUrl, (u64, AbortableTimedSharedFuture<Arc<Sig>>)>;
 
 /// Callback in charge of sending preflight data if any.
 pub type PreflightSendCb = Arc<
@@ -522,19 +522,11 @@ async fn assert_sig(ep: &Arc<EpShared>, sig_url: &SigUrl) -> CRes<Arc<Sig>> {
             };
             (
                 sig_uniq,
-                futures::future::FutureExt::shared(
-                    futures::future::FutureExt::boxed(async move {
-                        tokio::time::timeout(
-                            ep.config.timeout,
-                            Sig::new(_sig_drop, ep, sig_uniq, sig_url),
-                        )
-                        .await
-                        .map_err(|_| {
-                            Error::str(
-                                "Timeout awaiting signal server connection",
-                            )
-                        })?
-                    }),
+                AbortableTimedSharedFuture::new(
+                    ep.config.timeout,
+                    Error::str("Timeout awaiting signal server connection")
+                        .into(),
+                    Sig::new(_sig_drop, ep, sig_uniq, sig_url),
                 ),
             )
         })
@@ -566,7 +558,10 @@ fn close_sig(
     }
 
     // make sure nothing is dropped while we're holding the mutex lock
-    drop(tmp);
+    if let Some((_sig_uniq, sig_fut)) = tmp {
+        sig_fut.abort(Error::id("Close").into());
+        drop(sig_fut);
+    }
 }
 
 pub(crate) mod sig;

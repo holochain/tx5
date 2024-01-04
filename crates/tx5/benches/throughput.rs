@@ -7,6 +7,7 @@ use tx5_core::EventRecv;
 const DATA: &[u8] = &[0xdb; 4096];
 
 struct Test {
+    _sig_srv_hnd: tx5_signal_srv::SrvHnd,
     cli_url1: PeerUrl,
     ep1: Ep3,
     ep_rcv1: EventRecv<Ep3Event>,
@@ -21,9 +22,8 @@ impl Test {
         srv_config.port = 0;
         srv_config.demo = true;
 
-        let (srv_driver, addr_list, _) =
+        let (_sig_srv_hnd, addr_list, _) =
             tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
-        tokio::task::spawn(srv_driver);
 
         let sig_port = addr_list.get(0).unwrap().port();
 
@@ -68,6 +68,7 @@ impl Test {
         }
 
         Self {
+            _sig_srv_hnd,
             cli_url1,
             ep1,
             ep_rcv1,
@@ -79,6 +80,7 @@ impl Test {
 
     pub async fn test(&mut self) {
         let Test {
+            _sig_srv_hnd,
             cli_url1,
             ep1,
             ep_rcv1,

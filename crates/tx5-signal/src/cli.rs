@@ -624,45 +624,48 @@ async fn con_task(
     init: tokio::sync::oneshot::Sender<()>,
 ) {
     let mut init = Some(init);
-    let mut write_recv = Some(write_recv);
-    loop {
-        if let Some(socket) = con_open_connection(
-            &use_tls,
-            &host,
-            &con_url,
-            &endpoint,
-            x25519_pub,
-            &ice,
-            &lair_client,
-        )
-        .await
-        {
-            // once we've run open_connection once, proceed with init
-            if let Some(init) = init.take() {
-                let _ = init.send(());
-            }
+    //let mut write_recv = Some(write_recv);
 
-            let a_write_recv = con_manage_connection(
-                socket,
-                msg_send.clone(),
-                x25519_pub,
-                &lair_client,
-                write_send.clone(),
-                write_recv.take().unwrap(),
-            )
-            .await;
-            write_recv = Some(a_write_recv);
-        }
-
+    //loop {
+    if let Some(socket) = con_open_connection(
+        &use_tls,
+        &host,
+        &con_url,
+        &endpoint,
+        x25519_pub,
+        &ice,
+        &lair_client,
+    )
+    .await
+    {
         // once we've run open_connection once, proceed with init
         if let Some(init) = init.take() {
             let _ = init.send(());
         }
 
-        let s = rand::Rng::gen_range(&mut rand::thread_rng(), 4.0..8.0);
-        let s = std::time::Duration::from_secs_f64(s);
-        tokio::time::sleep(s).await;
+        /*let a_write_recv = */
+        con_manage_connection(
+            socket,
+            msg_send.clone(),
+            x25519_pub,
+            &lair_client,
+            write_send.clone(),
+            //write_recv.take().unwrap(),
+            write_recv,
+        )
+        .await;
+        //write_recv = Some(a_write_recv);
     }
+
+    // once we've run open_connection once, proceed with init
+    if let Some(init) = init.take() {
+        let _ = init.send(());
+    }
+
+    //    let s = rand::Rng::gen_range(&mut rand::thread_rng(), 4.0..8.0);
+    //    let s = std::time::Duration::from_secs_f64(s);
+    //    tokio::time::sleep(s).await;
+    //}
 }
 
 async fn con_stack(

@@ -4,9 +4,8 @@ use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use sodoken::crypto_box::curve25519xsalsa20poly1305 as crypto_box;
 use std::collections::HashMap;
-use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tx5_core::wire;
 
 struct IntGaugeGuard(prometheus::IntGauge);
@@ -24,9 +23,20 @@ impl IntGaugeGuard {
     }
 }
 
-/// [exec_tx5_signal_srv] will return this driver future.
-pub type ServerDriver =
-    std::pin::Pin<Box<dyn Future<Output = ()> + 'static + Send>>;
+/// A handle to the server instance. This has no functionality
+/// except that when it is dropped, the server will shut down.
+pub struct SrvHnd {
+    task_list: Vec<tokio::task::JoinHandle<()>>,
+    _srv_cmd: Arc<SrvCmd>,
+}
+
+impl Drop for SrvHnd {
+    fn drop(&mut self) {
+        for t in self.task_list.iter() {
+            t.abort();
+        }
+    }
+}
 
 /// Protocol Version
 #[derive(Debug)]
@@ -38,7 +48,7 @@ enum ProtoVer {
 #[allow(deprecated)]
 pub fn exec_tx5_signal_srv(
     config: Config,
-) -> Result<(ServerDriver, Vec<SocketAddr>, Vec<std::io::Error>)> {
+) -> Result<(SrvHnd, Vec<SocketAddr>, Vec<std::io::Error>)> {
     // make sure our metrics are initialized
     let _ = &*METRICS_REQ_COUNT;
     let _ = &*METRICS_REQ_TIME_S;
@@ -50,11 +60,12 @@ pub fn exec_tx5_signal_srv(
     let _ = &*REQ_DEMO_CNT;
 
     let ice_servers = Arc::new(config.ice_servers);
-    let srv_hnd = Srv::spawn();
+    let srv_cmd = Srv::spawn();
 
     use warp::Filter;
     use warp::Reply;
 
+    let srv_cmd_weak = Arc::downgrade(&srv_cmd);
     let tx5_ws = warp::path!("tx5-ws" / String / String)
         .and(warp::ws())
         .map(move |ver: String, client_pub: String, ws: warp::ws::Ws| {
@@ -72,12 +83,12 @@ pub fn exec_tx5_signal_srv(
                 Ok(client_pub) => client_pub,
             };
             let ice_servers = ice_servers.clone();
-            let srv_hnd = srv_hnd.clone();
+            let srv_cmd_weak = srv_cmd_weak.clone();
             ws.max_send_queue(tx5_core::ws::MAX_SEND_QUEUE)
                 .max_message_size(tx5_core::ws::MAX_MESSAGE_SIZE)
                 .max_frame_size(tx5_core::ws::MAX_FRAME_SIZE)
                 .on_upgrade(move |ws| async move {
-                    client_task(ws, ver, client_pub, ice_servers, srv_hnd)
+                    client_task(ws, ver, client_pub, ice_servers, srv_cmd_weak)
                         .await;
                     drop(active_ws_g);
                 })
@@ -98,7 +109,7 @@ pub fn exec_tx5_signal_srv(
 
     let routes = tx5_ws.or(prometheus).with(warp::trace::request());
 
-    let mut drv_out = Vec::new();
+    let mut task_list = Vec::new();
     let mut add_out = Vec::new();
     let mut err_out = Vec::new();
 
@@ -117,15 +128,12 @@ pub fn exec_tx5_signal_srv(
         match warp::serve(routes.clone())
             .try_bind_ephemeral((addr, config.port))
             .map_err(Error::err)
-            .map(|(addr, fut)| {
-                let fut: ServerDriver = Box::pin(fut);
-                (addr, fut)
-            }) {
+        {
             Err(err) => {
                 err_out.push(err);
             }
             Ok((addr, drv)) => {
-                drv_out.push(drv);
+                task_list.push(tokio::task::spawn(drv));
                 add_out.append(&mut tx_addr(addr)?);
             }
         }
@@ -135,11 +143,12 @@ pub fn exec_tx5_signal_srv(
         return Err(Error::str(format!("{err_out:?}")));
     }
 
-    let drv_out = Box::pin(async move {
-        let _ = futures::future::join_all(drv_out).await;
-    });
+    let srv_hnd = SrvHnd {
+        task_list,
+        _srv_cmd: srv_cmd,
+    };
 
-    Ok((drv_out, add_out, err_out))
+    Ok((srv_hnd, add_out, err_out))
 }
 
 fn tx_addr(addr: std::net::SocketAddr) -> Result<Vec<std::net::SocketAddr>> {
@@ -196,7 +205,7 @@ async fn client_task(
     ver: ProtoVer,
     client_pub: sodoken::BufReadSized<{ crypto_box::PUBLICKEYBYTES }>,
     ice_servers: Arc<serde_json::Value>,
-    srv_hnd: Arc<SrvHnd>,
+    srv_cmd: Weak<SrvCmd>,
 ) {
     macro_rules! dbg_err {
         ($e:expr) => {
@@ -217,13 +226,17 @@ async fn client_task(
     let (mut tx, mut rx) = ws.split();
     let (out_send, mut out_recv) = tokio::sync::mpsc::unbounded_channel();
 
-    dbg_err!(srv_hnd.register(client_id, out_send.clone()).await);
+    if let Some(srv_cmd) = srv_cmd.upgrade() {
+        dbg_err!(srv_cmd.register(client_id, out_send.clone()).await);
+    } else {
+        return;
+    }
 
     CLIENT_AUTH_WS_COUNT.inc();
 
     tracing::info!(?client_id, ?ver, "Accepted Incoming Connection");
 
-    let srv_hnd_read = srv_hnd.clone();
+    let srv_cmd_read = srv_cmd.clone();
     let client_id_read = client_id;
     tokio::select! {
         res = async move {
@@ -277,7 +290,11 @@ async fn client_task(
                     }) => {
                         // TODO - pay attention to demo config flag
                         //        right now we just always honor demos
-                        srv_hnd_read.broadcast(msg);
+                        if let Some(srv_cmd) = srv_cmd_read.upgrade() {
+                            srv_cmd.broadcast(msg);
+                        } else {
+                            break;
+                        }
                         REQ_DEMO_CNT.inc();
                     }
                     Ok(wire::Wire::FwdV1 { rem_pub, nonce, cipher }) => {
@@ -286,19 +303,23 @@ async fn client_task(
                             nonce,
                             cipher,
                         }.encode());
-                        match srv_hnd_read.forward(rem_pub, data).await {
-                            Ok(fut) => {
-                                match fut.await {
-                                    Ok(Ok(())) => (),
-                                    Ok(Err(err)) => {
-                                        tracing::trace!(?err);
+                        if let Some(srv_cmd) = srv_cmd_read.upgrade() {
+                            match srv_cmd.forward(rem_pub, data).await {
+                                Ok(fut) => {
+                                    match fut.await {
+                                        Ok(Ok(())) => (),
+                                        Ok(Err(err)) => {
+                                            tracing::trace!(?err);
+                                        }
+                                        Err(_) => (),
                                     }
-                                    Err(_) => (),
+                                }
+                                Err(err) => {
+                                    tracing::trace!(?err);
                                 }
                             }
-                            Err(err) => {
-                                tracing::trace!(?err);
-                            }
+                        } else {
+                            break;
                         }
                         REQ_FWD_CNT.inc();
                     }
@@ -312,7 +333,9 @@ async fn client_task(
     };
 
     tracing::debug!("ConShutdown");
-    dbg_err!(srv_hnd.unregister(client_id).await);
+    if let Some(srv_cmd) = srv_cmd.upgrade() {
+        dbg_err!(srv_cmd.unregister(client_id).await);
+    }
 }
 
 async fn authenticate(
@@ -382,7 +405,7 @@ type DataSend = tokio::sync::mpsc::UnboundedSender<(
     OneSend<Result<()>>,
 )>;
 
-enum SrvCmd {
+enum SrvMsg {
     Shutdown,
     Register(Id, DataSend, OneSend<Result<()>>),
     Unregister(Id, OneSend<Result<()>>),
@@ -390,11 +413,11 @@ enum SrvCmd {
     Broadcast(Vec<u8>),
 }
 
-type SrvSend = tokio::sync::mpsc::UnboundedSender<SrvCmd>;
+type SrvSend = tokio::sync::mpsc::UnboundedSender<SrvMsg>;
 
-struct SrvHnd(SrvSend, tokio::task::JoinHandle<()>);
+struct SrvCmd(SrvSend, tokio::task::JoinHandle<()>);
 
-impl Drop for SrvHnd {
+impl Drop for SrvCmd {
     fn drop(&mut self) {
         self.shutdown();
     }
@@ -402,15 +425,15 @@ impl Drop for SrvHnd {
 
 const E_SERVER_SHUTDOWN: &str = "ServerShutdown";
 
-impl SrvHnd {
+impl SrvCmd {
     pub fn shutdown(&self) {
-        let _ = self.0.send(SrvCmd::Shutdown);
+        let _ = self.0.send(SrvMsg::Shutdown);
         self.1.abort();
     }
 
     pub async fn register(&self, id: Id, data_send: DataSend) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
-        if self.0.send(SrvCmd::Register(id, data_send, s)).is_err() {
+        if self.0.send(SrvMsg::Register(id, data_send, s)).is_err() {
             return Err(Error::id(E_SERVER_SHUTDOWN));
         }
         r.await.map_err(|_| Error::id(E_SERVER_SHUTDOWN))?
@@ -418,7 +441,7 @@ impl SrvHnd {
 
     pub async fn unregister(&self, id: Id) -> Result<()> {
         let (s, r) = tokio::sync::oneshot::channel();
-        if self.0.send(SrvCmd::Unregister(id, s)).is_err() {
+        if self.0.send(SrvMsg::Unregister(id, s)).is_err() {
             return Err(Error::id(E_SERVER_SHUTDOWN));
         }
         r.await.map_err(|_| Error::id(E_SERVER_SHUTDOWN))?
@@ -430,14 +453,14 @@ impl SrvHnd {
         data: Vec<u8>,
     ) -> Result<OneRecv<Result<()>>> {
         let (s, r) = tokio::sync::oneshot::channel();
-        if self.0.send(SrvCmd::Forward(id, data, s)).is_err() {
+        if self.0.send(SrvMsg::Forward(id, data, s)).is_err() {
             return Err(Error::id(E_SERVER_SHUTDOWN));
         }
         r.await.map_err(|_| Error::id(E_SERVER_SHUTDOWN))?
     }
 
     pub fn broadcast(&self, data: Vec<u8>) {
-        let _ = self.0.send(SrvCmd::Broadcast(data));
+        let _ = self.0.send(SrvMsg::Broadcast(data));
     }
 }
 
@@ -452,7 +475,7 @@ impl Srv {
         }
     }
 
-    fn spawn() -> Arc<SrvHnd> {
+    fn spawn() -> Arc<SrvCmd> {
         let (hnd_send, mut hnd_recv) = tokio::sync::mpsc::unbounded_channel();
         let mut srv = Srv::new();
 
@@ -464,24 +487,24 @@ impl Srv {
             }
         });
 
-        Arc::new(SrvHnd(hnd_send, task))
+        Arc::new(SrvCmd(hnd_send, task))
     }
 
     // we want to make sure this function is *not* async
     // so that we can chew through the work loop without stalling
-    fn sync_process(&mut self, cmd: SrvCmd) -> bool {
+    fn sync_process(&mut self, cmd: SrvMsg) -> bool {
         match cmd {
-            SrvCmd::Shutdown => return false,
-            SrvCmd::Register(id, data_send, resp) => {
+            SrvMsg::Shutdown => return false,
+            SrvMsg::Register(id, data_send, resp) => {
                 let _ = resp.send(self.register(id, data_send));
             }
-            SrvCmd::Unregister(id, resp) => {
+            SrvMsg::Unregister(id, resp) => {
                 let _ = resp.send(self.unregister(id));
             }
-            SrvCmd::Forward(id, data, resp) => {
+            SrvMsg::Forward(id, data, resp) => {
                 let _ = resp.send(self.forward(id, data));
             }
-            SrvCmd::Broadcast(data) => {
+            SrvMsg::Broadcast(data) => {
                 self.broadcast(data);
             }
         }

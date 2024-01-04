@@ -1,14 +1,8 @@
 use super::*;
 
 struct Test {
-    sig_task: tokio::task::JoinHandle<()>,
+    _sig_srv_hnd: tx5_signal_srv::SrvHnd,
     sig_url: SigUrl,
-}
-
-impl Drop for Test {
-    fn drop(&mut self) {
-        self.sig_task.abort();
-    }
 }
 
 impl Test {
@@ -26,10 +20,8 @@ impl Test {
         let mut srv_config = tx5_signal_srv::Config::default();
         srv_config.port = 0;
 
-        let (srv_driver, addr_list, _) =
+        let (_sig_srv_hnd, addr_list, _) =
             tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
-
-        let sig_task = tokio::task::spawn(srv_driver);
 
         let sig_port = addr_list.get(0).unwrap().port();
 
@@ -38,7 +30,10 @@ impl Test {
 
         tracing::info!(%sig_url);
 
-        Test { sig_task, sig_url }
+        Test {
+            _sig_srv_hnd,
+            sig_url,
+        }
     }
 
     pub async fn ep(

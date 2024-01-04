@@ -335,7 +335,7 @@ async fn main_err() -> Result<()> {
 
     let (ep, mut evt) = tx5::Ep3::new(Arc::new(Config3::default())).await;
     let ep = Arc::new(ep);
-    let this_addr = ep.listen(sig_url.clone())?;
+    let this_addr = ep.listen(sig_url.clone()).await?;
 
     let mut node = Node::new(this_addr.clone(), peer_urls);
 

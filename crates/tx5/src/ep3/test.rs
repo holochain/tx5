@@ -46,7 +46,7 @@ impl Test {
         config: Arc<Config3>,
     ) -> (PeerUrl, Ep3, EventRecv<Ep3Event>) {
         let (ep, recv) = Ep3::new(config).await;
-        let url = ep.listen(self.sig_url.clone()).unwrap();
+        let url = ep.listen(self.sig_url.clone()).await.unwrap();
 
         (url, ep, recv)
     }
@@ -81,6 +81,56 @@ async fn ep3_sanity() {
     let stats = ep1.get_stats().await;
 
     println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ep3_drop() {
+    let config = Arc::new(Config3::default());
+    let test = Test::new().await;
+
+    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
+    let (cli_url2, ep2, mut ep2_recv) = test.ep(config.clone()).await;
+
+    ep1.send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
+        .await
+        .unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { mut message, .. } => {
+            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        }
+        _ => panic!(),
+    }
+
+    drop(ep2);
+    drop(ep2_recv);
+
+    let (cli_url3, _ep3, mut ep3_recv) = test.ep(config).await;
+
+    ep1.send(cli_url3, vec![BackBuf::from_slice(b"world").unwrap()])
+        .await
+        .unwrap();
+
+    let res = ep3_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep3_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { mut message, .. } => {
+            assert_eq!(&b"world"[..], &message.to_vec().unwrap());
+        }
+        _ => panic!(),
+    }
 }
 
 /// Test negotiation (polite / impolite node logic) by setting up a lot
@@ -348,6 +398,75 @@ async fn ep3_ban_after_connected_outgoing_side() {
     let stats = ep1.get_stats().await;
 
     println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ep3_recon_after_ban() {
+    let config = Arc::new(Config3::default());
+    let test = Test::new().await;
+
+    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
+    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
+
+    ep1.send(
+        cli_url2.clone(),
+        vec![BackBuf::from_slice(b"hello").unwrap()],
+    )
+    .await
+    .unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { mut message, .. } => {
+            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        }
+        oth => panic!("{oth:?}"),
+    }
+
+    ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_millis(10));
+
+    assert!(ep1
+        .send(
+            cli_url2.clone(),
+            vec![BackBuf::from_slice(b"hello").unwrap()]
+        )
+        .await
+        .is_err());
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Disconnected { .. } => (),
+        oth => panic!("{oth:?}"),
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+
+    ep1.send(
+        cli_url2.clone(),
+        vec![BackBuf::from_slice(b"world").unwrap()],
+    )
+    .await
+    .unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        oth => panic!("{oth:?}"),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { mut message, .. } => {
+            assert_eq!(&b"world"[..], &message.to_vec().unwrap());
+        }
+        _ => panic!(),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

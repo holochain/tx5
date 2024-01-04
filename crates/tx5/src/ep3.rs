@@ -305,13 +305,16 @@ impl Ep3 {
     /// Establish a listening connection to a signal server,
     /// from which we can accept incoming remote connections.
     /// Returns the client url at which this endpoint may now be addressed.
-    pub fn listen(&self, sig_url: SigUrl) -> Result<PeerUrl> {
+    pub async fn listen(&self, sig_url: SigUrl) -> Result<PeerUrl> {
         if !sig_url.is_server() {
             return Err(Error::str("Expected SigUrl, got PeerUrl"));
         }
 
         let ep = self.ep.clone();
         let peer_url = sig_url.to_client(ep.this_id);
+
+        let (wait_send, wait_recv) = tokio::sync::oneshot::channel();
+        let mut wait_send = Some(wait_send);
 
         self.listen_sigs
             .lock()
@@ -335,9 +338,16 @@ impl Ep3 {
                         }
                     }
 
+                    if let Some(wait_send) = wait_send.take() {
+                        let _ = wait_send.send(());
+                    }
+
                     tokio::time::sleep(backoff).await;
                 }
             }));
+
+        // await at least one loop of connect attempt before returning
+        let _ = wait_recv.await;
 
         Ok(peer_url)
     }

@@ -33,9 +33,9 @@ impl Test {
         let config = Arc::new(Config3::default());
 
         let (ep1, mut ep_rcv1) = Ep3::new(config.clone()).await;
-        let cli_url1 = ep1.listen(sig_url.clone()).unwrap();
+        let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
         let (ep2, mut ep_rcv2) = Ep3::new(config).await;
-        let cli_url2 = ep2.listen(sig_url).unwrap();
+        let cli_url2 = ep2.listen(sig_url).await.unwrap();
 
         ep1.send(
             cli_url2.clone(),

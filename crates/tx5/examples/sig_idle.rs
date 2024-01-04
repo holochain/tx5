@@ -26,7 +26,7 @@ async fn main() {
 
     let (ep, _ep_rcv) = Ep3::new(Arc::new(Config3::default())).await;
 
-    ep.listen(sig_url).unwrap();
+    ep.listen(sig_url).await.unwrap();
 
     let (_s, r) = tokio::sync::oneshot::channel::<()>();
     r.await.unwrap();

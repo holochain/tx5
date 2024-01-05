@@ -126,6 +126,12 @@ pub struct Config3 {
     /// Default timeout for network operations. Default 60 seconds.
     pub timeout: std::time::Duration,
 
+    /// Starting backoff duration for retries. Default 5 seconds.
+    pub backoff_start: std::time::Duration,
+
+    /// Max backoff duration for retries. Default 60 seconds.
+    pub backoff_max: std::time::Duration,
+
     /// Callback in charge of sending preflight data if any.
     pub preflight_send_cb: PreflightSendCb,
 
@@ -139,6 +145,8 @@ impl Default for Config3 {
             connection_count_max: 255,
             connection_bytes_max: 16 * 1024 * 1024,
             timeout: std::time::Duration::from_secs(60),
+            backoff_start: std::time::Duration::from_secs(5),
+            backoff_max: std::time::Duration::from_secs(60),
             preflight_send_cb: Arc::new(|_| {
                 futures::future::FutureExt::boxed(async move { Ok(None) })
             }),
@@ -320,21 +328,29 @@ impl Ep3 {
             .lock()
             .unwrap()
             .push(tokio::task::spawn(async move {
-                const B_START: std::time::Duration =
-                    std::time::Duration::from_secs(5);
-                const B_MAX: std::time::Duration =
-                    std::time::Duration::from_secs(60);
-                let mut backoff = B_START;
+                let mut backoff = ep.config.backoff_start;
                 loop {
-                    if assert_sig(&ep, &sig_url).await.is_ok() {
-                        // if the conn is still open it's essentially
-                        // a no-op to assert it again, so it's
-                        // okay to do that quickly.
-                        backoff = B_START;
-                    } else {
-                        backoff *= 2;
-                        if backoff > B_MAX {
-                            backoff = B_MAX;
+                    /*
+                    tracing::error!(
+                        %ep.ep_uniq,
+                        %sig_url,
+                        "TRY ASSERT SIG",
+                    );
+                    */
+                    match assert_sig(&ep, &sig_url).await {
+                        Ok(_) => {
+                            //tracing::error!(%ep.ep_uniq, "SIG CONNECTED!");
+                            // if the conn is still open it's essentially
+                            // a no-op to assert it again, so it's
+                            // okay to do that quickly.
+                            backoff = ep.config.backoff_start;
+                        }
+                        Err(_err) => {
+                            //tracing::error!(%ep.ep_uniq, ?err, "SIG ERROR!");
+                            backoff *= 2;
+                            if backoff > ep.config.backoff_max {
+                                backoff = ep.config.backoff_max;
+                            }
                         }
                     }
 

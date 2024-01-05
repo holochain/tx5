@@ -1,8 +1,9 @@
 use super::*;
 
 struct Test {
-    _sig_srv_hnd: tx5_signal_srv::SrvHnd,
-    sig_url: SigUrl,
+    sig_srv_hnd: Option<tx5_signal_srv::SrvHnd>,
+    sig_port: Option<u16>,
+    sig_url: Option<SigUrl>,
 }
 
 impl Test {
@@ -17,33 +18,57 @@ impl Test {
 
         let _ = tracing::subscriber::set_global_default(subscriber);
 
-        let mut srv_config = tx5_signal_srv::Config::default();
-        srv_config.port = 0;
+        let mut this = Test {
+            sig_srv_hnd: None,
+            sig_port: None,
+            sig_url: None,
+        };
 
-        let (_sig_srv_hnd, addr_list, _) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+        this.restart_sig().await;
 
-        let sig_port = addr_list.get(0).unwrap().port();
-
-        let sig_url =
-            SigUrl::new(format!("ws://localhost:{}", sig_port)).unwrap();
-
-        tracing::info!(%sig_url);
-
-        Test {
-            _sig_srv_hnd,
-            sig_url,
-        }
+        this
     }
 
     pub async fn ep(
         &self,
         config: Arc<Config3>,
     ) -> (PeerUrl, Ep3, EventRecv<Ep3Event>) {
+        let sig_url = self.sig_url.clone().unwrap();
+
         let (ep, recv) = Ep3::new(config).await;
-        let url = ep.listen(self.sig_url.clone()).await.unwrap();
+        let url = ep.listen(sig_url).await.unwrap();
 
         (url, ep, recv)
+    }
+
+    pub fn drop_sig(&mut self) {
+        drop(self.sig_srv_hnd.take());
+    }
+
+    pub async fn restart_sig(&mut self) {
+        self.drop_sig();
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let mut srv_config = tx5_signal_srv::Config::default();
+        srv_config.port = self.sig_port.unwrap_or(0);
+
+        let (sig_srv_hnd, addr_list, _) =
+            tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+        self.sig_srv_hnd = Some(sig_srv_hnd);
+
+        let sig_port = addr_list.get(0).unwrap().port();
+        self.sig_port = Some(sig_port);
+
+        let sig_url =
+            SigUrl::new(format!("ws://localhost:{}", sig_port)).unwrap();
+        if let Some(old_sig_url) = &self.sig_url {
+            if old_sig_url != &sig_url {
+                panic!("mismatching new sig url");
+            }
+        }
+        tracing::info!(%sig_url);
+        self.sig_url = Some(sig_url);
     }
 }
 
@@ -76,6 +101,115 @@ async fn ep3_sanity() {
     let stats = ep1.get_stats().await;
 
     println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ep3_sig_down() {
+    eprintln!("-- STARTUP --");
+
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+    let mut config = Config3::default();
+    config.timeout = TIMEOUT;
+    config.backoff_start = std::time::Duration::from_millis(200);
+    config.backoff_max = std::time::Duration::from_millis(200);
+    let config = Arc::new(config);
+    let mut test = Test::new().await;
+
+    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
+    let (cli_url2, ep2, mut ep2_recv) = test.ep(config.clone()).await;
+
+    eprintln!("-- Establish Connection --");
+
+    ep1.send(
+        cli_url2.clone(),
+        vec![BackBuf::from_slice(b"hello").unwrap()],
+    )
+    .await
+    .unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { mut message, .. } => {
+            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        }
+        _ => panic!(),
+    }
+
+    eprintln!("-- Drop Sig --");
+
+    test.drop_sig();
+
+    tokio::time::sleep(TIMEOUT).await;
+
+    // need to trigger another signal message so we know the connection is down
+    let (cli_url3, _ep3, _ep3_recv) = test.ep(config).await;
+
+    ep1.send(
+        cli_url3.clone(),
+        vec![BackBuf::from_slice(b"hello").unwrap()],
+    )
+    .await
+    .unwrap_err();
+
+    ep2.send(cli_url3, vec![BackBuf::from_slice(b"hello").unwrap()])
+        .await
+        .unwrap_err();
+
+    tokio::time::sleep(TIMEOUT).await;
+
+    // now a send to cli_url2 should *also* fail
+    eprintln!("-- Send Should Fail --");
+
+    ep1.send(
+        cli_url2.clone(),
+        vec![BackBuf::from_slice(b"hello").unwrap()],
+    )
+    .await
+    .unwrap_err();
+
+    eprintln!("-- Restart Sig --");
+
+    test.restart_sig().await;
+
+    tokio::time::sleep(TIMEOUT).await;
+
+    eprintln!("-- Send Should Succeed --");
+
+    ep1.send(
+        cli_url2.clone(),
+        vec![BackBuf::from_slice(b"hello").unwrap()],
+    )
+    .await
+    .unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Disconnected { .. } => (),
+        oth => panic!("{oth:?}"),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        oth => panic!("{oth:?}"),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { mut message, .. } => {
+            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        }
+        oth => panic!("{oth:?}"),
+    }
+
+    eprintln!("-- Done --");
 }
 
 #[tokio::test(flavor = "multi_thread")]

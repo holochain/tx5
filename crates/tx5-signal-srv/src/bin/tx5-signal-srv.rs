@@ -46,7 +46,7 @@ async fn main_err() -> Result<()> {
         ConfigPerOpt::ConfigLoaded(config) => config,
     };
 
-    let (_hnd, addr_list, err_list) = exec_tx5_signal_srv(config)?;
+    let (_hnd, addr_list, err_list) = exec_tx5_signal_srv(config).await?;
 
     for err in err_list {
         println!("# tx5-signal-srv ERR {err:?}");

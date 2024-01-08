@@ -46,7 +46,7 @@ enum ProtoVer {
 
 /// The main entrypoint tx5-signal-server logic task.
 #[allow(deprecated)]
-pub fn exec_tx5_signal_srv(
+pub async fn exec_tx5_signal_srv(
     config: Config,
 ) -> Result<(SrvHnd, Vec<SocketAddr>, Vec<std::io::Error>)> {
     // make sure our metrics are initialized
@@ -112,6 +112,7 @@ pub fn exec_tx5_signal_srv(
     let mut task_list = Vec::new();
     let mut add_out = Vec::new();
     let mut err_out = Vec::new();
+    let mut pend_list = Vec::new();
 
     for addr in config
         .interfaces
@@ -125,6 +126,8 @@ pub fn exec_tx5_signal_srv(
             }
             Ok(addr) => addr,
         };
+        let (pend_send, pend_recv) = tokio::sync::oneshot::channel();
+        pend_list.push(pend_recv);
         match warp::serve(routes.clone())
             .try_bind_ephemeral((addr, config.port))
             .map_err(Error::err)
@@ -133,7 +136,10 @@ pub fn exec_tx5_signal_srv(
                 err_out.push(err);
             }
             Ok((addr, drv)) => {
-                task_list.push(tokio::task::spawn(drv));
+                task_list.push(tokio::task::spawn(async move {
+                    let _ = pend_send.send(());
+                    drv.await;
+                }));
                 add_out.append(&mut tx_addr(addr)?);
             }
         }
@@ -141,6 +147,10 @@ pub fn exec_tx5_signal_srv(
 
     if add_out.is_empty() {
         return Err(Error::str(format!("{err_out:?}")));
+    }
+
+    for pend_recv in pend_list {
+        let _ = pend_recv.await;
     }
 
     let srv_hnd = SrvHnd {

@@ -54,7 +54,9 @@ impl Test {
         srv_config.port = self.sig_port.unwrap_or(0);
 
         let (sig_srv_hnd, addr_list, _) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+            tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+                .await
+                .unwrap();
         self.sig_srv_hnd = Some(sig_srv_hnd);
 
         let sig_port = addr_list.get(0).unwrap().port();

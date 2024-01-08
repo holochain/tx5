@@ -82,7 +82,7 @@ async fn server_stop_restart() {
         srv_config.ice_servers = serde_json::json!([]);
 
         if let Ok((srv_hnd, _, _)) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+            tx5_signal_srv::exec_tx5_signal_srv(srv_config).await
         {
             task = Some(srv_hnd);
             port = Some(p);
@@ -135,8 +135,9 @@ async fn server_stop_restart() {
     srv_config.port = port;
     srv_config.ice_servers = serde_json::json!([]);
 
-    let (srv_hnd, _, _) =
-        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    let (srv_hnd, _, _) = tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+        .await
+        .unwrap();
 
     task = srv_hnd;
 
@@ -169,7 +170,9 @@ async fn wrong_version() {
     srv_config.demo = true;
 
     let (_srv_hnd, addr_list, _) =
-        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+            .await
+            .unwrap();
 
     let srv_port = addr_list.get(0).unwrap().port();
 
@@ -192,7 +195,9 @@ async fn sanity() {
     srv_config.demo = true;
 
     let (_srv_hnd, addr_list, _) =
-        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+            .await
+            .unwrap();
 
     let srv_port = addr_list.get(0).unwrap().port();
 

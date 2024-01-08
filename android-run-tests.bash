@@ -2,7 +2,15 @@
 
 set -eEuxo pipefail
 
+trap 'cleanup' ERR EXIT
+cleanup() {
+  for i in $(cat output-test-executables); do
+    adb shell rm -f /data/local/tmp/$(basename $i)
+  done
+}
+
 for i in $(cat output-test-executables); do
   adb push $i /data/local/tmp/$(basename $i)
   adb shell RUST_BACKTRACE=1 /data/local/tmp/$(basename $i) --test-threads 1 --nocapture
+  adb shell rm -f /data/local/tmp/$(basename $i)
 done

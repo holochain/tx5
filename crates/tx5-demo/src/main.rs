@@ -269,7 +269,7 @@ impl Node {
             out.push(Message::big().encode()?);
         }
 
-        self.send(ep, v.get(0).unwrap(), out);
+        self.send(ep, v.first().unwrap(), out);
 
         Ok(())
     }

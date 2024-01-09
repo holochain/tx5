@@ -109,10 +109,10 @@ async fn ep3_sanity() {
 async fn ep3_sig_down() {
     eprintln!("-- STARTUP --");
 
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     let mut config = Config3::default();
-    config.timeout = TIMEOUT * 5;
+    config.timeout = TIMEOUT * 2;
     config.backoff_start = std::time::Duration::from_millis(200);
     config.backoff_max = std::time::Duration::from_millis(200);
     let config = Arc::new(config);

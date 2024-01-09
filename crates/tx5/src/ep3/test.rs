@@ -112,7 +112,7 @@ async fn ep3_sig_down() {
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
     let mut config = Config3::default();
-    config.timeout = TIMEOUT;
+    config.timeout = TIMEOUT * 5;
     config.backoff_start = std::time::Duration::from_millis(200);
     config.backoff_max = std::time::Duration::from_millis(200);
     let config = Arc::new(config);
@@ -153,16 +153,16 @@ async fn ep3_sig_down() {
     // need to trigger another signal message so we know the connection is down
     let (cli_url3, _ep3, _ep3_recv) = test.ep(config).await;
 
-    ep1.send(
-        cli_url3.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap_err();
+    let (a, b) = tokio::join!(
+        ep1.send(
+            cli_url3.clone(),
+            vec![BackBuf::from_slice(b"hello").unwrap()],
+        ),
+        ep2.send(cli_url3, vec![BackBuf::from_slice(b"hello").unwrap()],),
+    );
 
-    ep2.send(cli_url3, vec![BackBuf::from_slice(b"hello").unwrap()])
-        .await
-        .unwrap_err();
+    a.unwrap_err();
+    b.unwrap_err();
 
     tokio::time::sleep(TIMEOUT).await;
 

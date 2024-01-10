@@ -13,6 +13,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
+app_dirs2 = "2.5.5"
 backtrace = "0.3.69"
 base64 = "0.13.0"
 better-panic = "0.3.0"

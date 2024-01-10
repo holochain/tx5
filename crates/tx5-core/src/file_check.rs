@@ -17,6 +17,19 @@ impl FileCheck {
     }
 }
 
+fn get_loc_dir() -> Option<std::path::PathBuf> {
+    match app_dirs2::app_root(
+        app_dirs2::AppDataType::UserCache,
+        &app_dirs2::AppInfo {
+            name: "host.holo.tx5",
+            author: "host.holo.tx5",
+        },
+    ) {
+        Ok(dir) => Some(dir),
+        _ => None,
+    }
+}
+
 /// Write a file if needed, verify the file, and return a handle to that file.
 pub fn file_check(
     file_data: &[u8],
@@ -26,72 +39,79 @@ pub fn file_check(
 ) -> Result<FileCheck> {
     let file_name = format!("{file_name_prefix}-{file_hash}{file_name_ext}");
 
-    let mut pref_path =
-        dirs::data_local_dir().expect("failed to get data_local_dir");
-    pref_path.push(&file_name);
+    let pref_path = get_loc_dir().map(|mut d| {
+        d.push(&file_name);
+        d
+    });
 
-    if let Ok(file) = validate(&pref_path, file_hash) {
-        return Ok(FileCheck {
-            path: pref_path,
-            _file: Some(file),
-        });
+    if let Some(pref_path) = pref_path.as_ref() {
+        if let Ok(file) = validate(pref_path, file_hash) {
+            return Ok(FileCheck {
+                path: pref_path.clone(),
+                _file: Some(file),
+            });
+        }
     }
 
-    let tmp = write(file_data)?;
+    let mut tmp = write(file_data)?;
 
-    // NOTE: This is NOT atomic, nor secure, but being able to validate the
-    //       file hash post-op mitigates this a bit. And we can let the os
-    //       clean up a dangling tmp file if it failed to unlink.
-    match tmp.persist_noclobber(&pref_path) {
-        Ok(mut file) => {
-            set_perms(&mut file)?;
+    if let Some(pref_path) = pref_path.as_ref() {
+        // NOTE: This is NOT atomic, nor secure, but being able to validate the
+        //       file hash post-op mitigates this a bit. And we can let the os
+        //       clean up a dangling tmp file if it failed to unlink.
+        match tmp.persist_noclobber(pref_path) {
+            Ok(mut file) => {
+                set_perms(&mut file)?;
 
-            drop(file);
+                drop(file);
 
-            let file = validate(&pref_path, file_hash)?;
-
-            Ok(FileCheck {
-                path: pref_path,
-                _file: Some(file),
-            })
-        }
-        Err(err) => {
-            let tempfile::PersistError { file: tmp, .. } = err;
-
-            // First, check to see if a different process wrote correctly
-            if let Ok(file) = validate(&pref_path, file_hash) {
-                // we no longer need the tmp file, clean it up
-                let _ = tmp.close();
+                let file = validate(pref_path, file_hash)?;
 
                 return Ok(FileCheck {
-                    path: pref_path,
+                    path: pref_path.clone(),
                     _file: Some(file),
                 });
             }
+            Err(err) => {
+                let tempfile::PersistError { file, .. } = err;
+                tmp = file;
+            }
+        }
 
-            // we're just going to use the tmp file, do what we need to
-            // do to make sure it isn't deleted when the handle drops.
+        // before we go on to just using the tmp file,
+        // check to see if a different process wrote correctly
+        if let Ok(file) = validate(pref_path, file_hash) {
+            // we no longer need the tmp file, clean it up
+            let _ = tmp.close();
 
-            let path = tmp.path().to_owned();
-            let tmp = tmp.into_temp_path();
-
-            // This seems wrong, but it is how tempfile internally goes
-            // about doing persist/keep, so we're using it already,
-            // and it's only once-ish per process...
-            std::mem::forget(tmp);
-
-            let file = validate(&path, file_hash)?;
-
-            Ok(FileCheck {
-                path,
+            return Ok(FileCheck {
+                path: pref_path.clone(),
                 _file: Some(file),
-            })
+            });
         }
     }
+
+    // we're just going to use the tmp file, do what we need to
+    // do to make sure it isn't deleted when the handle drops.
+
+    let path = tmp.path().to_owned();
+    let tmp = tmp.into_temp_path();
+
+    // This seems wrong, but it is how tempfile internally goes
+    // about doing persist/keep, so we're using it already,
+    // and it's only once-ish per process...
+    std::mem::forget(tmp);
+
+    let file = validate(&path, file_hash)?;
+
+    Ok(FileCheck {
+        path,
+        _file: Some(file),
+    })
 }
 
 /// Validate a file.
-fn validate(path: &std::path::Path, hash: &str) -> Result<std::fs::File> {
+fn validate(path: &std::path::PathBuf, hash: &str) -> Result<std::fs::File> {
     use std::io::Read;
 
     let mut file = std::fs::OpenOptions::new().read(true).open(path)?;

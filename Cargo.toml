@@ -17,6 +17,7 @@ app_dirs2 = "2.5.5"
 backtrace = "0.3.69"
 base64 = "0.13.0"
 better-panic = "0.3.0"
+bit_field = "0.10.2"
 bytes = "1.4.0"
 clap = { version = "4.4.6", features = [ "derive", "wrap_help" ] }
 criterion = { version = "0.5.1", features = [ "async_tokio" ] }

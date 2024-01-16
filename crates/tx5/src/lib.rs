@@ -45,6 +45,8 @@ pub use ep3::*;
 mod back_buf;
 pub use back_buf::*;
 
+pub mod proto;
+
 /// A set of distinct chunks of bytes that can be treated as a single unit.
 #[derive(Default)]
 pub struct BytesList(pub std::collections::VecDeque<bytes::Bytes>);

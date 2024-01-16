@@ -20,6 +20,7 @@ backend-go-pion = [ "tx5-go-pion" ]
 backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
+bit_field = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 influxive-otel-atomic-obs = { workspace = true }

@@ -101,8 +101,6 @@ impl Peer {
 
         tracing::info!(%sig.ep_uniq, %sig.sig_uniq, %peer_uniq, ?peer_id, "Peer Connection Connecting");
 
-        let created_at = tokio::time::Instant::now();
-
         let meter = opentelemetry_api::global::meter_provider()
             .versioned_meter(
                 "tx5",
@@ -526,7 +524,7 @@ impl Peer {
 
         let this = Arc::new(Self {
             _peer_drop,
-            created_at,
+            created_at: tokio::time::Instant::now(),
             sig,
             peer_id,
             peer_url: peer_url.clone(),
@@ -536,6 +534,7 @@ impl Peer {
             data_task,
             peer,
             data_chan,
+            // size 1 semaphore makes sure blocks of messages are contiguous
             send_limit: Arc::new(tokio::sync::Semaphore::new(1)),
             metric_bytes_send,
             metric_unreg: Some(metric_unreg),

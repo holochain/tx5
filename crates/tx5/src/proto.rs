@@ -4,40 +4,61 @@ use crate::BackBuf;
 use tx5_core::{Error, Result};
 
 /// Tx5 protocol message payload max size.
-pub const MAX_PAYLOAD: u32 = 0b00111111111111111111111111111111;
+pub const MAX_PAYLOAD: u32 = 0b00011111111111111111111111111111;
 
 /// 4 byte Tx5 protocol header.
+///
+/// The initial 3 bits representing values 0, 1, and 7 are reserved.
+/// Decoders should error on receiving these values.
 #[derive(Debug, PartialEq)]
 pub enum ProtoHeader {
     /// This is a protocol version handshake.
-    /// `2 bit zero / the protocol version`.
-    Version(u32),
+    /// `3 bits == 2`
+    /// `5 bits == version number (currently 1)`
+    /// `24 bytes == as bytes b"tx5"`
+    Version(u8, [u8; 3]),
 
-    /// The remainder of this chunk represents the entirety of a message.
-    /// `2 bit one / the size of this chunk`.
+    /// The remainder of this message represents the entirety of a message.
+    /// `3 bits == 3`
+    /// `29 bits == the message size == full chunk size - 4`
     CompleteMessage(u32),
+
+    /// The remainder of this message is a chunk of a multi-part message.
+    /// `3 bits == 4`
+    /// `29 bits == byte count included in this message chunk`
+    MultipartMessage(u32),
 
     /// This is a request for a permit to send a message of size larger than
     /// a single chunk.
-    /// `2 bit two / the size of the message`.
+    /// `3 bits == 5`
+    /// `29 bits == the size of the message`
     PermitRequest(u32),
 
     /// This is an authorization to proceed with sending payload chunks.
-    /// `2 bit three / the size of the message`.
+    /// `3 bits == 6`
+    /// `29 bits == the size of the message`
     PermitGrant(u32),
 }
 
 impl ProtoHeader {
     /// Decode 4 bytes into a Tx5 protocol header.
-    pub fn decode(a: u8, b: u8, c: u8, d: u8) -> Self {
-        let r = u32::from_be_bytes(*&[a, b, c, d]);
+    pub fn decode(a: u8, b: u8, c: u8, d: u8) -> Result<Self> {
         use bit_field::BitField;
-        match r.get_bits(30..) {
-            0 => Self::Version(r.get_bits(..30)),
-            1 => Self::CompleteMessage(r.get_bits(..30)),
-            2 => Self::PermitRequest(r.get_bits(..30)),
-            3 => Self::PermitGrant(r.get_bits(..30)),
-            _ => unreachable!(),
+        let r = u32::from_be_bytes([a, b, c, d]);
+        match r.get_bits(29..) {
+            2 => Ok(Self::Version(
+                r.get_bits(24..29) as u8,
+                [
+                    r.get_bits(16..24) as u8,
+                    r.get_bits(8..16) as u8,
+                    r.get_bits(0..8) as u8,
+                ],
+            )),
+            3 => Ok(Self::CompleteMessage(r.get_bits(..29))),
+            4 => Ok(Self::MultipartMessage(r.get_bits(..29))),
+            5 => Ok(Self::PermitRequest(r.get_bits(..29))),
+            6 => Ok(Self::PermitGrant(r.get_bits(..29))),
+            _ => Err(Error::id("ReservedHeaderBits")),
         }
     }
 
@@ -46,33 +67,43 @@ impl ProtoHeader {
         use bit_field::BitField;
         let mut out: u32 = 0;
         match self {
-            Self::Version(v) => {
-                if *v > MAX_PAYLOAD {
+            Self::Version(v, [a, b, c]) => {
+                if *v > 31 {
                     return Err(Error::id("VersionOverflow"));
                 }
-                out.set_bits(30.., 0);
-                out.set_bits(..30, *v);
+                out.set_bits(29.., 2);
+                out.set_bits(24..29, *v as u32);
+                out.set_bits(16..24, *a as u32);
+                out.set_bits(8..16, *b as u32);
+                out.set_bits(0..8, *c as u32);
             }
             Self::CompleteMessage(s) => {
                 if *s > MAX_PAYLOAD {
                     return Err(Error::id("SizeOverflow"));
                 }
-                out.set_bits(30.., 1);
-                out.set_bits(..30, *s);
+                out.set_bits(29.., 3);
+                out.set_bits(..29, *s);
+            }
+            Self::MultipartMessage(s) => {
+                if *s > MAX_PAYLOAD {
+                    return Err(Error::id("SizeOverflow"));
+                }
+                out.set_bits(29.., 4);
+                out.set_bits(..29, *s);
             }
             Self::PermitRequest(s) => {
                 if *s > MAX_PAYLOAD {
                     return Err(Error::id("SizeOverflow"));
                 }
-                out.set_bits(30.., 2);
-                out.set_bits(..30, *s);
+                out.set_bits(29.., 5);
+                out.set_bits(..29, *s);
             }
             Self::PermitGrant(s) => {
                 if *s > MAX_PAYLOAD {
                     return Err(Error::id("SizeOverflow"));
                 }
-                out.set_bits(30.., 3);
-                out.set_bits(..30, *s);
+                out.set_bits(29.., 6);
+                out.set_bits(..29, *s);
             }
         }
         let out = out.to_be_bytes();
@@ -118,14 +149,24 @@ pub fn proto_encode(data: &[u8]) -> Result<ProtoEncodeResult> {
         Ok(ProtoEncodeResult::OneMessage(BackBuf::from_raw(go_buf)))
     } else {
         let (a, b, c, d) = ProtoHeader::PermitRequest(len as u32).encode()?;
-        let permit_req = BackBuf::from_slice(&[a, b, c, d])?;
+        let permit_req = BackBuf::from_slice([a, b, c, d])?;
 
         let mut msg_payload = Vec::new();
         let mut cur = 0;
 
         while len - cur > 0 {
-            let amt = std::cmp::min(16 * 1024, len - cur);
-            msg_payload.push(BackBuf::from_slice(&data[cur..cur + amt])?);
+            let amt = std::cmp::min((16 * 1024) - 4, len - cur);
+
+            let (a, b, c, d) =
+                ProtoHeader::MultipartMessage(amt as u32).encode()?;
+
+            let mut go_buf = tx5_go_pion::GoBuf::new()?;
+            go_buf.reserve(amt + 4)?;
+            go_buf.extend(&[a, b, c, d])?;
+            go_buf.extend(&data[cur..cur + amt])?;
+
+            msg_payload.push(BackBuf::from_raw(go_buf));
+
             cur += amt;
         }
 
@@ -146,19 +187,19 @@ pub enum ProtoDecodeResult {
     Message(Vec<u8>),
 
     /// The remote node is requesting a permit to send us chunks of data.
-    PermitRequest(u32),
+    RemotePermitRequest(u32),
 
     /// The remote node has granted us a permit to send them chunks of data.
-    PermitGrant(u32),
+    RemotePermitGrant(u32),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum DecodeState {
     NeedVersion,
     Ready,
     /// The REMOTE requested a permit from US.
     /// Totally different from when we make a permit request of the remote : )
-    AwaitThisNodePermit(u32),
+    RemoteAwaitingPermit(u32),
     ReceiveChunked,
 }
 
@@ -167,6 +208,8 @@ pub struct ProtoDecoder {
     state: DecodeState,
     want_size: usize,
     incoming: Vec<u8>,
+    want_remote_grant: bool,
+    did_error: bool,
 }
 
 impl Default for ProtoDecoder {
@@ -175,6 +218,8 @@ impl Default for ProtoDecoder {
             state: DecodeState::NeedVersion,
             want_size: 0,
             incoming: Vec::new(),
+            want_remote_grant: false,
+            did_error: false,
         }
     }
 }
@@ -182,104 +227,134 @@ impl Default for ProtoDecoder {
 impl ProtoDecoder {
     /// Notify the decoder that we sent the previously requested permit
     /// to the remote.
-    pub fn sent_permit(&mut self) -> Result<()> {
-        if let DecodeState::AwaitThisNodePermit(permit_len) = self.state {
+    pub fn sent_remote_permit_grant(&mut self) -> Result<()> {
+        self.check_err()?;
+        if let DecodeState::RemoteAwaitingPermit(permit_len) = self.state {
             self.state = DecodeState::ReceiveChunked;
             self.want_size = permit_len as usize;
             self.incoming.reserve(self.want_size);
             Ok(())
         } else {
+            self.did_error = true;
             Err(Error::id("InvalidStateToSendPermit"))
         }
     }
 
+    /// Notify the decoder that we have requested a permit from the remote,
+    /// so we should expect to receive a grant.
+    pub fn sent_remote_permit_request(&mut self) -> Result<()> {
+        self.check_err()?;
+        if self.want_remote_grant {
+            self.did_error = true;
+            Err(Error::id("InvalidDuplicatePermitRequest"))
+        } else {
+            self.want_remote_grant = true;
+            Ok(())
+        }
+    }
+
     /// Process the next incoming chunk from the remote.
-    pub fn decode(&mut self, mut chunk: BackBuf) -> Result<ProtoDecodeResult> {
-        match self.state {
-            DecodeState::NeedVersion => {
-                const WANT_VERSION: ProtoHeader = ProtoHeader::Version(1);
-
-                if chunk.len()? != 4 {
-                    return Err(Error::id("InvalidVersionHeaderLen"));
-                }
-
-                let hdr = chunk.to_vec()?;
-                let hdr = ProtoHeader::decode(hdr[0], hdr[1], hdr[2], hdr[3]);
-                if hdr != WANT_VERSION {
-                    return Err(Error::err(format!(
-                        "Invalid remote Tx5 protocol version: {hdr:?}"
-                    )));
-                }
-
-                self.state = DecodeState::Ready;
-
-                Ok(ProtoDecodeResult::Idle)
+    pub fn decode(&mut self, chunk: BackBuf) -> Result<ProtoDecodeResult> {
+        self.check_err()?;
+        match self.priv_decode(chunk) {
+            Ok(r) => Ok(r),
+            Err(err) => {
+                self.did_error = true;
+                Err(err)
             }
-            DecodeState::Ready => chunk.imp.buf.access(|buf| {
-                let buf = buf?;
-                let len = buf.len();
+        }
+    }
 
-                if len < 4 {
-                    return Err(Error::id("InvalidHeaderLen"));
+    fn check_err(&self) -> Result<()> {
+        if self.did_error {
+            Err(Error::id("FnCallOnErroredDecoder"))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn priv_decode(&mut self, mut chunk: BackBuf) -> Result<ProtoDecodeResult> {
+        chunk.imp.buf.access(|buf| {
+            let buf = buf?;
+            let len = buf.len();
+            if len < 4 {
+                return Err(Error::id("InvalidHeaderLen"));
+            }
+
+            match ProtoHeader::decode(buf[0], buf[1], buf[2], buf[3])? {
+                ProtoHeader::Version(v, [a, b, c]) => {
+                    if v != 1 || a != b't' || b != b'x' || c != b'5' {
+                        return Err(Error::err(format!(
+                            "invalid version v = {v}, tag = {}",
+                            String::from_utf8_lossy(&[a, b, c][..]),
+                        )));
+                    }
+
+                    if self.state == DecodeState::NeedVersion {
+                        self.state = DecodeState::Ready;
+                        Ok(ProtoDecodeResult::Idle)
+                    } else {
+                        Err(Error::id("RecvUnexpectedVersionMessage"))
+                    }
                 }
-
-                match ProtoHeader::decode(buf[0], buf[1], buf[2], buf[3]) {
-                    ProtoHeader::CompleteMessage(msg_len) => {
+                ProtoHeader::CompleteMessage(msg_len) => {
+                    if self.state == DecodeState::Ready {
                         if msg_len as usize != len - 4 {
                             return Err(Error::id("InvalidCompleteMessageLen"));
                         }
 
                         Ok(ProtoDecodeResult::Message(buf[4..].to_vec()))
+                    } else {
+                        Err(Error::id("RecvUnexpectedCompleteMessage"))
                     }
-                    ProtoHeader::PermitRequest(permit_len) => {
-                        self.state =
-                            DecodeState::AwaitThisNodePermit(permit_len);
-                        Ok(ProtoDecodeResult::PermitRequest(permit_len))
-                    }
-                    ProtoHeader::PermitGrant(permit_len) => {
-                        Ok(ProtoDecodeResult::PermitGrant(permit_len))
-                    }
-                    _ => Err(Error::id("InvalidTx5ProtocolHeader")),
                 }
-            }),
-            DecodeState::AwaitThisNodePermit(_) => {
-                chunk.imp.buf.access(|buf| {
-                    let buf = buf?;
-                    let len = buf.len();
-
-                    if len < 4 {
-                        return Err(Error::id("InvalidHeaderLen"));
-                    }
-                    match ProtoHeader::decode(buf[0], buf[1], buf[2], buf[3]) {
-                        ProtoHeader::PermitGrant(permit_len) => {
-                            Ok(ProtoDecodeResult::PermitGrant(permit_len))
+                ProtoHeader::MultipartMessage(msg_len) => {
+                    if self.state == DecodeState::ReceiveChunked {
+                        if msg_len as usize != len - 4 || msg_len == 0 {
+                            return Err(Error::id(
+                                "InvalidMultipartMessageLen",
+                            ));
                         }
-                        _ => Err(Error::id(
-                            "InvalidTx5ProtocolHeaderWhileAwaitingPermit",
-                        )),
+
+                        if msg_len as usize + self.incoming.len()
+                            > self.want_size
+                        {
+                            return Err(Error::id("ChunkTooLarge"));
+                        }
+
+                        self.incoming.extend_from_slice(&buf[4..]);
+
+                        if self.incoming.len() == self.want_size {
+                            self.state = DecodeState::Ready;
+                            Ok(ProtoDecodeResult::Message(std::mem::take(
+                                &mut self.incoming,
+                            )))
+                        } else {
+                            Ok(ProtoDecodeResult::Idle)
+                        }
+                    } else {
+                        Err(Error::id("RecvUnexpectedMultipartMessage"))
                     }
-                })
+                }
+                ProtoHeader::PermitRequest(permit_len) => {
+                    if self.state == DecodeState::Ready {
+                        self.state =
+                            DecodeState::RemoteAwaitingPermit(permit_len);
+                        Ok(ProtoDecodeResult::RemotePermitRequest(permit_len))
+                    } else {
+                        Err(Error::id("RecvUnexpectedPermitRequest"))
+                    }
+                }
+                ProtoHeader::PermitGrant(permit_len) => {
+                    if self.want_remote_grant {
+                        self.want_remote_grant = false;
+                        Ok(ProtoDecodeResult::RemotePermitGrant(permit_len))
+                    } else {
+                        Err(Error::id("RecvUnexpectedPermitGrant"))
+                    }
+                }
             }
-            DecodeState::ReceiveChunked => chunk.imp.buf.access(|buf| {
-                let buf = buf?;
-                let len = buf.len();
-
-                if len + self.incoming.len() > self.want_size {
-                    return Err(Error::id("ChunkTooLarge"));
-                }
-
-                self.incoming.extend_from_slice(buf);
-
-                if self.incoming.len() == self.want_size {
-                    self.state = DecodeState::Ready;
-                    Ok(ProtoDecodeResult::Message(std::mem::take(
-                        &mut self.incoming,
-                    )))
-                } else {
-                    Ok(ProtoDecodeResult::Idle)
-                }
-            }),
-        }
+        })
     }
 }
 
@@ -287,17 +362,23 @@ impl ProtoDecoder {
 mod test {
     use super::*;
 
+    const DEF_VER: ProtoHeader = ProtoHeader::Version(1, [b't', b'x', b'5']);
+
     #[test]
     fn proto_header_encode_decode() {
         fn check(hdr: ProtoHeader) {
             let (a, b, c, d) = hdr.encode().unwrap();
-            let res = ProtoHeader::decode(a, b, c, d);
+            let res = ProtoHeader::decode(a, b, c, d).unwrap();
             assert_eq!(hdr, res);
         }
 
-        for v in &[0, 42, 0b00111111111111111111111111111111] {
-            check(ProtoHeader::Version(*v));
+        for v in 0..32 {
+            check(ProtoHeader::Version(v, [b't', b'x', b'5']));
+        }
+
+        for v in &[0, 42, 0b00011111111111111111111111111111] {
             check(ProtoHeader::CompleteMessage(*v));
+            check(ProtoHeader::MultipartMessage(*v));
             check(ProtoHeader::PermitRequest(*v));
             check(ProtoHeader::PermitGrant(*v));
         }
@@ -305,18 +386,24 @@ mod test {
 
     #[test]
     fn proto_header_overflow() {
-        assert!(ProtoHeader::Version(u32::MAX).encode().is_err());
+        assert!(ProtoHeader::Version(u8::MAX, [b't', b'x', b'5'])
+            .encode()
+            .is_err());
         assert!(ProtoHeader::CompleteMessage(u32::MAX).encode().is_err());
+        assert!(ProtoHeader::MultipartMessage(u32::MAX).encode().is_err());
         assert!(ProtoHeader::PermitRequest(u32::MAX).encode().is_err());
         assert!(ProtoHeader::PermitGrant(u32::MAX).encode().is_err());
     }
 
     #[test]
     fn proto_header_version_1() {
-        const PROTO_VERSION_1: &[u8; 4] =
-            &[0b00000000, 0b00000000, 0b00000000, 0b00000001];
+        const PROTO_VERSION_1: &[u8; 4] = &[
+            0b01000001, // 010 for 3 bits == 2, 00001 for version #1
+            b't', b'x', b'5',
+        ];
 
-        let (a, b, c, d) = ProtoHeader::Version(1).encode().unwrap();
+        let (a, b, c, d) = DEF_VER.encode().unwrap();
+
         assert_eq!(PROTO_VERSION_1[0], a);
         assert_eq!(PROTO_VERSION_1[1], b);
         assert_eq!(PROTO_VERSION_1[2], c);
@@ -326,7 +413,7 @@ mod test {
     #[test]
     fn proto_decode_complete_msg() {
         let mut dec = ProtoDecoder::default();
-        let (a, b, c, d) = ProtoHeader::Version(1).encode().unwrap();
+        let (a, b, c, d) = DEF_VER.encode().unwrap();
         assert_eq!(
             ProtoDecodeResult::Idle,
             dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
@@ -347,27 +434,29 @@ mod test {
 
     #[test]
     fn proto_decode_chunked_msg() {
+        use rand::Rng;
         let mut dec = ProtoDecoder::default();
-        let (a, b, c, d) = ProtoHeader::Version(1).encode().unwrap();
+        let (a, b, c, d) = DEF_VER.encode().unwrap();
         assert_eq!(
             ProtoDecodeResult::Idle,
             dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
                 .unwrap(),
         );
-        const MSG: &[u8] = &[0xdb; 15 * 1024 * 1024];
-        match proto_encode(MSG).unwrap() {
+        let mut msg = vec![0; 15 * 1024 * 1024];
+        rand::thread_rng().fill(&mut msg[..]);
+        match proto_encode(&msg).unwrap() {
             ProtoEncodeResult::NeedPermit {
                 permit_req,
                 mut msg_payload,
             } => {
                 match dec.decode(permit_req).unwrap() {
-                    ProtoDecodeResult::PermitRequest(permit_len) => {
+                    ProtoDecodeResult::RemotePermitRequest(permit_len) => {
                         assert_eq!(15 * 1024 * 1024, permit_len);
                     }
                     _ => panic!(),
                 }
 
-                dec.sent_permit().unwrap();
+                dec.sent_remote_permit_grant().unwrap();
 
                 while msg_payload.len() > 1 {
                     assert_eq!(
@@ -377,8 +466,8 @@ mod test {
                 }
 
                 match dec.decode(msg_payload.remove(0)).unwrap() {
-                    ProtoDecodeResult::Message(msg) => {
-                        assert_eq!(MSG, msg);
+                    ProtoDecodeResult::Message(msg_res) => {
+                        assert_eq!(msg, msg_res);
                     }
                     _ => panic!(),
                 }
@@ -391,5 +480,73 @@ mod test {
     fn proto_decode_bad_version() {
         let mut dec = ProtoDecoder::default();
         assert!(dec.decode(BackBuf::from_slice(b"hello").unwrap()).is_err());
+    }
+
+    #[test]
+    fn proto_decode_no_duplicate_permit_requests() {
+        let mut dec = ProtoDecoder::default();
+        let (a, b, c, d) = DEF_VER.encode().unwrap();
+        assert_eq!(
+            ProtoDecodeResult::Idle,
+            dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
+                .unwrap(),
+        );
+        dec.sent_remote_permit_request().unwrap();
+        assert!(dec.sent_remote_permit_request().is_err());
+    }
+
+    #[test]
+    fn proto_decode_grant_during_multipart() {
+        use rand::Rng;
+        let mut dec = ProtoDecoder::default();
+        let (a, b, c, d) = DEF_VER.encode().unwrap();
+        assert_eq!(
+            ProtoDecodeResult::Idle,
+            dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
+                .unwrap(),
+        );
+
+        dec.sent_remote_permit_request().unwrap();
+
+        let mut msg = vec![0; 17 * 1024];
+        rand::thread_rng().fill(&mut msg[..]);
+        match proto_encode(&msg).unwrap() {
+            ProtoEncodeResult::NeedPermit {
+                permit_req,
+                mut msg_payload,
+            } => {
+                match dec.decode(permit_req).unwrap() {
+                    ProtoDecodeResult::RemotePermitRequest(permit_len) => {
+                        assert_eq!(17 * 1024, permit_len);
+                    }
+                    _ => panic!(),
+                }
+
+                dec.sent_remote_permit_grant().unwrap();
+
+                assert_eq!(2, msg_payload.len());
+
+                assert_eq!(
+                    ProtoDecodeResult::Idle,
+                    dec.decode(msg_payload.remove(0)).unwrap(),
+                );
+
+                let (a, b, c, d) =
+                    ProtoHeader::PermitGrant(18 * 1024).encode().unwrap();
+                assert_eq!(
+                    ProtoDecodeResult::RemotePermitGrant(18 * 1024),
+                    dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
+                        .unwrap(),
+                );
+
+                match dec.decode(msg_payload.remove(0)).unwrap() {
+                    ProtoDecodeResult::Message(msg_res) => {
+                        assert_eq!(msg, msg_res);
+                    }
+                    _ => panic!(),
+                }
+            }
+            _ => panic!(),
+        }
     }
 }

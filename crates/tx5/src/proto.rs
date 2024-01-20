@@ -6,6 +6,10 @@ use tx5_core::{Error, Result};
 /// Tx5 protocol message payload max size.
 pub const MAX_PAYLOAD: u32 = 0b00011111111111111111111111111111;
 
+/// Protocol version 1 header.
+pub const PROTO_VER_1: ProtoHeader =
+    ProtoHeader::Version(1, [b't', b'x', b'5']);
+
 /// 4 byte Tx5 protocol header.
 ///
 /// The initial 3 bits representing values 0, 1, and 7 are reserved.
@@ -210,6 +214,8 @@ pub struct ProtoDecoder {
     incoming: Vec<u8>,
     want_remote_grant: bool,
     did_error: bool,
+    grant_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    grant_notify: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl Default for ProtoDecoder {
@@ -220,6 +226,8 @@ impl Default for ProtoDecoder {
             incoming: Vec::new(),
             want_remote_grant: false,
             did_error: false,
+            grant_permit: None,
+            grant_notify: None,
         }
     }
 }
@@ -227,12 +235,16 @@ impl Default for ProtoDecoder {
 impl ProtoDecoder {
     /// Notify the decoder that we sent the previously requested permit
     /// to the remote.
-    pub fn sent_remote_permit_grant(&mut self) -> Result<()> {
+    pub fn sent_remote_permit_grant(
+        &mut self,
+        grant_permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<()> {
         self.check_err()?;
         if let DecodeState::RemoteAwaitingPermit(permit_len) = self.state {
             self.state = DecodeState::ReceiveChunked;
             self.want_size = permit_len as usize;
             self.incoming.reserve(self.want_size);
+            self.grant_permit = Some(grant_permit);
             Ok(())
         } else {
             self.did_error = true;
@@ -242,13 +254,17 @@ impl ProtoDecoder {
 
     /// Notify the decoder that we have requested a permit from the remote,
     /// so we should expect to receive a grant.
-    pub fn sent_remote_permit_request(&mut self) -> Result<()> {
+    pub fn sent_remote_permit_request(
+        &mut self,
+        grant_notify: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<()> {
         self.check_err()?;
         if self.want_remote_grant {
             self.did_error = true;
             Err(Error::id("InvalidDuplicatePermitRequest"))
         } else {
             self.want_remote_grant = true;
+            self.grant_notify = grant_notify;
             Ok(())
         }
     }
@@ -325,6 +341,7 @@ impl ProtoDecoder {
                         self.incoming.extend_from_slice(&buf[4..]);
 
                         if self.incoming.len() == self.want_size {
+                            drop(self.grant_permit.take());
                             self.state = DecodeState::Ready;
                             Ok(ProtoDecodeResult::Message(std::mem::take(
                                 &mut self.incoming,
@@ -348,6 +365,9 @@ impl ProtoDecoder {
                 ProtoHeader::PermitGrant(permit_len) => {
                     if self.want_remote_grant {
                         self.want_remote_grant = false;
+                        if let Some(grant_notify) = self.grant_notify.take() {
+                            let _ = grant_notify.send(());
+                        }
                         Ok(ProtoDecodeResult::RemotePermitGrant(permit_len))
                     } else {
                         Err(Error::id("RecvUnexpectedPermitGrant"))
@@ -361,8 +381,6 @@ impl ProtoDecoder {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    const DEF_VER: ProtoHeader = ProtoHeader::Version(1, [b't', b'x', b'5']);
 
     #[test]
     fn proto_header_encode_decode() {
@@ -402,7 +420,7 @@ mod test {
             b't', b'x', b'5',
         ];
 
-        let (a, b, c, d) = DEF_VER.encode().unwrap();
+        let (a, b, c, d) = PROTO_VER_1.encode().unwrap();
 
         assert_eq!(PROTO_VERSION_1[0], a);
         assert_eq!(PROTO_VERSION_1[1], b);
@@ -413,7 +431,7 @@ mod test {
     #[test]
     fn proto_decode_complete_msg() {
         let mut dec = ProtoDecoder::default();
-        let (a, b, c, d) = DEF_VER.encode().unwrap();
+        let (a, b, c, d) = PROTO_VER_1.encode().unwrap();
         assert_eq!(
             ProtoDecodeResult::Idle,
             dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
@@ -436,7 +454,7 @@ mod test {
     fn proto_decode_chunked_msg() {
         use rand::Rng;
         let mut dec = ProtoDecoder::default();
-        let (a, b, c, d) = DEF_VER.encode().unwrap();
+        let (a, b, c, d) = PROTO_VER_1.encode().unwrap();
         assert_eq!(
             ProtoDecodeResult::Idle,
             dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
@@ -456,7 +474,12 @@ mod test {
                     _ => panic!(),
                 }
 
-                dec.sent_remote_permit_grant().unwrap();
+                dec.sent_remote_permit_grant(
+                    std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                        .try_acquire_owned()
+                        .unwrap(),
+                )
+                .unwrap();
 
                 while msg_payload.len() > 1 {
                     assert_eq!(
@@ -485,28 +508,28 @@ mod test {
     #[test]
     fn proto_decode_no_duplicate_permit_requests() {
         let mut dec = ProtoDecoder::default();
-        let (a, b, c, d) = DEF_VER.encode().unwrap();
+        let (a, b, c, d) = PROTO_VER_1.encode().unwrap();
         assert_eq!(
             ProtoDecodeResult::Idle,
             dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
                 .unwrap(),
         );
-        dec.sent_remote_permit_request().unwrap();
-        assert!(dec.sent_remote_permit_request().is_err());
+        dec.sent_remote_permit_request(None).unwrap();
+        assert!(dec.sent_remote_permit_request(None).is_err());
     }
 
     #[test]
     fn proto_decode_grant_during_multipart() {
         use rand::Rng;
         let mut dec = ProtoDecoder::default();
-        let (a, b, c, d) = DEF_VER.encode().unwrap();
+        let (a, b, c, d) = PROTO_VER_1.encode().unwrap();
         assert_eq!(
             ProtoDecodeResult::Idle,
             dec.decode(BackBuf::from_slice(&[a, b, c, d]).unwrap())
                 .unwrap(),
         );
 
-        dec.sent_remote_permit_request().unwrap();
+        dec.sent_remote_permit_request(None).unwrap();
 
         let mut msg = vec![0; 17 * 1024];
         rand::thread_rng().fill(&mut msg[..]);
@@ -522,7 +545,12 @@ mod test {
                     _ => panic!(),
                 }
 
-                dec.sent_remote_permit_grant().unwrap();
+                dec.sent_remote_permit_grant(
+                    std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                        .try_acquire_owned()
+                        .unwrap(),
+                )
+                .unwrap();
 
                 assert_eq!(2, msg_payload.len());
 

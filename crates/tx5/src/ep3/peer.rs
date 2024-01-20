@@ -1,4 +1,5 @@
 use super::*;
+use crate::proto::*;
 
 pub(crate) enum PeerCmd {
     Error(Error),
@@ -64,6 +65,7 @@ pub(crate) struct Peer {
     metric_bytes_send: influxive_otel_atomic_obs::AtomicObservableCounterU64,
     metric_unreg:
         Option<Box<dyn opentelemetry_api::metrics::CallbackRegistration>>,
+    dec: Arc<Mutex<ProtoDecoder>>,
 }
 
 impl Drop for Peer {
@@ -158,7 +160,7 @@ impl Peer {
         let (peer, mut peer_recv) = tx5_go_pion::PeerConnection::new(
             peer_config.imp.buf,
             Arc::new(tokio::sync::Semaphore::new(
-                sig.config.connection_bytes_max as usize,
+                sig.config.recv_buffer_bytes_max as usize,
             )),
         )
         .await?;
@@ -425,22 +427,34 @@ impl Peer {
             .into());
         }
 
+        let (a, b, c, d) = PROTO_VER_1.encode()?;
+        data_chan
+            .send(BackBuf::from_slice([a, b, c, d])?.imp.buf)
+            .await?;
+
         sig.evt_send
             .send(Ep3Event::Connected {
                 peer_url: peer_url.clone(),
             })
             .await?;
 
+        let dec = Arc::new(Mutex::new(ProtoDecoder::default()));
+
         let data_task = {
+            let dec = dec.clone();
+            let weak_data_chan = Arc::downgrade(&data_chan);
             let peer_url = peer_url.clone();
             let sig = sig.clone();
             tokio::task::spawn(async move {
-                let mut preflight = true;
+                let mut did_preflight = false;
+                /*
+                let preflight; // = true;
 
-                let mut preflight_bytes = BytesList::default();
+                //let mut preflight_bytes = BytesList::default();
 
                 macro_rules! check_preflight {
-                    () => {
+                    () => {{
+                        /*
                         match (sig.config.preflight_check_cb)(
                             &peer_url,
                             &preflight_bytes,
@@ -458,45 +472,57 @@ impl Peer {
                                 Err(err)
                             }
                         }
-                    };
+                        */
+                        preflight = false;
+                        Result::Ok(())
+                    }};
                 }
+                */
 
-                if check_preflight!().is_ok() {
-                    while let Some(evt) = data_recv.recv().await {
-                        use tx5_go_pion::DataChannelEvent::*;
-                        match evt {
-                            Error(err) => {
-                                tracing::warn!(?err);
-                                break;
-                            }
-                            Open => (),
-                            Close => break,
-                            Message(message, permit) => {
-                                let mut message = BackBuf::from_raw(message);
+                //if check_preflight!().is_ok() {
+                while let Some(evt) = data_recv.recv().await {
+                    use tx5_go_pion::DataChannelEvent::*;
+                    match evt {
+                        Error(err) => {
+                            tracing::warn!(?err);
+                            break;
+                        }
+                        Open => (),
+                        Close => break,
+                        Message(message, permit) => {
+                            let mut message = BackBuf::from_raw(message);
 
-                                let len = message.len().unwrap();
+                            let len = message.len().unwrap();
 
-                                metric_bytes_recv.add(len as u64);
+                            metric_bytes_recv.add(len as u64);
 
-                                // clippy, you keep trying to make
-                                // things harder to read
-                                #[allow(clippy::collapsible_else_if)]
-                                if preflight {
-                                    use bytes::BufMut;
-                                    let mut bm =
-                                        bytes::BytesMut::with_capacity(len)
-                                            .writer();
-                                    if std::io::copy(&mut message, &mut bm)
-                                        .is_err()
-                                    {
-                                        break;
+                            let dec_res = dec.lock().unwrap().decode(message);
+
+                            use ProtoDecodeResult::*;
+                            match match dec_res {
+                                Ok(r) => r,
+                                Err(err) => {
+                                    tracing::debug!(?err, "DecodeError");
+                                    break;
+                                }
+                            } {
+                                Idle => (),
+                                Message(message) => {
+                                    if !did_preflight {
+                                        did_preflight = true;
+
+                                        if let Some((_pf_send, pf_check)) =
+                                            sig.config.preflight.as_ref()
+                                        {
+                                            if pf_check(&peer_url, message)
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                            continue;
+                                        }
                                     }
-                                    preflight_bytes
-                                        .push(bm.into_inner().freeze());
-                                    if check_preflight!().is_err() {
-                                        break;
-                                    }
-                                } else {
                                     if sig
                                         .evt_send
                                         .send(Ep3Event::Message {
@@ -510,11 +536,96 @@ impl Peer {
                                         break;
                                     }
                                 }
+                                RemotePermitRequest(permit_len) => {
+                                    if permit_len > sig.config.message_size_max
+                                    {
+                                        tracing::debug!(%permit_len, "InvalidPermitSizeRequest");
+                                        break;
+                                    }
+                                    if let Some(data_chan) =
+                                        weak_data_chan.upgrade()
+                                    {
+                                        let dec = dec.clone();
+                                        let recv_recon_limit =
+                                            sig.recv_recon_limit.clone();
+                                        // fire and forget
+                                        tokio::task::spawn(async move {
+                                            let permit = recv_recon_limit
+                                                .acquire_many_owned(permit_len)
+                                                .await
+                                                .map_err(
+                                                    tx5_core::Error::err,
+                                                )?;
+                                            let (a, b, c, d) =
+                                                ProtoHeader::PermitGrant(
+                                                    permit_len,
+                                                )
+                                                .encode()?;
+                                            data_chan
+                                                .send(
+                                                    BackBuf::from_slice([
+                                                        a, b, c, d,
+                                                    ])
+                                                    .unwrap()
+                                                    .imp
+                                                    .buf,
+                                                )
+                                                .await?;
+                                            dec.lock()
+                                                .unwrap()
+                                                .sent_remote_permit_grant(
+                                                    permit,
+                                                )?;
+                                            Result::Ok(())
+                                        });
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                RemotePermitGrant(_permit_len) => (),
                             }
-                            BufferedAmountLow => (),
+
+                            /*
+                            // clippy, you keep trying to make
+                            // things harder to read
+                            #[allow(clippy::collapsible_else_if)]
+                            if preflight {
+                                /*
+                                use bytes::BufMut;
+                                let mut bm =
+                                    bytes::BytesMut::with_capacity(len)
+                                        .writer();
+                                if std::io::copy(&mut message, &mut bm)
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                preflight_bytes
+                                    .push(bm.into_inner().freeze());
+                                if check_preflight!().is_err() {
+                                    break;
+                                }
+                                */
+                            } else {
+                                if sig
+                                    .evt_send
+                                    .send(Ep3Event::Message {
+                                        peer_url: peer_url.clone(),
+                                        message,
+                                        permit,
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            */
                         }
+                        BufferedAmountLow => (),
                     }
                 }
+                //}
 
                 close_peer(&sig.weak_peer_map, peer_id, peer_uniq);
             })
@@ -538,18 +649,51 @@ impl Peer {
             send_limit: Arc::new(tokio::sync::Semaphore::new(1)),
             metric_bytes_send,
             metric_unreg: Some(metric_unreg),
+            dec,
         });
 
-        if let Some(preflight) =
-            (this.sig.config.preflight_send_cb)(&peer_url).await?
-        {
-            this.send(preflight).await?;
+        if let Some((pf_send, _pf_check)) = this.sig.config.preflight.as_ref() {
+            this.send(&pf_send(&peer_url).await?).await?;
         }
 
         Ok(this)
     }
 
-    pub async fn send(&self, data: Vec<BackBuf>) -> Result<()> {
+    async fn sub_send(&self, mut buf: BackBuf) -> Result<()> {
+        tokio::time::timeout(self.sig.config.timeout, async {
+            let mut backoff = std::time::Duration::from_millis(1);
+            loop {
+                if self.data_chan.buffered_amount()?
+                    <= self.sig.config.send_buffer_bytes_max as usize
+                {
+                    break;
+                }
+                tokio::time::sleep(backoff).await;
+                backoff *= 2;
+                if backoff.as_millis() > 200 {
+                    backoff = std::time::Duration::from_millis(200);
+                }
+            }
+            self.metric_bytes_send.add(buf.len()? as u64);
+
+            if self.sig.ban_map.lock().unwrap().is_banned(self.peer_id) {
+                return Err(Error::str("Peer is currently banned"));
+            }
+
+            self.data_chan.send(buf.imp.buf).await
+        })
+        .await
+        .map_err(|_| {
+            Error::str("Timeout sending data to backend data channel")
+        })??;
+        Ok(())
+    }
+
+    pub async fn send(&self, data: &[u8]) -> Result<()> {
+        if data.len() > self.sig.config.message_size_max as usize {
+            return Err(Error::str("Message is too large"));
+        }
+
         if self.sig.ban_map.lock().unwrap().is_banned(self.peer_id) {
             return Err(Error::str("Peer is currently banned"));
         }
@@ -563,6 +707,32 @@ impl Peer {
         .map_err(|_| Error::str("Timeout acquiring send permit"))?
         .map_err(|_| Error::str("Failed to acquire send permit"))?;
 
+        match proto_encode(data)? {
+            ProtoEncodeResult::NeedPermit {
+                permit_req,
+                msg_payload,
+            } => {
+                let (s, r) = tokio::sync::oneshot::channel();
+
+                self.dec
+                    .lock()
+                    .unwrap()
+                    .sent_remote_permit_request(Some(s))?;
+
+                self.sub_send(permit_req).await?;
+
+                r.await.map_err(|_| Error::id("ConnectionClosed"))?;
+
+                for message in msg_payload {
+                    self.sub_send(message).await?;
+                }
+            }
+            ProtoEncodeResult::OneMessage(buf) => {
+                self.sub_send(buf).await?;
+            }
+        }
+
+        /*
         for mut buf in data {
             let len = buf.len()?;
             if len > 16 * 1024 {
@@ -574,13 +744,16 @@ impl Peer {
 
                 loop {
                     if self.data_chan.buffered_amount()?
-                        <= self.sig.config.connection_bytes_max as usize
+                        <= self.sig.config.send_buffer_bytes_max as usize
                     {
                         break;
                     }
 
                     tokio::time::sleep(backoff).await;
                     backoff *= 2;
+                    if backoff.as_millis() > 200 {
+                        backoff = std::time::Duration::from_millis(200);
+                    }
                 }
 
                 self.metric_bytes_send.add(len as u64);
@@ -596,6 +769,7 @@ impl Peer {
                 Error::str("Timeout sending data to backend data channel")
             })??;
         }
+        */
 
         Ok(())
     }

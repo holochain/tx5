@@ -8,7 +8,7 @@ const DASH_TX5: &[u8] = include_bytes!("influxive-dashboards/tx5.json");
 use clap::Parser;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tx5::{BackBuf, Config3, Ep3, Ep3Event, Result, Tx5Url};
+use tx5::{Config3, Ep3, Ep3Event, Result, Tx5Url};
 
 #[derive(Debug, Parser)]
 #[clap(name = "tx5-demo", version, about = "Holochain Tx5 WebRTC Demo Cli")]
@@ -47,10 +47,8 @@ enum Message {
 }
 
 impl Message {
-    pub fn encode(&self) -> Result<BackBuf> {
-        let mut w = tx5::BackBufWriter::new()?;
-        serde_json::to_writer(&mut w, self)?;
-        Ok(w.finish())
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(&self).map_err(tx5::Error::err)
     }
 
     pub fn decode(data: &[u8]) -> Result<Self> {
@@ -65,7 +63,7 @@ impl Message {
 
     pub fn big() -> Self {
         use rand::Rng;
-        let mut big = vec![0; (1024 * 15 * 3) / 4]; // 15 KiB but base64
+        let mut big = vec![0; (1024 * 1024 * 15 * 3) / 4]; // 15 MiB but base64
         rand::thread_rng().fill(&mut big[..]);
         let big = base64::encode(&big);
         Message::Big(big)
@@ -176,23 +174,15 @@ impl Node {
         }
     }
 
-    pub fn send(
-        &self,
-        ep: &Arc<Ep3>,
-        rem_url: &Tx5Url,
-        mut data: Vec<BackBuf>,
-    ) {
+    pub fn send(&self, ep: &Arc<Ep3>, rem_url: &Tx5Url, data: Vec<u8>) {
         let ep = ep.clone();
         let rem_url = rem_url.clone();
         tokio::task::spawn(async move {
-            let mut len = 0;
-            for b in data.iter_mut() {
-                len += b.len().unwrap();
-            }
+            let len = data.len();
 
             let id = rem_url.id().unwrap();
 
-            if let Err(err) = ep.send(rem_url, data).await {
+            if let Err(err) = ep.send(rem_url, &data).await {
                 d!(
                     error,
                     "SEND_ERROR",
@@ -205,12 +195,12 @@ impl Node {
     }
 
     pub fn broadcast_hello(&self, ep: &Arc<Ep3>) -> Result<()> {
-        let mut hello = Message::hello(&self.known_peers).encode()?;
+        let hello = Message::hello(&self.known_peers).encode()?;
         for url in self.known_peers.keys() {
             if url == &self.this_url {
                 continue;
             }
-            self.send(ep, url, vec![hello.try_clone()?]);
+            self.send(ep, url, hello.clone());
         }
         Ok(())
     }
@@ -242,7 +232,7 @@ impl Node {
         self.known_peers.get_mut(&url).unwrap().last_sent =
             std::time::Instant::now();
         let hello = Message::hello(&self.known_peers).encode()?;
-        self.send(ep, &url, vec![hello]);
+        self.send(ep, &url, hello);
 
         Ok(())
     }
@@ -261,15 +251,8 @@ impl Node {
         }
 
         rand::seq::SliceRandom::shuffle(&mut v[..], &mut rand::thread_rng());
-
-        let mut out = Vec::new();
-
-        // make it 15 MiB
-        for _ in 0..1024 {
-            out.push(Message::big().encode()?);
-        }
-
-        self.send(ep, v.first().unwrap(), out);
+        let big = Message::big().encode()?;
+        self.send(ep, v.first().unwrap(), big);
 
         Ok(())
     }
@@ -413,12 +396,9 @@ async fn main_err() -> Result<()> {
                 d!(info, "DISCONNECTED", "{:?}", peer_url.id().unwrap());
             }
             Cmd::EpEvt(Ep3Event::Message {
-                peer_url,
-                mut message,
-                ..
+                peer_url, message, ..
             }) => {
                 node.add_known_peer(peer_url.clone());
-                let message = message.to_vec().unwrap();
                 match Message::decode(&message) {
                     Err(err) => d!(error, "RECV_ERROR", "{err:?}"),
                     Ok(Message::Hello { known_peers: kp }) => {

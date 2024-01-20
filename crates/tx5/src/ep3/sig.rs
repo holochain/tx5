@@ -317,7 +317,7 @@ impl Sig {
         }
     }
 
-    pub async fn broadcast(&self, mut data: Vec<BackBuf>) {
+    pub async fn broadcast(&self, data: &[u8]) {
         let mut task_list = Vec::new();
 
         let fut_list = self
@@ -329,20 +329,11 @@ impl Sig {
             .collect::<Vec<_>>();
 
         for fut in fut_list {
-            let mut clone_data = Vec::new();
-            for msg in data.iter_mut() {
-                if let Ok(msg) = msg.try_clone() {
-                    clone_data.push(msg);
-                } else {
-                    continue;
-                }
-            }
-
             task_list.push(async move {
                 // timeouts are built into this future as well
                 // as the peer.send function
                 if let Ok(peer) = fut.await {
-                    let _ = peer.send(clone_data).await;
+                    let _ = peer.send(data).await;
                 }
             });
         }

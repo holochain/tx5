@@ -82,9 +82,7 @@ async fn ep3_sanity() {
     let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
     let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
 
-    ep1.send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
-        .await
-        .unwrap();
+    ep1.send(cli_url2, b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -94,10 +92,10 @@ async fn ep3_sanity() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
-        _ => panic!(),
+        oth => panic!("{oth:?}"),
     }
 
     let stats = ep1.get_stats().await;
@@ -123,12 +121,7 @@ async fn ep3_sig_down() {
 
     eprintln!("-- Establish Connection --");
 
-    ep1.send(
-        cli_url2.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap();
+    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -138,8 +131,8 @@ async fn ep3_sig_down() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         _ => panic!(),
     }
@@ -154,11 +147,8 @@ async fn ep3_sig_down() {
     let (cli_url3, _ep3, _ep3_recv) = test.ep(config).await;
 
     let (a, b) = tokio::join!(
-        ep1.send(
-            cli_url3.clone(),
-            vec![BackBuf::from_slice(b"hello").unwrap()],
-        ),
-        ep2.send(cli_url3, vec![BackBuf::from_slice(b"hello").unwrap()],),
+        ep1.send(cli_url3.clone(), b"hello",),
+        ep2.send(cli_url3, b"hello"),
     );
 
     a.unwrap_err();
@@ -169,12 +159,7 @@ async fn ep3_sig_down() {
     // now a send to cli_url2 should *also* fail
     eprintln!("-- Send Should Fail --");
 
-    ep1.send(
-        cli_url2.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap_err();
+    ep1.send(cli_url2.clone(), b"hello").await.unwrap_err();
 
     eprintln!("-- Restart Sig --");
 
@@ -184,12 +169,7 @@ async fn ep3_sig_down() {
 
     eprintln!("-- Send Should Succeed --");
 
-    ep1.send(
-        cli_url2.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap();
+    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -205,8 +185,8 @@ async fn ep3_sig_down() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         oth => panic!("{oth:?}"),
     }
@@ -222,9 +202,7 @@ async fn ep3_drop() {
     let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
     let (cli_url2, ep2, mut ep2_recv) = test.ep(config.clone()).await;
 
-    ep1.send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
-        .await
-        .unwrap();
+    ep1.send(cli_url2, b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -234,8 +212,8 @@ async fn ep3_drop() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         _ => panic!(),
     }
@@ -245,9 +223,7 @@ async fn ep3_drop() {
 
     let (cli_url3, _ep3, mut ep3_recv) = test.ep(config).await;
 
-    ep1.send(cli_url3, vec![BackBuf::from_slice(b"world").unwrap()])
-        .await
-        .unwrap();
+    ep1.send(cli_url3, b"world").await.unwrap();
 
     let res = ep3_recv.recv().await.unwrap();
     match res {
@@ -257,8 +233,8 @@ async fn ep3_drop() {
 
     let res = ep3_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"world"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"world"[..], &message);
         }
         _ => panic!(),
     }
@@ -296,10 +272,7 @@ async fn ep3_negotiation() {
     let mut fut_list = Vec::new();
     for (i, ep) in ep_list.iter_mut().enumerate() {
         if i != 0 {
-            fut_list.push(ep.send(
-                first_url.clone(),
-                vec![BackBuf::from_slice(b"hello").unwrap()],
-            ));
+            fut_list.push(ep.send(first_url.clone(), b"hello"));
         }
     }
 
@@ -312,10 +285,7 @@ async fn ep3_negotiation() {
     for (i, ep) in ep_list.iter_mut().enumerate() {
         for (j, url) in url_list.iter().enumerate() {
             if i != j {
-                fut_list.push(ep.send(
-                    url.clone(),
-                    vec![BackBuf::from_slice(b"world").unwrap()],
-                ));
+                fut_list.push(ep.send(url.clone(), b"world"));
             }
         }
     }
@@ -349,21 +319,25 @@ async fn ep3_messages_contiguous() {
         all_tasks.push(tokio::task::spawn(async move {
             let _recv = _recv;
 
-            start.wait().await;
+            let mut messages = Vec::new();
 
             for msg_id in 0..SEND_COUNT {
-                let mut chunks = Vec::new();
+                let mut chunks = vec![b'-'; ((16 * 1024) - 4) * CHUNK_COUNT];
 
                 for chunk_id in 0..CHUNK_COUNT {
-                    chunks.push(
-                        BackBuf::from_slice(
-                            format!("{node_id}:{msg_id}:{chunk_id}").as_bytes(),
-                        )
-                        .unwrap(),
-                    );
+                    let data = format!("{node_id}:{msg_id}:{chunk_id}");
+                    let data = data.as_bytes();
+                    let s = ((16 * 1024) - 4) * chunk_id;
+                    chunks[s..s + data.len()].copy_from_slice(data);
                 }
 
-                ep.send(dest_url.clone(), chunks).await.unwrap();
+                messages.push(chunks);
+            }
+
+            start.wait().await;
+
+            for message in messages {
+                ep.send(dest_url.clone(), &message).await.unwrap();
             }
 
             stop.wait().await;
@@ -379,28 +353,30 @@ async fn ep3_messages_contiguous() {
         match res {
             Ep3Event::Connected { .. } => (),
             Ep3Event::Message {
-                peer_url,
-                mut message,
-                ..
+                peer_url, message, ..
             } => {
-                let message = message.to_vec().unwrap();
-                let message = String::from_utf8_lossy(&message).to_string();
-                let mut parts = message.split(':');
-                let node = parts.next().unwrap().parse().unwrap();
-                let msg = parts.next().unwrap().parse().unwrap();
-                let chunk = parts.next().unwrap().parse().unwrap();
-
-                sort.entry(peer_url.to_string())
-                    .or_default()
-                    .push((node, msg, chunk));
+                assert_eq!(((16 * 1024) - 4) * CHUNK_COUNT, message.len());
+                for chunk_id in 0..CHUNK_COUNT {
+                    let s = ((16 * 1024) - 4) * chunk_id;
+                    let s = String::from_utf8_lossy(&message[s..s + 32]);
+                    let mut s = s.split("-");
+                    let s = s.next().unwrap();
+                    let mut parts = s.split(':');
+                    let node = parts.next().unwrap().parse().unwrap();
+                    let msg = parts.next().unwrap().parse().unwrap();
+                    let chunk = parts.next().unwrap().parse().unwrap();
+                    sort.entry(peer_url.to_string())
+                        .or_default()
+                        .push((node, msg, chunk));
+                }
 
                 count += 1;
 
-                if count >= NODE_COUNT * SEND_COUNT * CHUNK_COUNT {
+                if count >= NODE_COUNT * SEND_COUNT {
                     break;
                 }
             }
-            _ => panic!(),
+            oth => panic!("{oth:?}"),
         }
     }
 
@@ -444,36 +420,43 @@ async fn ep3_messages_contiguous() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ep3_preflight_happy() {
+    use rand::Rng;
+
+    let did_send = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let did_valid = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut config = Config3::default();
-    config.preflight_send_cb = Arc::new(|_| {
-        Box::pin(async move {
-            Ok(Some(vec![
-                BackBuf::from_slice(b"0").unwrap(),
-                BackBuf::from_slice(b"1").unwrap(),
-                BackBuf::from_slice(b"2").unwrap(),
-                BackBuf::from_slice(b"3").unwrap(),
-            ]))
+
+    let mut preflight = vec![0; 17 * 1024];
+    rand::thread_rng().fill(&mut preflight[..]);
+
+    let pf_send: PreflightSendCb = {
+        let did_send = did_send.clone();
+        let preflight = preflight.clone();
+        Arc::new(move |_| {
+            did_send.store(true, std::sync::atomic::Ordering::SeqCst);
+            let preflight = preflight.clone();
+            Box::pin(async move { Ok(preflight) })
         })
-    });
-    config.preflight_check_cb = Arc::new(|_, bytes| {
-        let res = if bytes.0.len() == 4 {
-            let r = String::from_utf8_lossy(&bytes.to_vec()).to_string();
-            assert_eq!("0123", r);
-            PreflightCheckResponse::Valid
-        } else {
-            PreflightCheckResponse::NeedMoreData
-        };
-        Box::pin(async move { res })
-    });
+    };
+
+    let pf_check: PreflightCheckCb = {
+        let did_valid = did_valid.clone();
+        Arc::new(move |_, bytes| {
+            did_valid.store(true, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(preflight, bytes);
+            Box::pin(async move { Ok(()) })
+        })
+    };
+
+    config.preflight = Some((pf_send, pf_check));
+
     let config = Arc::new(config);
     let test = Test::new().await;
 
     let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
     let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
 
-    ep1.send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
-        .await
-        .unwrap();
+    ep1.send(cli_url2, b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -483,11 +466,14 @@ async fn ep3_preflight_happy() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         _ => panic!(),
     }
+
+    assert_eq!(true, did_send.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(true, did_valid.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -498,12 +484,7 @@ async fn ep3_ban_after_connected_outgoing_side() {
     let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
     let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
 
-    ep1.send(
-        cli_url2.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap();
+    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -513,18 +494,15 @@ async fn ep3_ban_after_connected_outgoing_side() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         _ => panic!(),
     }
 
     ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_secs(10));
 
-    assert!(ep1
-        .send(cli_url2, vec![BackBuf::from_slice(b"hello").unwrap()])
-        .await
-        .is_err());
+    assert!(ep1.send(cli_url2, b"hello").await.is_err());
 
     let stats = ep1.get_stats().await;
 
@@ -539,12 +517,7 @@ async fn ep3_recon_after_ban() {
     let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
     let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
 
-    ep1.send(
-        cli_url2.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap();
+    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -554,21 +527,15 @@ async fn ep3_recon_after_ban() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         oth => panic!("{oth:?}"),
     }
 
     ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_millis(10));
 
-    assert!(ep1
-        .send(
-            cli_url2.clone(),
-            vec![BackBuf::from_slice(b"hello").unwrap()]
-        )
-        .await
-        .is_err());
+    assert!(ep1.send(cli_url2.clone(), b"hello").await.is_err());
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -578,12 +545,7 @@ async fn ep3_recon_after_ban() {
 
     tokio::time::sleep(std::time::Duration::from_millis(15)).await;
 
-    ep1.send(
-        cli_url2.clone(),
-        vec![BackBuf::from_slice(b"world").unwrap()],
-    )
-    .await
-    .unwrap();
+    ep1.send(cli_url2.clone(), b"world").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -593,8 +555,8 @@ async fn ep3_recon_after_ban() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"world"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"world"[..], &message);
         }
         _ => panic!(),
     }
@@ -609,19 +571,9 @@ async fn ep3_broadcast_happy() {
     let (cli_url2, _ep2, mut ep2_recv) = test.ep(config.clone()).await;
     let (cli_url3, _ep3, mut ep3_recv) = test.ep(config).await;
 
-    ep1.send(
-        cli_url2.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap();
+    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
 
-    ep1.send(
-        cli_url3.clone(),
-        vec![BackBuf::from_slice(b"hello").unwrap()],
-    )
-    .await
-    .unwrap();
+    ep1.send(cli_url3.clone(), b"hello").await.unwrap();
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
@@ -631,8 +583,8 @@ async fn ep3_broadcast_happy() {
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         _ => panic!(),
     }
@@ -645,27 +597,26 @@ async fn ep3_broadcast_happy() {
 
     let res = ep3_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"hello"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
         }
         _ => panic!(),
     }
 
-    ep1.broadcast(vec![BackBuf::from_slice(b"world").unwrap()])
-        .await;
+    ep1.broadcast(b"world").await;
 
     let res = ep2_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"world"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"world"[..], &message);
         }
         _ => panic!(),
     }
 
     let res = ep3_recv.recv().await.unwrap();
     match res {
-        Ep3Event::Message { mut message, .. } => {
-            assert_eq!(&b"world"[..], &message.to_vec().unwrap());
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"world"[..], &message);
         }
         _ => panic!(),
     }

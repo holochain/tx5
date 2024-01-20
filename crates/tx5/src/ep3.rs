@@ -4,7 +4,6 @@ use crate::deps::lair_keystore_api;
 use crate::deps::sodoken;
 use crate::AbortableTimedSharedFuture;
 use crate::BackBuf;
-use crate::BytesList;
 use futures::future::BoxFuture;
 use lair_keystore_api::prelude::*;
 use std::collections::HashMap;
@@ -42,7 +41,7 @@ pub enum Ep3Event {
         peer_url: PeerUrl,
 
         /// Message sent by the remote peer.
-        message: BackBuf,
+        message: Vec<u8>,
 
         /// Permit counting the bytes allowed in memory on the receive side.
         permit: tokio::sync::OwnedSemaphorePermit,
@@ -89,27 +88,15 @@ type SigMap = HashMap<SigUrl, (u64, AbortableTimedSharedFuture<Arc<Sig>>)>;
 
 /// Callback in charge of sending preflight data if any.
 pub type PreflightSendCb = Arc<
-    dyn Fn(&PeerUrl) -> BoxFuture<'static, Result<Option<Vec<BackBuf>>>>
+    dyn Fn(&PeerUrl) -> BoxFuture<'static, Result<Vec<u8>>>
         + 'static
         + Send
         + Sync,
 >;
 
-/// Response type for preflight check callback.
-pub enum PreflightCheckResponse {
-    /// Indicate at least one additional message must be received.
-    NeedMoreData,
-
-    /// The preflight was invalid, the connection should be closed.
-    Invalid(Error),
-
-    /// The connection was valid, proceed to normal operation.
-    Valid,
-}
-
 /// Callback in charge of validating preflight data if any.
 pub type PreflightCheckCb = Arc<
-    dyn Fn(&PeerUrl, &BytesList) -> BoxFuture<'static, PreflightCheckResponse>
+    dyn Fn(&PeerUrl, Vec<u8>) -> BoxFuture<'static, Result<()>>
         + 'static
         + Send
         + Sync,
@@ -117,11 +104,21 @@ pub type PreflightCheckCb = Arc<
 
 /// Tx5 endpoint version 3 configuration.
 pub struct Config3 {
-    /// Maximum count of open connections. Default 255.
+    /// Maximum count of open connections. Default 4096.
     pub connection_count_max: u32,
 
-    /// Maximum bytes in memory for any given connection. Default 16 MiB.
-    pub connection_bytes_max: u32,
+    /// Max backend send buffer bytes (per connection). Default 64 KiB.
+    pub send_buffer_bytes_max: u32,
+
+    /// Max backend recv buffer bytes (per connection). Default 64 KiB.
+    pub recv_buffer_bytes_max: u32,
+
+    /// Maximum receive message reconstruction bytes in memory
+    /// (accross entire endpoint). Default 512 MiB.
+    pub incoming_message_bytes_max: u32,
+
+    /// Maximum size of an individual message. Default 16 MiB.
+    pub message_size_max: u32,
 
     /// Default timeout for network operations. Default 60 seconds.
     pub timeout: std::time::Duration,
@@ -132,28 +129,24 @@ pub struct Config3 {
     /// Max backoff duration for retries. Default 60 seconds.
     pub backoff_max: std::time::Duration,
 
-    /// Callback in charge of sending preflight data if any.
-    pub preflight_send_cb: PreflightSendCb,
-
-    /// Callback in charge of validating preflight data if any.
-    pub preflight_check_cb: PreflightCheckCb,
+    /// If the protocol should manage a preflight message,
+    /// set the callbacks here, otherwise no preflight will
+    /// be sent nor validated. Default: None.
+    pub preflight: Option<(PreflightSendCb, PreflightCheckCb)>,
 }
 
 impl Default for Config3 {
     fn default() -> Self {
         Self {
-            connection_count_max: 255,
-            connection_bytes_max: 16 * 1024 * 1024,
+            connection_count_max: 4096,
+            send_buffer_bytes_max: 64 * 1024,
+            recv_buffer_bytes_max: 64 * 1024,
+            incoming_message_bytes_max: 512 * 1024 * 1024,
+            message_size_max: 16 * 1024 * 1024,
             timeout: std::time::Duration::from_secs(60),
             backoff_start: std::time::Duration::from_secs(5),
             backoff_max: std::time::Duration::from_secs(60),
-            preflight_send_cb: Arc::new(|_| {
-                futures::future::FutureExt::boxed(async move { Ok(None) })
-            }),
-            preflight_check_cb: Arc::new(|_, _| {
-                use PreflightCheckResponse::Valid;
-                futures::future::FutureExt::boxed(async move { Valid })
-            }),
+            preflight: None,
         }
     }
 }
@@ -189,6 +182,7 @@ pub(crate) struct EpShared {
     lair_client: LairClient,
     sig_limit: Arc<tokio::sync::Semaphore>,
     peer_limit: Arc<tokio::sync::Semaphore>,
+    recv_recon_limit: Arc<tokio::sync::Semaphore>,
     weak_sig_map: Weak<Mutex<SigMap>>,
     evt_send: EventSend<Ep3Event>,
     ban_map: Mutex<BanMap>,
@@ -225,6 +219,10 @@ impl Ep3 {
 
         let peer_limit = Arc::new(tokio::sync::Semaphore::new(
             config.connection_count_max as usize,
+        ));
+
+        let recv_recon_limit = Arc::new(tokio::sync::Semaphore::new(
+            config.incoming_message_bytes_max as usize,
         ));
 
         let lair_tag: Arc<str> =
@@ -297,6 +295,7 @@ impl Ep3 {
                 lair_client,
                 sig_limit,
                 peer_limit,
+                recv_recon_limit,
                 weak_sig_map,
                 evt_send,
                 ban_map: Mutex::new(BanMap::default()),
@@ -402,11 +401,7 @@ impl Ep3 {
     /// Send data to a remote on this tx5 endpoint.
     /// The future returned from this method will resolve when
     /// the data is handed off to our networking backend.
-    pub async fn send(
-        &self,
-        peer_url: PeerUrl,
-        data: Vec<BackBuf>,
-    ) -> Result<()> {
+    pub async fn send(&self, peer_url: PeerUrl, data: &[u8]) -> Result<()> {
         if !peer_url.is_client() {
             return Err(Error::str("Expected PeerUrl, got SigUrl"));
         }
@@ -432,7 +427,7 @@ impl Ep3 {
     /// The future returned from this method will resolve when all
     /// broadcast messages have been handed off to our networking backend
     /// (or have timed out).
-    pub async fn broadcast(&self, mut data: Vec<BackBuf>) {
+    pub async fn broadcast(&self, data: &[u8]) {
         let mut task_list = Vec::new();
 
         let fut_list = self
@@ -444,20 +439,11 @@ impl Ep3 {
             .collect::<Vec<_>>();
 
         for fut in fut_list {
-            let mut clone_data = Vec::new();
-            for msg in data.iter_mut() {
-                if let Ok(msg) = msg.try_clone() {
-                    clone_data.push(msg);
-                } else {
-                    continue;
-                }
-            }
-
             task_list.push(async move {
                 // timeouts are built into this future as well
                 // as the sig.broadcast function
                 if let Ok(sig) = fut.await {
-                    sig.broadcast(clone_data).await;
+                    sig.broadcast(data).await;
                 }
             });
         }

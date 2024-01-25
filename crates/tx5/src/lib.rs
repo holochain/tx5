@@ -43,81 +43,9 @@ mod ep3;
 pub use ep3::*;
 
 mod back_buf;
-pub use back_buf::*;
+pub(crate) use back_buf::*;
 
-pub mod proto;
-
-/// A set of distinct chunks of bytes that can be treated as a single unit.
-#[derive(Default)]
-pub struct BytesList(pub std::collections::VecDeque<bytes::Bytes>);
-
-impl BytesList {
-    /// Construct a new BytesList.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Clear the data.
-    pub fn clear(&mut self) {
-        self.0.clear();
-    }
-
-    /// Push a new bytes::Bytes into this BytesList.
-    pub fn push(&mut self, data: bytes::Bytes) {
-        if bytes::Buf::has_remaining(&data) {
-            self.0.push_back(data);
-        }
-    }
-
-    /// Convert into a trait object.
-    pub fn into_dyn(self) -> Box<dyn bytes::Buf + 'static + Send> {
-        Box::new(self)
-    }
-
-    /// Copy data into a `Vec<u8>`. You should avoid this if possible.
-    pub fn to_vec(&self) -> Vec<u8> {
-        use bytes::Buf;
-        let mut out = Vec::with_capacity(self.remaining());
-        for b in self.0.iter() {
-            out.extend_from_slice(b);
-        }
-        out
-    }
-}
-
-impl bytes::Buf for BytesList {
-    fn remaining(&self) -> usize {
-        self.0.iter().map(|b| b.remaining()).sum()
-    }
-
-    fn chunk(&self) -> &[u8] {
-        match self.0.front() {
-            Some(b) => b.chunk(),
-            None => &[],
-        }
-    }
-
-    #[allow(clippy::comparison_chain)] // clearer written explicitly
-    fn advance(&mut self, mut cnt: usize) {
-        loop {
-            let mut item = match self.0.pop_front() {
-                Some(item) => item,
-                None => return,
-            };
-
-            let rem = item.remaining();
-            if rem == cnt {
-                return;
-            } else if rem < cnt {
-                cnt -= rem;
-            } else if rem > cnt {
-                item.advance(cnt);
-                self.0.push_front(item);
-                return;
-            }
-        }
-    }
-}
+pub(crate) mod proto;
 
 #[derive(Clone)]
 struct DoDrop(std::sync::Arc<tokio::task::JoinHandle<()>>);
@@ -212,6 +140,9 @@ impl<T: Clone> std::future::Future for AbortableTimedSharedFuture<T> {
         std::pin::Pin::new(&mut self.f).poll(cx)
     }
 }
+
+#[cfg(test)]
+mod test_behavior;
 
 #[cfg(test)]
 mod test {

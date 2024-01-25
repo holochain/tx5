@@ -447,39 +447,7 @@ impl Peer {
             let sig = sig.clone();
             tokio::task::spawn(async move {
                 let mut did_preflight = false;
-                /*
-                let preflight; // = true;
 
-                //let mut preflight_bytes = BytesList::default();
-
-                macro_rules! check_preflight {
-                    () => {{
-                        /*
-                        match (sig.config.preflight_check_cb)(
-                            &peer_url,
-                            &preflight_bytes,
-                        )
-                        .await
-                        {
-                            PreflightCheckResponse::NeedMoreData => Ok(()),
-                            PreflightCheckResponse::Valid => {
-                                preflight = false;
-                                preflight_bytes.clear();
-                                Ok(())
-                            }
-                            PreflightCheckResponse::Invalid(err) => {
-                                tracing::debug!(?err);
-                                Err(err)
-                            }
-                        }
-                        */
-                        preflight = false;
-                        Result::Ok(())
-                    }};
-                }
-                */
-
-                //if check_preflight!().is_ok() {
                 while let Some(evt) = data_recv.recv().await {
                     use tx5_go_pion::DataChannelEvent::*;
                     match evt {
@@ -584,48 +552,10 @@ impl Peer {
                                 }
                                 RemotePermitGrant(_permit_len) => (),
                             }
-
-                            /*
-                            // clippy, you keep trying to make
-                            // things harder to read
-                            #[allow(clippy::collapsible_else_if)]
-                            if preflight {
-                                /*
-                                use bytes::BufMut;
-                                let mut bm =
-                                    bytes::BytesMut::with_capacity(len)
-                                        .writer();
-                                if std::io::copy(&mut message, &mut bm)
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                                preflight_bytes
-                                    .push(bm.into_inner().freeze());
-                                if check_preflight!().is_err() {
-                                    break;
-                                }
-                                */
-                            } else {
-                                if sig
-                                    .evt_send
-                                    .send(Ep3Event::Message {
-                                        peer_url: peer_url.clone(),
-                                        message,
-                                        permit,
-                                    })
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            }
-                            */
                         }
                         BufferedAmountLow => (),
                     }
                 }
-                //}
 
                 close_peer(&sig.weak_peer_map, peer_id, peer_uniq);
             })
@@ -731,45 +661,6 @@ impl Peer {
                 self.sub_send(buf).await?;
             }
         }
-
-        /*
-        for mut buf in data {
-            let len = buf.len()?;
-            if len > 16 * 1024 {
-                return Err(Error::str("Buffer cannot be larger than 16 KiB"));
-            }
-
-            tokio::time::timeout(self.sig.config.timeout, async {
-                let mut backoff = std::time::Duration::from_millis(1);
-
-                loop {
-                    if self.data_chan.buffered_amount()?
-                        <= self.sig.config.send_buffer_bytes_max as usize
-                    {
-                        break;
-                    }
-
-                    tokio::time::sleep(backoff).await;
-                    backoff *= 2;
-                    if backoff.as_millis() > 200 {
-                        backoff = std::time::Duration::from_millis(200);
-                    }
-                }
-
-                self.metric_bytes_send.add(len as u64);
-
-                if self.sig.ban_map.lock().unwrap().is_banned(self.peer_id) {
-                    return Err(Error::str("Peer is currently banned"));
-                }
-
-                self.data_chan.send(buf.imp.buf).await
-            })
-            .await
-            .map_err(|_| {
-                Error::str("Timeout sending data to backend data channel")
-            })??;
-        }
-        */
 
         Ok(())
     }

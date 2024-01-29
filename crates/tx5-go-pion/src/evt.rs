@@ -195,11 +195,14 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
         }
     }
 
-    let handle = tokio::runtime::Handle::current();
     std::thread::Builder::new()
         .name("tx5-go-poin-evt".to_string())
         .spawn(move || {
-            handle.block_on(async move {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("Failed to build tokio runtime");
+            runtime.block_on(async move {
                 let _d = D;
                 while let Some(sys_evt) = recv.recv().await {
                     match sys_evt {

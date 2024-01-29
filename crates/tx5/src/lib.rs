@@ -42,7 +42,7 @@ pub use tx5_core::{Error, ErrorExt, Id, Result, Tx5InitConfig, Tx5Url};
 mod ep3;
 pub use ep3::*;
 
-mod back_buf;
+pub(crate) mod back_buf;
 pub(crate) use back_buf::*;
 
 pub(crate) mod proto;

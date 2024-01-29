@@ -301,8 +301,8 @@ fn run_ban(share: Arc<Share>, peer_echo: PeerUrl) {
                     eprintln!("ban success");
                 }
 
-                let sleep_for =
-                    std::time::Duration::from_secs(10) - start.elapsed();
+                let sleep_for = std::time::Duration::from_secs(10)
+                    .saturating_sub(start.elapsed());
 
                 tokio::time::sleep(sleep_for).await;
             }
@@ -364,8 +364,8 @@ fn run_self_ban(share: Arc<Share>, peer_echo: PeerUrl) {
                     eprintln!("self_ban success");
                 }
 
-                let sleep_for =
-                    std::time::Duration::from_secs(10) - start.elapsed();
+                let sleep_for = std::time::Duration::from_secs(10)
+                    .saturating_sub(start.elapsed());
 
                 tokio::time::sleep(sleep_for).await;
             }

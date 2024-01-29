@@ -187,100 +187,150 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
         });
     }
 
-    tokio::task::spawn(async move {
-        while let Some(sys_evt) = recv.recv().await {
-            match sys_evt {
-                SysEvent::Error(_error) => (),
-                SysEvent::PeerConICECandidate {
-                    peer_con_id,
-                    candidate,
-                } => {
-                    manager_access!(peer_con_id, runtime, peer_con, {
-                        peer_con.send_evt(PeerConnectionEvent::ICECandidate(
-                            GoBuf(candidate),
-                        ))
-                    });
-                }
-                SysEvent::PeerConStateChange {
-                    peer_con_id,
-                    peer_con_state,
-                } => {
-                    manager_access!(peer_con_id, runtime, peer_con, {
-                        peer_con.send_evt(PeerConnectionEvent::State(
-                            PeerConnectionState::from_raw(peer_con_state),
-                        ))
-                    });
-                }
-                SysEvent::PeerConDataChan {
-                    peer_con_id,
-                    data_chan_id,
-                } => {
-                    manager_access!(peer_con_id, runtime, peer_con, async {
-                        let recv_limit = match peer_con.get_recv_limit() {
-                            Ok(recv_limit) => recv_limit,
-                            Err(err) => {
-                                unsafe {
-                                    API.data_chan_free(data_chan_id);
-                                }
-                                return Err(err);
-                            }
-                        };
+    struct D;
 
-                        let (chan, recv) =
-                            DataChannel::new(data_chan_id, recv_limit);
-
-                        peer_con
-                            .send_evt(PeerConnectionEvent::DataChannel(
-                                chan, recv,
-                            ))
-                            .await
-                    });
-                }
-                SysEvent::DataChanClose(data_chan_id) => {
-                    manager_access!(data_chan_id, runtime, data_chan, {
-                        data_chan.send_evt(DataChannelEvent::Close)
-                    });
-                }
-                SysEvent::DataChanOpen(data_chan_id) => {
-                    manager_access!(data_chan_id, runtime, data_chan, {
-                        data_chan.send_evt(DataChannelEvent::Open)
-                    });
-                }
-                SysEvent::DataChanMessage {
-                    data_chan_id,
-                    buffer_id,
-                } => {
-                    let mut buf = GoBuf(buffer_id);
-                    manager_access!(data_chan_id, runtime, data_chan, async {
-                        let len = buf.len()?;
-                        if len > 16 * 1024 {
-                            return Err(Error::id("MsgTooLarge"));
-                        }
-
-                        let recv_limit = data_chan.get_recv_limit()?;
-
-                        let permit = recv_limit
-                            .acquire_many_owned(len as u32)
-                            .await
-                            .map_err(|_| {
-                                Error::from(Error::id(
-                                    "DataChanMessageSemaphoreClosed",
-                                ))
-                            })?;
-
-                        data_chan
-                            .send_evt(DataChannelEvent::Message(buf, permit))
-                            .await
-                    });
-                }
-                SysEvent::DataChanBufferedAmountLow(data_chan_id) => {
-                    manager_access!(data_chan_id, runtime, data_chan, {
-                        data_chan.send_evt(DataChannelEvent::BufferedAmountLow)
-                    });
-                }
-            }
+    impl Drop for D {
+        fn drop(&mut self) {
+            tracing::error!("tx5-go-pion EVENT LOOP EXITED");
         }
-    });
+    }
+
+    let handle = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("tx5-go-poin-evt".to_string())
+        .spawn(move || {
+            handle.block_on(async move {
+                let _d = D;
+                while let Some(sys_evt) = recv.recv().await {
+                    match sys_evt {
+                        SysEvent::Error(_error) => (),
+                        SysEvent::PeerConICECandidate {
+                            peer_con_id,
+                            candidate,
+                        } => {
+                            manager_access!(peer_con_id, runtime, peer_con, {
+                                peer_con.send_evt(
+                                    PeerConnectionEvent::ICECandidate(GoBuf(
+                                        candidate,
+                                    )),
+                                )
+                            });
+                        }
+                        SysEvent::PeerConStateChange {
+                            peer_con_id,
+                            peer_con_state,
+                        } => {
+                            manager_access!(peer_con_id, runtime, peer_con, {
+                                peer_con.send_evt(PeerConnectionEvent::State(
+                                    PeerConnectionState::from_raw(
+                                        peer_con_state,
+                                    ),
+                                ))
+                            });
+                        }
+                        SysEvent::PeerConDataChan {
+                            peer_con_id,
+                            data_chan_id,
+                        } => {
+                            manager_access!(
+                                peer_con_id,
+                                runtime,
+                                peer_con,
+                                async {
+                                    let recv_limit =
+                                        match peer_con.get_recv_limit() {
+                                            Ok(recv_limit) => recv_limit,
+                                            Err(err) => {
+                                                unsafe {
+                                                    API.data_chan_free(
+                                                        data_chan_id,
+                                                    );
+                                                }
+                                                return Err(err);
+                                            }
+                                        };
+
+                                    let (chan, recv) = DataChannel::new(
+                                        data_chan_id,
+                                        recv_limit,
+                                    );
+
+                                    peer_con
+                                        .send_evt(
+                                            PeerConnectionEvent::DataChannel(
+                                                chan, recv,
+                                            ),
+                                        )
+                                        .await
+                                }
+                            );
+                        }
+                        SysEvent::DataChanClose(data_chan_id) => {
+                            manager_access!(
+                                data_chan_id,
+                                runtime,
+                                data_chan,
+                                data_chan.send_evt(DataChannelEvent::Close)
+                            );
+                        }
+                        SysEvent::DataChanOpen(data_chan_id) => {
+                            manager_access!(
+                                data_chan_id,
+                                runtime,
+                                data_chan,
+                                data_chan.send_evt(DataChannelEvent::Open)
+                            );
+                        }
+                        SysEvent::DataChanMessage {
+                            data_chan_id,
+                            buffer_id,
+                        } => {
+                            let mut buf = GoBuf(buffer_id);
+                            manager_access!(
+                                data_chan_id,
+                                runtime,
+                                data_chan,
+                                async {
+                                    let len = buf.len()?;
+                                    if len > 16 * 1024 {
+                                        return Err(Error::id("MsgTooLarge"));
+                                    }
+
+                                    let recv_limit =
+                                        data_chan.get_recv_limit()?;
+
+                                    let permit = recv_limit
+                                        .acquire_many_owned(len as u32)
+                                        .await
+                                        .map_err(|_| {
+                                            Error::from(Error::id(
+                                            "DataChanMessageSemaphoreClosed",
+                                        ))
+                                        })?;
+
+                                    data_chan
+                                        .send_evt(DataChannelEvent::Message(
+                                            buf, permit,
+                                        ))
+                                        .await
+                                }
+                            );
+                        }
+                        SysEvent::DataChanBufferedAmountLow(data_chan_id) => {
+                            manager_access!(
+                                data_chan_id,
+                                runtime,
+                                data_chan,
+                                data_chan.send_evt(
+                                    DataChannelEvent::BufferedAmountLow,
+                                )
+                            );
+                        }
+                    }
+                }
+            });
+        })
+        .expect("failed to spawn event thread");
 
     Manager::new()
 });

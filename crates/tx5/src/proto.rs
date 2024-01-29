@@ -4,10 +4,10 @@ use crate::BackBuf;
 use tx5_core::{Error, Result};
 
 /// Tx5 protocol message payload max size.
-pub const MAX_PAYLOAD: u32 = 0b00011111111111111111111111111111;
+pub(crate) const MAX_PAYLOAD: u32 = 0b00011111111111111111111111111111;
 
 /// Protocol version 1 header.
-pub const PROTO_VER_1: ProtoHeader =
+pub(crate) const PROTO_VER_1: ProtoHeader =
     ProtoHeader::Version(1, [b't', b'x', b'5']);
 
 /// 4 byte Tx5 protocol header.
@@ -15,7 +15,7 @@ pub const PROTO_VER_1: ProtoHeader =
 /// The initial 3 bits representing values 0, 1, and 7 are reserved.
 /// Decoders should error on receiving these values.
 #[derive(Debug, PartialEq)]
-pub enum ProtoHeader {
+pub(crate) enum ProtoHeader {
     /// This is a protocol version handshake.
     /// `3 bits == 2`
     /// `5 bits == version number (currently 1)`
@@ -116,7 +116,7 @@ impl ProtoHeader {
 }
 
 /// Result of encoding a message into the Tx5 protocol.
-pub enum ProtoEncodeResult {
+pub(crate) enum ProtoEncodeResult {
     /// We need to request a permit. Send the permit request first,
     /// once we receive the authorization, forward the rest of
     /// the message payload.
@@ -134,7 +134,7 @@ pub enum ProtoEncodeResult {
 }
 
 /// Encode some data into the Tx5 protocol.
-pub fn proto_encode(data: &[u8]) -> Result<ProtoEncodeResult> {
+pub(crate) fn proto_encode(data: &[u8]) -> Result<ProtoEncodeResult> {
     const MAX: usize = (16 * 1024) - 4;
     let len = data.len();
 
@@ -183,7 +183,7 @@ pub fn proto_encode(data: &[u8]) -> Result<ProtoEncodeResult> {
 
 /// Result of decoding an incoming message chunk.
 #[derive(Debug, PartialEq)]
-pub enum ProtoDecodeResult {
+pub(crate) enum ProtoDecodeResult {
     /// Nothing needs to happen at the moment... continue receiving chunks.
     Idle,
 
@@ -208,7 +208,7 @@ enum DecodeState {
 }
 
 /// Tx5 protocol decoder.
-pub struct ProtoDecoder {
+pub(crate) struct ProtoDecoder {
     state: DecodeState,
     want_size: usize,
     incoming: Vec<u8>,

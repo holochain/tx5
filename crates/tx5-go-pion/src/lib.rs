@@ -149,6 +149,7 @@ mod tests {
             }
         };
 
+        #[derive(Debug)]
         enum FinishState {
             Start,
             Msg1,
@@ -164,8 +165,9 @@ mod tests {
             fn msg1(&self) -> Self {
                 match self {
                     Self::Start => Self::Msg1,
+                    Self::Msg1 => Self::Msg1,
                     Self::Msg2 => Self::Done,
-                    _ => panic!(),
+                    oth => panic!("expected not Done, got: {oth:?}"),
                 }
             }
 
@@ -173,7 +175,7 @@ mod tests {
                 match self {
                     Self::Start => Self::Msg2,
                     Self::Msg1 => Self::Done,
-                    _ => panic!(),
+                    oth => panic!("expected Start or Msg1, got: {oth:?}"),
                 }
             }
         }

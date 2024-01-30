@@ -1,5 +1,4 @@
 #![deny(missing_docs)]
-#![deny(warnings)]
 #![doc = tx5_core::__doc_header!()]
 //! # tx5-go-pion
 //!
@@ -9,6 +8,8 @@
 pub mod deps {
     pub use libc;
     pub use once_cell;
+    // uhhh... rust? this is a pub export...
+    #[allow(unused_imports)]
     pub use tx5_core::deps::*;
     pub use tx5_go_pion_sys;
     pub use tx5_go_pion_sys::deps::*;

@@ -1,5 +1,4 @@
 #![deny(missing_docs)]
-#![deny(warnings)]
 #![deny(unsafe_code)]
 #![doc = tx5_core::__doc_header!()]
 //! # tx5-signal

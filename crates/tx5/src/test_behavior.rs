@@ -114,22 +114,14 @@ async fn run_echo(share: &Share) -> PeerUrl {
                     peer_url, message, ..
                 } = evt
                 {
-                    track_err!(errors, "echo response", {
-                        ep.send(peer_url.clone(), &message).await
-                    });
-
                     if message == b"ban" {
-                        let ep = ep.clone();
-                        tokio::task::spawn(async move {
-                            tokio::time::sleep(
-                                std::time::Duration::from_millis(800),
-                            )
-                            .await;
-
-                            ep.ban(
-                                peer_url.id().unwrap(),
-                                std::time::Duration::from_secs(11),
-                            );
+                        ep.ban(
+                            peer_url.id().unwrap(),
+                            std::time::Duration::from_secs(10),
+                        );
+                    } else {
+                        track_err!(errors, "echo response", {
+                            ep.send(peer_url.clone(), &message).await
                         });
                     }
                 }
@@ -243,15 +235,13 @@ fn run_ban(share: Arc<Share>, peer_echo: PeerUrl) {
         .lock()
         .unwrap()
         .push(tokio::task::spawn(async move {
-            let (ep, mut recv) = Ep3::new(share.config.clone()).await;
+            let (ep, _recv) = Ep3::new(share.config.clone()).await;
             ep.listen(share.sig_url.clone()).await.unwrap();
             let errors = share.errors.clone();
             drop(share);
 
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-                let time1 = std::time::Instant::now();
 
                 eprintln!("ban req");
 
@@ -265,32 +255,9 @@ fn run_ban(share: Arc<Share>, peer_echo: PeerUrl) {
                     });
                 }
 
-                let time2 = std::time::Instant::now();
-
-                loop {
-                    match recv.recv().await.unwrap() {
-                        Ep3Event::Connected { .. }
-                        | Ep3Event::Disconnected { .. } => (),
-                        Ep3Event::Message {
-                            peer_url, message, ..
-                        } => {
-                            if peer_url == peer_echo {
-                                assert_eq!(b"ban", message.as_slice());
-                                break;
-                            }
-                        }
-                        oth => errors.lock().unwrap().push(
-                            Error::str(format!("unexpected: {oth:?}",)).into(),
-                        ),
-                    }
-                }
-
-                eprintln!("BAN TIME1: {}", time1.elapsed().as_secs_f64());
-                eprintln!("BAN TIME2: {}", time2.elapsed().as_secs_f64());
-
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
                 let start = std::time::Instant::now();
+
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
                 eprintln!("ban check");
                 if ep.send(peer_echo.clone(), b"hello").await.is_ok() {
@@ -301,7 +268,7 @@ fn run_ban(share: Arc<Share>, peer_echo: PeerUrl) {
                     eprintln!("ban success");
                 }
 
-                let sleep_for = std::time::Duration::from_secs(10)
+                let sleep_for = std::time::Duration::from_secs(11)
                     .saturating_sub(start.elapsed());
 
                 tokio::time::sleep(sleep_for).await;

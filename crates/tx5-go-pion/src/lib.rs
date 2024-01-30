@@ -1,5 +1,4 @@
 #![deny(missing_docs)]
-#![deny(warnings)]
 #![doc = tx5_core::__doc_header!()]
 //! # tx5-go-pion
 //!

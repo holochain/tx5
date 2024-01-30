@@ -79,7 +79,7 @@ test: static tools
 
 static: docs tools
 	cargo fmt -- --check
-	cargo clippy
+	cargo clippy -- -Dwarnings
 	(cd crates/tx5-go-pion-sys; go fmt)
 	(cd crates/tx5-go-pion-turn; go fmt)
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi

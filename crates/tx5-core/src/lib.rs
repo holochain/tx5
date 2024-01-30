@@ -1,6 +1,5 @@
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
-#![deny(warnings)]
 #![doc = include_str!("README.tpl")]
 //! # tx5-core
 //!

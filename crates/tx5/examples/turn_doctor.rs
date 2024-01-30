@@ -418,7 +418,7 @@ async fn turn_udp_check(check: &TurnCheck) {
         "CHECK_UDP",
         tx5_go_pion::PeerConnectionConfig {
             ice_servers: vec![tx5_go_pion::IceServer {
-                urls: vec![format!("turn:{}:{}", check.host, check.stun_port)],
+                urls: vec![format!("turn:{}:{}", check.host, check.udp_port)],
                 username: Some(check.user.clone()),
                 credential: Some(check.cred.clone()),
             }],
@@ -434,7 +434,7 @@ async fn turn_tcp_plain_check(check: &TurnCheck) {
             ice_servers: vec![tx5_go_pion::IceServer {
                 urls: vec![format!(
                     "turn:{}:{}?transport=tcp",
-                    check.host, check.stun_port
+                    check.host, check.tcp_plain_port
                 )],
                 username: Some(check.user.clone()),
                 credential: Some(check.cred.clone()),
@@ -451,7 +451,7 @@ async fn turn_tcp_tls_check(check: &TurnCheck) {
             ice_servers: vec![tx5_go_pion::IceServer {
                 urls: vec![format!(
                     "turns:{}:{}?transport=tcp",
-                    check.host, check.stun_port
+                    check.host, check.tcp_tls_port
                 )],
                 username: Some(check.user.clone()),
                 credential: Some(check.cred.clone()),

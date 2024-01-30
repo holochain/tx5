@@ -1,5 +1,4 @@
 #![deny(missing_docs)]
-#![deny(warnings)]
 #![deny(unsafe_code)]
 #![doc = tx5_core::__doc_header!()]
 //! # tx5
@@ -203,7 +202,7 @@ impl bytes::Buf for BytesList {
     }
 
     fn chunk(&self) -> &[u8] {
-        match self.0.get(0) {
+        match self.0.front() {
             Some(b) => b.chunk(),
             None => &[],
         }

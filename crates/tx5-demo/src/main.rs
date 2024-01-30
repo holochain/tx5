@@ -253,7 +253,7 @@ impl Node {
 
         rand::seq::SliceRandom::shuffle(&mut v[..], &mut rand::thread_rng());
         let big = Message::big().encode()?;
-        self.send(ep, v.get(0).unwrap(), big);
+        self.send(ep, v.first().unwrap(), big);
 
         Ok(())
     }

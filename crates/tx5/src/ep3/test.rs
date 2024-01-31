@@ -387,7 +387,6 @@ async fn ep3_messages_contiguous() {
         let (check_node_id, _, _) = list.get(0).unwrap();
 
         for (node_id, _, _) in list.iter() {
-            //println!("{check_node_id}=={node_id}");
             assert_eq!(check_node_id, node_id);
         }
     }

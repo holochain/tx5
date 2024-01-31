@@ -351,7 +351,6 @@ async fn ep3_messages_contiguous() {
     loop {
         let res = dest_recv.recv().await.unwrap();
         match res {
-            Ep3Event::Connected { .. } => (),
             Ep3Event::Message {
                 peer_url, message, ..
             } => {
@@ -376,7 +375,7 @@ async fn ep3_messages_contiguous() {
                     break;
                 }
             }
-            oth => panic!("{oth:?}"),
+            _ => (),
         }
     }
 

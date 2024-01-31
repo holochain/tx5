@@ -166,6 +166,7 @@ macro_rules! manager_access {
             .map_err(|_| Error::id("AppSlow"))
             {
                 Err(err) | Ok(Err(err)) => {
+                    tracing::error!(?err, "PionEvent");
                     $map.close(err.into());
                 }
                 Ok(_) => (),

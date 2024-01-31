@@ -45,5 +45,6 @@ jobs:
 
       - name: Cargo Test
         env:
+          RUST_LOG: error
           RUST_BACKTRACE: 1
         run: cargo test -- --nocapture

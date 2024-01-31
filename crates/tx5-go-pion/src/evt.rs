@@ -241,53 +241,30 @@ impl EvtOffload {
     }
 }
 
-/*
-macro_rules! manager_access {
-    ($id:ident, $rt:ident, $map:ident, $code:expr) => {
-        let $map = MANAGER.lock().unwrap().$map.get(&$id).cloned();
-        if let Some($map) = &$map {
-            let start = std::time::Instant::now();
-            let result = $code.await;
-            let elapsed_s = start.elapsed().as_secs_f64();
-            if elapsed_s > 0.018 {
-                tracing::error!(%elapsed_s, ?result, "SlowEvent");
-            }
-            if let Err(err) = result {
-                $map.close(err.into());
-            }
-            /*
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(18),
-                $code,
-            )
-            .await
-            .map_err(|_| Error::id("AppSlow"))
-            {
-                Err(err) | Ok(Err(err)) => {
-                    tracing::error!(?err, "PionEvent");
-                    $map.close(err.into());
-                }
-                Ok(_) => (),
-            }
-            */
-        }
-    };
-}
-*/
-
 macro_rules! manager_access {
     ($id:ident, $off:ident, $map:ident, $code:expr) => {
         let $map = MANAGER.lock().unwrap().$map.get(&$id).cloned();
         if let Some($map) = $map {
             $off.blocking_send(async move {
                 let start = std::time::Instant::now();
-                let result = $code.await;
-                let elapsed_s = start.elapsed().as_secs_f64();
-                if elapsed_s > 0.018 {
-                    tracing::error!(%elapsed_s, ?result, "SlowEvent");
+                match tokio::time::timeout(
+                    // In testing on slower android or macos runners
+                    // I've seen some 0.2 second times on event calls...
+                    // so setting this one order of magnitude larger.
+                    std::time::Duration::from_secs(2),
+                    $code,
+                ).await {
+                    Err(_) => {
+                        let elapsed_s = start.elapsed().as_secs_f64();
+                        tracing::error!(%elapsed_s, "EventTimeout");
+                        $map.close(Error::id("EventTimeout").into());
+                    }
+                    Ok(Err(err)) => $map.close(err.into()),
+                    Ok(_) => (),
                 }
-                if let Err(err) = result {
-                    $map.close(err.into());
+                let elapsed_s = start.elapsed().as_secs_f64();
+                if elapsed_s > 0.1 {
+                    tracing::warn!(%elapsed_s, "EventSlow");
                 }
             });
         }

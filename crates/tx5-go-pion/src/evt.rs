@@ -158,6 +158,16 @@ macro_rules! manager_access {
     ($id:ident, $rt:ident, $map:ident, $code:expr) => {
         let $map = MANAGER.lock().unwrap().$map.get(&$id).cloned();
         if let Some($map) = &$map {
+            let start = std::time::Instant::now();
+            let result = $code.await;
+            let elapsed_s = start.elapsed().as_secs_f64();
+            if elapsed_s > 0.018 {
+                tracing::error!(%elapsed_s, ?result, "SlowEvent");
+            }
+            if let Err(err) = result {
+                $map.close(err.into());
+            }
+            /*
             match tokio::time::timeout(
                 std::time::Duration::from_millis(18),
                 $code,
@@ -171,6 +181,7 @@ macro_rules! manager_access {
                 }
                 Ok(_) => (),
             }
+            */
         }
     };
 }

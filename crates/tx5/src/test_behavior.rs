@@ -202,7 +202,7 @@ fn run_large_msg(share: Arc<Share>, peer_echo: PeerUrl) {
                 use rand::Rng;
                 rand::thread_rng().fill(&mut full[..]);
 
-                track_err!(errors, "small msg send", {
+                track_err!(errors, "large msg send", {
                     ep.send(peer_echo.clone(), &full).await
                 });
 

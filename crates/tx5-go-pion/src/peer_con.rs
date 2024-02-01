@@ -93,7 +93,7 @@ impl From<&AnswerConfig> for GoBufRef<'static> {
     }
 }
 
-struct PeerConCore {
+pub(crate) struct PeerConCore {
     peer_con_id: usize,
     recv_limit: Arc<tokio::sync::Semaphore>,
     evt_send: EventSend<PeerConnectionEvent>,
@@ -132,7 +132,7 @@ impl PeerConCore {
 
 #[derive(Clone)]
 pub(crate) struct WeakPeerCon(
-    Weak<Mutex<std::result::Result<PeerConCore, Error>>>,
+    pub(crate) Weak<Mutex<std::result::Result<PeerConCore, Error>>>,
 );
 
 macro_rules! peer_con_strong_core {

@@ -2,7 +2,7 @@ use crate::*;
 use std::sync::{Arc, Mutex, Weak};
 use tx5_go_pion_sys::API;
 
-struct DataChanCore {
+pub(crate) struct DataChanCore {
     data_chan_id: usize,
     recv_limit: Arc<tokio::sync::Semaphore>,
     evt_send: EventSend<DataChannelEvent>,
@@ -41,7 +41,7 @@ impl DataChanCore {
 
 #[derive(Clone)]
 pub(crate) struct WeakDataChan(
-    Weak<Mutex<std::result::Result<DataChanCore, Error>>>,
+    pub(crate) Weak<Mutex<std::result::Result<DataChanCore, Error>>>,
 );
 
 macro_rules! data_chan_strong_core {

@@ -198,6 +198,15 @@ pub struct Ep3 {
     listen_sigs: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
+impl std::fmt::Debug for Ep3 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ep3")
+            .field("this_id", &self.ep.this_id)
+            .field("ep_uniq", &self.ep.ep_uniq)
+            .finish()
+    }
+}
+
 impl Drop for Ep3 {
     fn drop(&mut self) {
         let handles = std::mem::take(&mut *self.listen_sigs.lock().unwrap());

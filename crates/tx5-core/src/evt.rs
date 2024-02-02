@@ -10,7 +10,8 @@ impl std::fmt::Debug for EventPermit {
     }
 }
 
-/// Generic event sender.
+/// Sender side of an explicitly bounded channel that lets us send
+/// bounded (backpressured) events, but unbounded error messages.
 pub struct EventSend<E: From<Error>> {
     limit: Arc<tokio::sync::Semaphore>,
     send: tokio::sync::mpsc::UnboundedSender<(E, EventPermit)>,
@@ -67,7 +68,8 @@ impl<E: From<Error>> EventSend<E> {
     }
 }
 
-/// Generic event receiver.
+/// Receiver side of an explicitly bounded channel that lets us send
+/// bounded (backpressured) events, but unbounded error messages.
 pub struct EventRecv<E: From<Error>>(
     tokio::sync::mpsc::UnboundedReceiver<(E, EventPermit)>,
 );

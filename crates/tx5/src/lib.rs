@@ -46,27 +46,13 @@ pub(crate) use back_buf::*;
 
 pub(crate) mod proto;
 
+/// Make a shared (clonable) future abortable and set a timeout.
+/// The timeout is managed by tokio::time::timeout.
+/// The clone-ability is managed by futures::future::shared.
+/// The abortability is NOT managed by futures::future::abortable,
+/// because we need to be able to pass in a specific error when aborting,
+/// so it is managed via a tokio::sync::oneshot channel and tokio::select!.
 #[derive(Clone)]
-struct DoDrop(std::sync::Arc<tokio::task::JoinHandle<()>>);
-
-impl Drop for DoDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-fn do_abort(
-    a: &std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Error>>>,
-    e: Error,
-) {
-    let a = a.lock().unwrap().take();
-    if let Some(a) = a {
-        let _ = a.send(e);
-    }
-}
-
-/// Make a shared (clonable) future abortable and set up an automatic
-/// abort at a time in the future specified by a duration.
 struct AbortableTimedSharedFuture<T: Clone> {
     f: futures::future::Shared<
         futures::future::BoxFuture<'static, std::result::Result<T, Error>>,
@@ -74,17 +60,6 @@ struct AbortableTimedSharedFuture<T: Clone> {
     a: std::sync::Arc<
         std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Error>>>,
     >,
-    t: DoDrop,
-}
-
-impl<T: Clone> Clone for AbortableTimedSharedFuture<T> {
-    fn clone(&self) -> Self {
-        Self {
-            f: self.f.clone(),
-            a: self.a.clone(),
-            t: self.t.clone(),
-        }
-    }
 }
 
 impl<T: Clone> AbortableTimedSharedFuture<T> {
@@ -102,30 +77,34 @@ impl<T: Clone> AbortableTimedSharedFuture<T> {
     {
         let (a, ar) = tokio::sync::oneshot::channel();
         let a = std::sync::Arc::new(std::sync::Mutex::new(Some(a)));
-        let a2 = a.clone();
-        let t = DoDrop(std::sync::Arc::new(tokio::task::spawn(async move {
-            tokio::time::sleep(timeout).await;
-            do_abort(&a2, timeout_err);
-        })));
         Self {
             f: futures::future::FutureExt::shared(
                 futures::future::FutureExt::boxed(async move {
-                    tokio::select! {
-                        r = async {
-                            Err(ar.await.map_err(|_| Error::id("AbortHandleDropped"))?)
-                        } => r,
-                        r = f => r,
-                    }
+                    tokio::time::timeout(
+                        timeout,
+                        async move {
+                            tokio::select! {
+                                r = async {
+                                    Err(ar.await.map_err(|_| Error::id("AbortHandleDropped"))?)
+                                } => r,
+                                r = f => r,
+                            }
+                        },
+                    )
+                    .await
+                    .map_err(|_| timeout_err)?
                 }),
             ),
             a,
-            t,
         }
     }
 
     /// Abort this future with the given error.
     pub fn abort(&self, err: Error) {
-        do_abort(&self.a, err);
+        let a = self.a.lock().unwrap().take();
+        if let Some(a) = a {
+            let _ = a.send(err);
+        }
     }
 }
 

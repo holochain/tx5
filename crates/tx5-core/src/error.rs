@@ -8,21 +8,6 @@ pub struct Error {
     pub info: String,
 }
 
-impl From<Error> for () {
-    #[inline]
-    fn from(_: Error) -> Self {}
-}
-
-impl From<()> for Error {
-    #[inline]
-    fn from(_: ()) -> Self {
-        Self {
-            id: "Error".into(),
-            info: String::default(),
-        }
-    }
-}
-
 impl From<String> for Error {
     #[inline]
     fn from(id: String) -> Self {

@@ -93,13 +93,13 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn event_limit() {
-        let (s, _r) = <EventSend<()>>::new(1);
+        let (s, _r) = <EventSend<Error>>::new(1);
 
-        s.send(()).await.unwrap();
+        s.send(Error::id("yo").into()).await.unwrap();
 
         assert!(tokio::time::timeout(
             std::time::Duration::from_millis(10),
-            s.send(()),
+            s.send(Error::id("yo").into()),
         )
         .await
         .is_err());

@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use tx5_go_pion_sys::Event as SysEvent;
 use tx5_go_pion_sys::API;
 
+const WEBRTC_MAX_DATA_PACKET_SIZE: usize = 16 * 1024;
+
 /// PeerConnectionState events.
 #[derive(Debug)]
 pub enum PeerConnectionState {
@@ -360,7 +362,7 @@ static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
                     data_chan,
                     async {
                         let len = buf.len()?;
-                        if len > 16 * 1024 {
+                        if len > WEBRTC_MAX_DATA_PACKET_SIZE {
                             return Err(Error::id("MsgTooLarge"));
                         }
 

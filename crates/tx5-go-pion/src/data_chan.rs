@@ -69,10 +69,14 @@ impl WeakDataChan {
 
             {
                 let mut lock = strong.lock().unwrap();
+                let mut do_swap = false;
                 if let Ok(core) = &mut *lock {
                     core.close(err);
+                    do_swap = true;
                 }
-                std::mem::swap(&mut *lock, &mut tmp);
+                if do_swap {
+                    std::mem::swap(&mut *lock, &mut tmp);
+                }
             }
 
             // make sure the above lock is released before this is dropped

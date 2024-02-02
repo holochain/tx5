@@ -1,4 +1,13 @@
 //! Types associated with the Tx5 protocol.
+//!
+//! The tx5 protocol solves 2 problems at once:
+//! - First, webrtc only supports messages up to 16K, so this lets us send
+//!   bigger messages.
+//! - Second, if we're sending bigger messages, we have to worry about the size
+//!   in memory taken up by the receiving side. This protocol lets us request
+//!   permits to send larger messages, which gives the receiving side a tool to
+//!   be able to manage more open connections at the same time without worrying
+//!   about the worst case memory usage of each connection all at the same time.
 
 use crate::BackBuf;
 use tx5_core::{Error, Result};

@@ -28,7 +28,7 @@ pub(crate) enum ProtoHeader {
     /// This is a protocol version handshake.
     /// `3 bits == 2`
     /// `5 bits == version number (currently 1)`
-    /// `24 bytes == as bytes b"tx5"`
+    /// `24 bits == as bytes b"tx5"`
     Version(u8, [u8; 3]),
 
     /// The remainder of this message represents the entirety of a message.

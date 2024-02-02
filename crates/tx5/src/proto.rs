@@ -413,7 +413,7 @@ mod test {
 
     #[test]
     fn proto_header_overflow() {
-        assert!(ProtoHeader::Version(u8::MAX, [b't', b'x', b'5'])
+        assert!(ProtoHeader::Version(0b00100000, [b't', b'x', b'5'])
             .encode()
             .is_err());
         assert!(ProtoHeader::CompleteMessage(u32::MAX).encode().is_err());

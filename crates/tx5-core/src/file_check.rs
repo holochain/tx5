@@ -17,7 +17,7 @@ impl FileCheck {
     }
 }
 
-fn get_loc_dir() -> Option<std::path::PathBuf> {
+fn get_user_cache_dir() -> Option<std::path::PathBuf> {
     match app_dirs2::app_root(
         app_dirs2::AppDataType::UserCache,
         &app_dirs2::AppInfo {
@@ -39,7 +39,7 @@ pub fn file_check(
 ) -> Result<FileCheck> {
     let file_name = format!("{file_name_prefix}-{file_hash}{file_name_ext}");
 
-    let pref_path = get_loc_dir().map(|mut d| {
+    let pref_path = get_user_cache_dir().map(|mut d| {
         d.push(&file_name);
         d
     });

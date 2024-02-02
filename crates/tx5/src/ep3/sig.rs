@@ -255,7 +255,8 @@ impl Sig {
                     let sig = self.sig.clone();
                     let peer_uniq = next_uniq();
                     let ice_servers = self.ice_servers.clone();
-                    let (peer_cmd_send, peer_cmd_recv) = EventSend::new(1024);
+                    let (peer_cmd_send, peer_cmd_recv) =
+                        EventSend::new(sig.config.internal_event_channel_size);
                     let _peer_drop = PeerDrop {
                         ep_uniq: sig.ep_uniq,
                         sig_uniq: sig.sig_uniq,

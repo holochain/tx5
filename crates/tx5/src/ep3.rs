@@ -120,6 +120,9 @@ pub struct Config3 {
     /// Maximum size of an individual message. Default 16 MiB.
     pub message_size_max: u32,
 
+    /// Internal event channel size. Default is 1024.
+    pub internal_event_channel_size: u32,
+
     /// Default timeout for network operations. Default 60 seconds.
     pub timeout: std::time::Duration,
 
@@ -143,6 +146,7 @@ impl Default for Config3 {
             recv_buffer_bytes_max: 64 * 1024,
             incoming_message_bytes_max: 512 * 1024 * 1024,
             message_size_max: 16 * 1024 * 1024,
+            internal_event_channel_size: 1024,
             timeout: std::time::Duration::from_secs(60),
             backoff_start: std::time::Duration::from_secs(5),
             backoff_max: std::time::Duration::from_secs(60),
@@ -271,7 +275,8 @@ impl Ep3 {
 
         let this_id = Id(*seed.x25519_pub_key.0);
 
-        let (evt_send, evt_recv) = EventSend::new(1024);
+        let (evt_send, evt_recv) =
+            EventSend::new(config.internal_event_channel_size);
 
         let sig_map = Arc::new(Mutex::new(HashMap::new()));
         let weak_sig_map = Arc::downgrade(&sig_map);

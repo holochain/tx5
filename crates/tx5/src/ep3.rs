@@ -135,6 +135,28 @@ pub struct Config3 {
     pub preflight: Option<(PreflightSendCb, PreflightCheckCb)>,
 }
 
+impl std::fmt::Debug for Config3 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config3")
+            .field("connection_count_max", &self.connection_count_max)
+            .field("send_buffer_bytes_max", &self.send_buffer_bytes_max)
+            .field("recv_buffer_bytes_max", &self.recv_buffer_bytes_max)
+            .field(
+                "incoming_message_bytes_max",
+                &self.incoming_message_bytes_max,
+            )
+            .field("message_size_max", &self.message_size_max)
+            .field(
+                "internal_event_channel_size",
+                &self.internal_event_channel_size,
+            )
+            .field("timeout", &self.timeout)
+            .field("backoff_start", &self.backoff_start)
+            .field("backoff_max", &self.backoff_max)
+            .finish()
+    }
+}
+
 impl Default for Config3 {
     fn default() -> Self {
         Self {

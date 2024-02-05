@@ -26,6 +26,9 @@ pub use uniq::*;
 mod url;
 pub use crate::url::*;
 
+mod evt;
+pub use evt::*;
+
 #[cfg(feature = "file_check")]
 pub mod file_check;
 

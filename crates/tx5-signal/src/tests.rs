@@ -70,6 +70,97 @@ impl Test {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn server_stop_restart() {
+    init_tracing();
+
+    let mut task = None;
+    let mut port = None;
+
+    for p in 31181..31191 {
+        let mut srv_config = tx5_signal_srv::Config::default();
+        srv_config.port = p;
+        srv_config.ice_servers = serde_json::json!([]);
+
+        if let Ok((srv_hnd, _, _)) =
+            tx5_signal_srv::exec_tx5_signal_srv(srv_config).await
+        {
+            task = Some(srv_hnd);
+            port = Some(p);
+            break;
+        }
+    }
+
+    let mut task = task.unwrap();
+    let port = port.unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // test setup
+    let (cli1, mut rcv1) = Test::new(port).await;
+    let id1 = *cli1.cli.local_id();
+
+    cli1.cli
+        .ice(id1, serde_json::json!({"test": "ice"}))
+        .await
+        .unwrap();
+
+    let msg = rcv1.recv().await;
+    tracing::info!(?msg);
+    assert!(matches!(msg, Some(SignalMsg::Ice { .. })));
+
+    // drop server
+    drop(task);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // make sure it now errors
+
+    // first just trigger an update
+    let _ = cli1.cli.ice(id1, serde_json::json!({"test": "ice"})).await;
+
+    // now our receive ends
+    let msg = rcv1.recv().await;
+    tracing::info!(?msg);
+    assert!(matches!(msg, None));
+
+    // now we get errors on send
+    cli1.cli
+        .ice(id1, serde_json::json!({"test": "ice"}))
+        .await
+        .unwrap_err();
+
+    // new server on same port
+
+    let mut srv_config = tx5_signal_srv::Config::default();
+    srv_config.port = port;
+    srv_config.ice_servers = serde_json::json!([]);
+
+    let (srv_hnd, _, _) = tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+        .await
+        .unwrap();
+
+    task = srv_hnd;
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // test continuation
+    let (cli1, mut rcv1) = Test::new(port).await;
+    let id1 = *cli1.cli.local_id();
+
+    cli1.cli
+        .ice(id1, serde_json::json!({"test": "ice"}))
+        .await
+        .unwrap();
+
+    let msg = rcv1.recv().await;
+    tracing::info!(?msg);
+    assert!(matches!(msg, Some(SignalMsg::Ice { .. })));
+
+    // cleanup
+    drop(task);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn wrong_version() {
     init_tracing();
 
@@ -78,23 +169,20 @@ async fn wrong_version() {
     srv_config.ice_servers = serde_json::json!([]);
     srv_config.demo = true;
 
-    let (srv_driver, addr_list, _) =
-        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    let (_srv_hnd, addr_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+            .await
+            .unwrap();
 
     let srv_port = addr_list.get(0).unwrap().port();
 
     tracing::info!(%srv_port);
 
-    tokio::select! {
-        _ = srv_driver => (),
-        _ = async move {
-            // TODO remove
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    // TODO remove
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v1/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.unwrap();
-            assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v0/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.is_err());
-        } => (),
-    }
+    tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v1/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.unwrap();
+    assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v0/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -106,22 +194,19 @@ async fn sanity() {
     srv_config.ice_servers = serde_json::json!([]);
     srv_config.demo = true;
 
-    let (srv_driver, addr_list, _) =
-        tx5_signal_srv::exec_tx5_signal_srv(srv_config).unwrap();
+    let (_srv_hnd, addr_list, _) =
+        tx5_signal_srv::exec_tx5_signal_srv(srv_config)
+            .await
+            .unwrap();
 
     let srv_port = addr_list.get(0).unwrap().port();
 
     tracing::info!(%srv_port);
 
-    tokio::select! {
-        _ = srv_driver => (),
-        _ = async move {
-            // TODO remove
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    // TODO remove
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-            sanity_inner(srv_port).await;
-        } => (),
-    }
+    sanity_inner(srv_port).await;
 }
 
 async fn sanity_inner(srv_port: u16) {

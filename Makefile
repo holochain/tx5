@@ -75,7 +75,7 @@ bump:
 
 test: static tools
 	cargo build --all-targets
-	RUST_BACKTRACE=1 cargo test -- --nocapture
+	RUST_BACKTRACE=1 RUST_LOG=error cargo test -- --nocapture
 
 static: docs tools
 	cargo fmt -- --check

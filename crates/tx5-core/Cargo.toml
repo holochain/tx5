@@ -1,6 +1,6 @@
 [package]
 name = "tx5-core"
-version = "0.0.6-alpha"
+version = "0.0.7-alpha"
 edition = "2021"
 description = "Holochain WebRTC P2P Communication Ecosystem Core Types"
 license = "MIT OR Apache-2.0"
@@ -16,11 +16,12 @@ once_cell = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true, features = [ "sync" ] }
 tracing = { workspace = true }
 url = { workspace = true }
 
 # file_check deps
-dirs = { workspace = true, optional = true }
+app_dirs2 = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 
@@ -32,4 +33,4 @@ default = [ "file_check" ]
 
 # A couple crates that depend on tx5-core need to be able to write/verify
 # files on system. Enable this `file_check` feature to provide that ability.
-file_check = [ "dirs", "sha2", "tempfile" ]
+file_check = [ "app_dirs2", "sha2", "tempfile" ]

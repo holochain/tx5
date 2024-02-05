@@ -5,10 +5,10 @@
 
 const DASH_TX5: &[u8] = include_bytes!("influxive-dashboards/tx5.json");
 
-use bytes::Buf;
 use clap::Parser;
 use std::collections::HashMap;
-use tx5::{Ep, EpEvt, Result, Tx5Url};
+use std::sync::Arc;
+use tx5::{Config3, Ep3, Ep3Event, Result, Tx5Url};
 
 #[derive(Debug, Parser)]
 #[clap(name = "tx5-demo", version, about = "Holochain Tx5 WebRTC Demo Cli")]
@@ -47,15 +47,12 @@ enum Message {
 }
 
 impl Message {
-    pub fn encode(&self) -> Result<bytes::Bytes> {
-        let b = serde_json::to_vec(self)?;
-        let mut o = bytes::BytesMut::with_capacity(b.len());
-        o.extend_from_slice(&b);
-        Ok(o.freeze())
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(&self).map_err(tx5::Error::err)
     }
 
-    pub fn decode(data: bytes::Bytes) -> Result<Self> {
-        Ok(serde_json::from_slice(&data)?)
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        Ok(serde_json::from_slice(data)?)
     }
 
     pub fn hello(known_peers: &HashMap<Tx5Url, PeerInfo>) -> Self {
@@ -177,13 +174,15 @@ impl Node {
         }
     }
 
-    pub fn send(&self, ep: &Ep, rem_url: &Tx5Url, data: bytes::Bytes) {
+    pub fn send(&self, ep: &Arc<Ep3>, rem_url: &Tx5Url, data: Vec<u8>) {
         let ep = ep.clone();
         let rem_url = rem_url.clone();
         tokio::task::spawn(async move {
-            let len = data.remaining();
+            let len = data.len();
+
             let id = rem_url.id().unwrap();
-            if let Err(err) = ep.send(rem_url, data).await {
+
+            if let Err(err) = ep.send(rem_url, &data).await {
                 d!(
                     error,
                     "SEND_ERROR",
@@ -195,7 +194,7 @@ impl Node {
         });
     }
 
-    pub fn broadcast_hello(&self, ep: &Ep) -> Result<()> {
+    pub fn broadcast_hello(&self, ep: &Arc<Ep3>) -> Result<()> {
         let hello = Message::hello(&self.known_peers).encode()?;
         for url in self.known_peers.keys() {
             if url == &self.this_url {
@@ -213,7 +212,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn five_sec(&mut self, ep: &Ep) -> Result<()> {
+    pub fn five_sec(&mut self, ep: &Arc<Ep3>) -> Result<()> {
         {
             let this = self.known_peers.get_mut(&self.this_url).unwrap();
             this.last_seen = std::time::Instant::now();
@@ -238,7 +237,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn thirty_sec(&mut self, ep: &Ep) -> Result<()> {
+    pub fn thirty_sec(&mut self, ep: &Arc<Ep3>) -> Result<()> {
         let mut v = Vec::new();
 
         for peer in self.known_peers.keys() {
@@ -317,7 +316,8 @@ async fn main_err() -> Result<()> {
 
     let sig_url = Tx5Url::new(sig_url)?;
 
-    let (ep, mut evt) = tx5::Ep::new().await?;
+    let (ep, mut evt) = tx5::Ep3::new(Arc::new(Config3::default())).await;
+    let ep = Arc::new(ep);
     let this_addr = ep.listen(sig_url.clone()).await?;
 
     let mut node = Node::new(this_addr.clone(), peer_urls);
@@ -337,7 +337,7 @@ async fn main_err() -> Result<()> {
     enum Cmd {
         FiveSec,
         ThirtySec,
-        EpEvt(Result<EpEvt>),
+        EpEvt(Ep3Event),
     }
 
     let (cmd_s, mut cmd_r) = tokio::sync::mpsc::unbounded_channel();
@@ -384,31 +384,28 @@ async fn main_err() -> Result<()> {
                 d!(info, "FIVE_SEC", "{node:?}");
                 tracing::info!(
                     "{}",
-                    serde_json::to_string(&ep.get_stats().await.unwrap())
-                        .unwrap()
+                    serde_json::to_string(&ep.get_stats().await).unwrap()
                 );
             }
             Cmd::ThirtySec => node.thirty_sec(&ep)?,
-            Cmd::EpEvt(Err(err)) => panic!("{err:?}"),
-            Cmd::EpEvt(Ok(EpEvt::Connected { rem_cli_url })) => {
-                node.add_known_peer(rem_cli_url);
+            Cmd::EpEvt(Ep3Event::Error(err)) => panic!("{err:?}"),
+            Cmd::EpEvt(Ep3Event::Connected { peer_url }) => {
+                node.add_known_peer(peer_url);
             }
-            Cmd::EpEvt(Ok(EpEvt::Disconnected { rem_cli_url })) => {
-                d!(info, "DISCONNECTED", "{:?}", rem_cli_url.id().unwrap());
+            Cmd::EpEvt(Ep3Event::Disconnected { peer_url }) => {
+                d!(info, "DISCONNECTED", "{:?}", peer_url.id().unwrap());
             }
-            Cmd::EpEvt(Ok(EpEvt::Data {
-                rem_cli_url,
-                mut data,
-                ..
-            })) => {
-                node.add_known_peer(rem_cli_url.clone());
-                match Message::decode(data.copy_to_bytes(data.remaining())) {
+            Cmd::EpEvt(Ep3Event::Message {
+                peer_url, message, ..
+            }) => {
+                node.add_known_peer(peer_url.clone());
+                match Message::decode(&message) {
                     Err(err) => d!(error, "RECV_ERROR", "{err:?}"),
                     Ok(Message::Hello { known_peers: kp }) => {
                         for peer in kp {
                             node.add_known_peer(Tx5Url::new(peer).unwrap());
                         }
-                        node.recv_hello(rem_cli_url)?;
+                        node.recv_hello(peer_url)?;
                     }
                     Ok(Message::Big(d)) => {
                         d!(
@@ -416,12 +413,11 @@ async fn main_err() -> Result<()> {
                             "RECV_BIG",
                             "len:{} {:?}",
                             d.as_bytes().len(),
-                            rem_cli_url.id().unwrap()
+                            peer_url.id().unwrap()
                         );
                     }
                 }
             }
-            Cmd::EpEvt(_) => (),
         }
     }
 

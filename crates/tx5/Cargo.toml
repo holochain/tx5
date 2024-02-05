@@ -1,6 +1,6 @@
 [package]
 name = "tx5"
-version = "0.0.6-alpha"
+version = "0.0.7-alpha"
 edition = "2021"
 description = "The main holochain tx5 webrtc networking crate"
 license = "MIT OR Apache-2.0"
@@ -20,6 +20,7 @@ backend-go-pion = [ "tx5-go-pion" ]
 backend-webrtc-rs = [ "webrtc" ]
 
 [dependencies]
+bit_field = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 influxive-otel-atomic-obs = { workspace = true }

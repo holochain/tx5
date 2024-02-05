@@ -36,261 +36,156 @@ pub mod deps {
     pub use tx5_signal::deps::*;
 }
 
-use deps::{serde, serde_json};
-
-use tx5_core::Uniq;
 pub use tx5_core::{Error, ErrorExt, Id, Result, Tx5InitConfig, Tx5Url};
 
-pub mod actor;
+mod ep3;
+pub use ep3::*;
 
-mod back_buf;
-pub use back_buf::*;
+pub(crate) mod back_buf;
+pub(crate) use back_buf::*;
 
-/// Helper extension trait for `Box<dyn bytes::Buf + 'static + Send>`.
-pub trait BytesBufExt {
-    /// Convert into a `Vec<u8>`.
-    fn to_vec(self) -> Result<Vec<u8>>;
+pub(crate) mod proto;
+
+/// Make a shared (clonable) future abortable and set a timeout.
+/// The timeout is managed by tokio::time::timeout.
+/// The clone-ability is managed by futures::future::shared.
+/// The abortability is NOT managed by futures::future::abortable,
+/// because we need to be able to pass in a specific error when aborting,
+/// so it is managed via a tokio::sync::oneshot channel and tokio::select!.
+#[derive(Clone)]
+struct AbortableTimedSharedFuture<T: Clone> {
+    f: futures::future::Shared<
+        futures::future::BoxFuture<'static, std::result::Result<T, Error>>,
+    >,
+    a: std::sync::Arc<
+        std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Error>>>,
+    >,
 }
 
-impl BytesBufExt for Box<dyn bytes::Buf + 'static + Send> {
-    fn to_vec(self) -> Result<Vec<u8>> {
-        use bytes::Buf;
-        use std::io::Read;
-        let mut out = Vec::with_capacity(self.remaining());
-        self.reader().read_to_end(&mut out)?;
-        Ok(out)
-    }
-}
-
-const FINISH: u64 = 1 << 63;
-
-trait FinishExt: Sized {
-    fn set_finish(&self) -> Self;
-    fn unset_finish(&self) -> Self;
-    fn is_finish(&self) -> bool;
-}
-
-impl FinishExt for u64 {
-    fn set_finish(&self) -> Self {
-        *self | FINISH
-    }
-
-    fn unset_finish(&self) -> Self {
-        *self & !FINISH
-    }
-
-    fn is_finish(&self) -> bool {
-        *self & FINISH > 0
-    }
-}
-
-/// A set of distinct chunks of bytes that can be treated as a single unit
-//#[derive(Clone, Default)]
-#[derive(Default)]
-struct BytesList(pub std::collections::VecDeque<bytes::Bytes>);
-
-impl BytesList {
-    /// Construct a new BytesList.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /*
-        /// Construct a new BytesList with given capacity.
-        pub fn with_capacity(capacity: usize) -> Self {
-            Self(std::collections::VecDeque::with_capacity(capacity))
-        }
-    */
-
-    /// Push a new bytes::Bytes into this BytesList.
-    pub fn push(&mut self, data: bytes::Bytes) {
-        if bytes::Buf::has_remaining(&data) {
-            self.0.push_back(data);
+impl<T: Clone> AbortableTimedSharedFuture<T> {
+    /// Construct a new AbortableTimedSharedFuture that will timeout
+    /// after the given duration.
+    pub fn new<F>(
+        timeout: std::time::Duration,
+        timeout_err: Error,
+        f: F,
+    ) -> Self
+    where
+        F: std::future::Future<Output = std::result::Result<T, Error>>
+            + 'static
+            + Send,
+    {
+        let (a, ar) = tokio::sync::oneshot::channel();
+        let a = std::sync::Arc::new(std::sync::Mutex::new(Some(a)));
+        Self {
+            f: futures::future::FutureExt::shared(
+                futures::future::FutureExt::boxed(async move {
+                    tokio::time::timeout(
+                        timeout,
+                        async move {
+                            tokio::select! {
+                                r = async {
+                                    Err(ar.await.map_err(|_| Error::id("AbortHandleDropped"))?)
+                                } => r,
+                                r = f => r,
+                            }
+                        },
+                    )
+                    .await
+                    .map_err(|_| timeout_err)?
+                }),
+            ),
+            a,
         }
     }
 
-    /// Convert into a trait object.
-    pub fn into_dyn(self) -> Box<dyn bytes::Buf + 'static + Send> {
-        Box::new(self)
-    }
-
-    /*
-        /// Copy data into a Vec<u8>. You should avoid this if possible.
-        pub fn to_vec(&self) -> Vec<u8> {
-            use std::io::Read;
-            let mut out = Vec::with_capacity(self.remaining());
-            // data is local, it can't error, safe to unwrap
-            self.clone().reader().read_to_end(&mut out).unwrap();
-            out
-        }
-
-        /// Extract the contents of this BytesList into a new one
-        pub fn extract(&mut self) -> Self {
-            Self(std::mem::take(&mut self.0))
-        }
-
-        /// Remove specified byte cnt from the front of this list as a new list.
-        /// Panics if self doesn't contain enough bytes.
-        #[allow(clippy::comparison_chain)] // clearer written explicitly
-        pub fn take_front(&mut self, mut cnt: usize) -> Self {
-            let mut out = BytesList::new();
-            loop {
-                let mut item = match self.0.pop_front() {
-                    Some(item) => item,
-                    None => panic!("UnexpectedEof"),
-                };
-
-                let rem = item.remaining();
-                if rem == cnt {
-                    out.push(item);
-                    return out;
-                } else if rem < cnt {
-                    out.push(item);
-                    cnt -= rem;
-                } else if rem > cnt {
-                    out.push(item.split_to(cnt));
-                    self.0.push_front(item);
-                    return out;
-                }
-            }
-        }
-    */
-}
-
-/*
-impl From<std::collections::VecDeque<bytes::Bytes>> for BytesList {
-    #[inline(always)]
-    fn from(v: std::collections::VecDeque<bytes::Bytes>) -> Self {
-        Self(v)
-    }
-}
-
-impl From<bytes::Bytes> for BytesList {
-    #[inline(always)]
-    fn from(b: bytes::Bytes) -> Self {
-        let mut out = std::collections::VecDeque::with_capacity(8);
-        out.push_back(b);
-        out.into()
-    }
-}
-
-impl From<Vec<u8>> for BytesList {
-    #[inline(always)]
-    fn from(v: Vec<u8>) -> Self {
-        bytes::Bytes::from(v).into()
-    }
-}
-
-impl From<&[u8]> for BytesList {
-    #[inline(always)]
-    fn from(b: &[u8]) -> Self {
-        bytes::Bytes::copy_from_slice(b).into()
-    }
-}
-
-impl<const N: usize> From<&[u8; N]> for BytesList {
-    #[inline(always)]
-    fn from(b: &[u8; N]) -> Self {
-        bytes::Bytes::copy_from_slice(&b[..]).into()
-    }
-}
-*/
-
-impl bytes::Buf for BytesList {
-    fn remaining(&self) -> usize {
-        self.0.iter().map(|b| b.remaining()).sum()
-    }
-
-    fn chunk(&self) -> &[u8] {
-        match self.0.front() {
-            Some(b) => b.chunk(),
-            None => &[],
-        }
-    }
-
-    #[allow(clippy::comparison_chain)] // clearer written explicitly
-    fn advance(&mut self, mut cnt: usize) {
-        loop {
-            let mut item = match self.0.pop_front() {
-                Some(item) => item,
-                None => return,
-            };
-
-            let rem = item.remaining();
-            if rem == cnt {
-                return;
-            } else if rem < cnt {
-                cnt -= rem;
-            } else if rem > cnt {
-                item.advance(cnt);
-                self.0.push_front(item);
-                return;
-            }
+    /// Abort this future with the given error.
+    pub fn abort(&self, err: Error) {
+        let a = self.a.lock().unwrap().take();
+        if let Some(a) = a {
+            let _ = a.send(err);
         }
     }
 }
 
-pub mod state;
+impl<T: Clone> std::future::Future for AbortableTimedSharedFuture<T> {
+    type Output = std::result::Result<T, Error>;
 
-mod config;
-pub use config::*;
-
-mod endpoint;
-pub use endpoint::*;
-
-fn divide_send<B: bytes::Buf>(
-    config: &dyn Config,
-    snd_ident: &std::sync::atomic::AtomicU64,
-    mut data: B,
-) -> Result<Vec<BackBuf>> {
-    use std::io::Write;
-
-    let max_send_bytes = config.max_send_bytes();
-
-    if bytes::Buf::remaining(&data) > max_send_bytes as usize {
-        Err(Error::id("DataTooLarge"))
-    } else {
-        (|| {
-            let ident =
-                snd_ident.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-            let mut buf_list = Vec::new();
-
-            const MAX_MSG: usize = (16 * 1024) - 8;
-            while data.has_remaining() {
-                let loc_len = std::cmp::min(data.remaining(), MAX_MSG);
-                let ident = if data.remaining() <= loc_len {
-                    ident.set_finish()
-                } else {
-                    ident.unset_finish()
-                };
-
-                tracing::trace!(ident=%ident.unset_finish(), is_finish=%ident.is_finish(), %loc_len, "prepare send");
-
-                let mut tmp =
-                    bytes::Buf::reader(bytes::Buf::take(data, loc_len));
-
-                // TODO - reserve the bytes before writing
-                let mut buf = BackBuf::from_writer()?;
-                buf.write_all(&ident.to_le_bytes())?;
-                std::io::copy(&mut tmp, &mut buf)?;
-
-                buf_list.push(buf.finish());
-
-                data = tmp.into_inner().into_inner();
-            }
-
-            if buf_list.is_empty() {
-                let ident = ident.set_finish();
-                let mut buf = BackBuf::from_writer()?;
-                buf.write_all(&ident.to_le_bytes())?;
-                buf_list.push(buf.finish());
-            }
-
-            Ok(buf_list)
-        })()
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.f).poll(cx)
     }
 }
 
 #[cfg(test)]
-mod test;
+mod test_behavior;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_traits() {
+        fn check<F>(_f: F)
+        where
+            F: Send + Sync + Unpin,
+        {
+        }
+
+        let a = AbortableTimedSharedFuture::new(
+            std::time::Duration::from_millis(10),
+            Error::str("my timeout err").into(),
+            async move { Ok(()) },
+        );
+
+        check(a);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_happy() {
+        AbortableTimedSharedFuture::new(
+            std::time::Duration::from_secs(1),
+            Error::id("to").into(),
+            async move { Ok(()) },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_timeout() {
+        let r = AbortableTimedSharedFuture::new(
+            std::time::Duration::from_millis(1),
+            Error::id("to").into(),
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!("to", r.unwrap_err().to_string());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn atsf_abort() {
+        let a = AbortableTimedSharedFuture::new(
+            std::time::Duration::from_secs(1),
+            Error::id("to").into(),
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                Ok(())
+            },
+        );
+        {
+            let a = a.clone();
+            tokio::task::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                a.abort(Error::id("abort").into());
+            });
+        }
+        let r = a.await;
+        assert_eq!("abort", r.unwrap_err().to_string());
+    }
+}

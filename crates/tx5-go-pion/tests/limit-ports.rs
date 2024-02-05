@@ -7,13 +7,8 @@ async fn limit_ports() {
     .set_as_global_default()
     .unwrap();
 
-    let (s, mut r) = tokio::sync::mpsc::unbounded_channel();
-
-    let mut con = tx5_go_pion::PeerConnection::new(
+    let (con, mut r) = tx5_go_pion::PeerConnection::new(
         tx5_go_pion::PeerConnectionConfig::default(),
-        move |evt| {
-            let _ = s.send(evt);
-        },
     )
     .await
     .unwrap();

@@ -1,8 +1,6 @@
 use crate::*;
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tx5_go_pion_sys::Event as SysEvent;
 use tx5_go_pion_sys::API;
 
@@ -46,8 +44,8 @@ impl PeerConnectionState {
 /// Incoming events related to a PeerConnection.
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
-    /// PeerConnection Error.
-    Error(std::io::Error),
+    /// PeerConnection error.
+    Error(Error),
 
     /// PeerConnectionState event.
     State(PeerConnectionState),
@@ -56,150 +54,279 @@ pub enum PeerConnectionEvent {
     ICECandidate(GoBuf),
 
     /// Received an incoming data channel.
-    DataChannel(DataChannelSeed),
+    /// Warning: This returns an unbounded channel,
+    /// you should process this as quickly and synchronously as possible
+    /// to avoid a backlog filling up memory.
+    DataChannel(
+        DataChannel,
+        tokio::sync::mpsc::UnboundedReceiver<DataChannelEvent>,
+    ),
+}
+
+impl From<Error> for PeerConnectionEvent {
+    fn from(err: Error) -> Self {
+        Self::Error(err)
+    }
 }
 
 /// Incoming events related to a DataChannel.
 #[derive(Debug)]
 pub enum DataChannelEvent {
-    /// DataChannel is ready to send / receive.
+    /// Data channel error.
+    Error(Error),
+
+    /// Data channel has transitioned to "open".
     Open,
 
-    /// DataChannel is closed.
+    /// Data channel has transitioned to "closed".
     Close,
 
-    /// DataChannel incoming message.
+    /// Received incoming message on the data channel.
     Message(GoBuf),
 
-    /// DataChannel buffered amount is now low.
+    /// Data channel buffered amount is now low.
     BufferedAmountLow,
+}
+
+impl From<Error> for DataChannelEvent {
+    fn from(err: Error) -> Self {
+        Self::Error(err)
+    }
 }
 
 #[inline]
 pub(crate) fn init_evt_manager() {
     // ensure initialization
-    MANAGER.is_locked();
+    let _ = &*MANAGER;
 }
 
-pub(crate) fn register_peer_con_evt_cb(id: usize, cb: PeerConEvtCb) {
-    MANAGER.lock().peer_con.insert(id, cb);
+enum Cmd {
+    Evt(SysEvent),
+    PeerReg(usize, peer_con::WeakPeerCon),
+    PeerUnreg(usize),
+    DataReg(usize, data_chan::WeakDataChan),
+    DataUnreg(usize),
 }
-
-pub(crate) fn unregister_peer_con_evt_cb(id: usize) {
-    MANAGER.lock().peer_con.remove(&id);
-}
-
-pub(crate) fn register_data_chan_evt_cb(id: usize, cb: DataChanEvtCb) {
-    MANAGER.lock().data_chan.insert(id, cb);
-}
-
-pub(crate) fn replace_data_chan_evt_cb<F>(id: usize, f: F)
-where
-    F: FnOnce() -> DataChanEvtCb,
-{
-    let mut lock = MANAGER.lock();
-    let cb = f();
-    lock.data_chan.insert(id, cb);
-}
-
-pub(crate) fn unregister_data_chan_evt_cb(id: usize) {
-    MANAGER.lock().data_chan.remove(&id);
-}
-
-pub(crate) type PeerConEvtCb =
-    Arc<dyn Fn(PeerConnectionEvent) + 'static + Send + Sync>;
-
-pub(crate) type DataChanEvtCb =
-    Arc<dyn Fn(DataChannelEvent) + 'static + Send + Sync>;
-
-static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
-    unsafe {
-        // TODO!!! MEORY LEAK
-        // we need else cases througout here, if there isn't a
-        // registered callback, we need to call _free functions
-        // on incoming events like DataChannel and OnMessage buffers.
-        API.on_event(|sys_evt| match sys_evt {
-            SysEvent::Error(_error) => (),
-            SysEvent::PeerConICECandidate {
-                peer_con_id,
-                candidate,
-            } => {
-                let maybe_cb =
-                    MANAGER.lock().peer_con.get(&peer_con_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb(PeerConnectionEvent::ICECandidate(GoBuf(candidate)));
-                }
-            }
-            SysEvent::PeerConStateChange {
-                peer_con_id,
-                peer_con_state,
-            } => {
-                let maybe_cb =
-                    MANAGER.lock().peer_con.get(&peer_con_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb(PeerConnectionEvent::State(
-                        PeerConnectionState::from_raw(peer_con_state),
-                    ));
-                }
-            }
-            SysEvent::PeerConDataChan {
-                peer_con_id,
-                data_chan_id,
-            } => {
-                let maybe_cb =
-                    MANAGER.lock().peer_con.get(&peer_con_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb(PeerConnectionEvent::DataChannel(DataChannelSeed::new(
-                        data_chan_id,
-                    )));
-                }
-            }
-            SysEvent::DataChanClose(data_chan_id) => {
-                let maybe_cb =
-                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb(DataChannelEvent::Close);
-                }
-            }
-            SysEvent::DataChanOpen(data_chan_id) => {
-                let maybe_cb =
-                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb(DataChannelEvent::Open);
-                }
-            }
-            SysEvent::DataChanMessage {
-                data_chan_id,
-                buffer_id,
-            } => {
-                let maybe_cb =
-                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb(DataChannelEvent::Message(GoBuf(buffer_id)));
-                }
-            }
-            SysEvent::DataChanBufferedAmountLow(data_chan_id) => {
-                let maybe_cb =
-                    MANAGER.lock().data_chan.get(&data_chan_id).cloned();
-                if let Some(cb) = maybe_cb {
-                    cb(DataChannelEvent::BufferedAmountLow);
-                }
-            }
-        });
-    }
-    Manager::new()
-});
 
 struct Manager {
-    peer_con: HashMap<usize, PeerConEvtCb>,
-    data_chan: HashMap<usize, DataChanEvtCb>,
+    rt_send: std::sync::mpsc::Sender<Cmd>,
 }
 
 impl Manager {
-    pub fn new() -> Mutex<Self> {
-        Mutex::new(Self {
-            peer_con: HashMap::new(),
-            data_chan: HashMap::new(),
-        })
+    pub fn new() -> Self {
+        struct D;
+
+        impl Drop for D {
+            fn drop(&mut self) {
+                tracing::error!("tx5-go-pion offload EVENT LOOP EXITED");
+            }
+        }
+
+        let drop_trace = D;
+
+        let (rt_send, rt_recv) = std::sync::mpsc::channel();
+
+        // we need to offload the event handling to another thread
+        // because it's not safe to invoke other go apis within the
+        // same sync call:
+        // https://github.com/pion/webrtc/issues/2404
+        std::thread::Builder::new()
+            .name("tx5-evt-offload".to_string())
+            .spawn(move || {
+                let _drop_trace = drop_trace;
+
+                let mut peer_map: HashMap<usize, peer_con::WeakPeerCon> =
+                    HashMap::new();
+                let mut data_map: HashMap<usize, data_chan::WeakDataChan> =
+                    HashMap::new();
+
+                trait Wk<E> {
+                    fn se(&self, evt: E) -> Result<()>;
+                }
+
+                impl Wk<PeerConnectionEvent> for peer_con::WeakPeerCon {
+                    fn se(&self, evt: PeerConnectionEvent) -> Result<()> {
+                        self.send_evt(evt)
+                    }
+                }
+
+                impl Wk<DataChannelEvent> for data_chan::WeakDataChan {
+                    fn se(&self, evt: DataChannelEvent) -> Result<()> {
+                        self.send_evt(evt)
+                    }
+                }
+
+                fn smap<E, W: Wk<E>>(
+                    map: &mut HashMap<usize, W>,
+                    id: usize,
+                    evt: E,
+                ) {
+                    if let std::collections::hash_map::Entry::Occupied(o) =
+                        map.entry(id)
+                    {
+                        if o.get().se(evt).is_err() {
+                            o.remove();
+                        }
+                    }
+                }
+
+                while let Ok(cmd) = rt_recv.recv() {
+                    match cmd {
+                        Cmd::Evt(evt) => match evt {
+                            SysEvent::Error(error) => {
+                                tracing::error!(
+                                    ?error,
+                                    "tx5-go-pion error event"
+                                );
+                            }
+                            SysEvent::PeerConICECandidate {
+                                peer_con_id,
+                                candidate,
+                            } => {
+                                smap(
+                                    &mut peer_map,
+                                    peer_con_id,
+                                    PeerConnectionEvent::ICECandidate(GoBuf(
+                                        candidate,
+                                    )),
+                                );
+                            }
+                            SysEvent::PeerConStateChange {
+                                peer_con_id,
+                                peer_con_state,
+                            } => {
+                                smap(
+                                    &mut peer_map,
+                                    peer_con_id,
+                                    PeerConnectionEvent::State(
+                                        PeerConnectionState::from_raw(
+                                            peer_con_state,
+                                        ),
+                                    ),
+                                );
+                            }
+                            SysEvent::PeerConDataChan {
+                                peer_con_id,
+                                data_chan_id,
+                            } => {
+                                let (chan, recv) =
+                                    DataChannel::new(data_chan_id);
+                                smap(
+                                    &mut peer_map,
+                                    peer_con_id,
+                                    PeerConnectionEvent::DataChannel(
+                                        chan, recv,
+                                    ),
+                                );
+                            }
+                            SysEvent::DataChanClose(data_chan_id) => {
+                                smap(
+                                    &mut data_map,
+                                    data_chan_id,
+                                    DataChannelEvent::Close,
+                                );
+                            }
+                            SysEvent::DataChanOpen(data_chan_id) => {
+                                smap(
+                                    &mut data_map,
+                                    data_chan_id,
+                                    DataChannelEvent::Open,
+                                );
+                            }
+                            SysEvent::DataChanMessage {
+                                data_chan_id,
+                                buffer_id,
+                            } => {
+                                let buf = GoBuf(buffer_id);
+                                smap(
+                                    &mut data_map,
+                                    data_chan_id,
+                                    DataChannelEvent::Message(buf),
+                                );
+                            }
+                            SysEvent::DataChanBufferedAmountLow(
+                                data_chan_id,
+                            ) => {
+                                smap(
+                                    &mut data_map,
+                                    data_chan_id,
+                                    DataChannelEvent::BufferedAmountLow,
+                                );
+                            }
+                        },
+                        Cmd::PeerReg(id, peer_con) => {
+                            peer_map.insert(id, peer_con);
+                        }
+                        Cmd::PeerUnreg(id) => {
+                            peer_map.remove(&id);
+                        }
+                        Cmd::DataReg(id, data_chan) => {
+                            data_map.insert(id, data_chan);
+                        }
+                        Cmd::DataUnreg(id) => {
+                            data_map.remove(&id);
+                        }
+                    }
+                }
+            })
+            .expect("Failed to spawn offload thread");
+
+        Self { rt_send }
+    }
+
+    pub fn register_peer_con(
+        &self,
+        id: usize,
+        peer_con: peer_con::WeakPeerCon,
+    ) {
+        let _ = self.rt_send.send(Cmd::PeerReg(id, peer_con));
+    }
+
+    pub fn unregister_peer_con(&self, id: usize) {
+        let _ = self.rt_send.send(Cmd::PeerUnreg(id));
+    }
+
+    pub fn register_data_chan(
+        &self,
+        id: usize,
+        data_chan: data_chan::WeakDataChan,
+    ) {
+        let _ = self.rt_send.send(Cmd::DataReg(id, data_chan));
+    }
+
+    pub fn unregister_data_chan(&self, id: usize) {
+        let _ = self.rt_send.send(Cmd::DataUnreg(id));
+    }
+
+    pub fn handle_event(&self, evt: SysEvent) {
+        let _ = self.rt_send.send(Cmd::Evt(evt));
     }
 }
+pub(crate) fn register_peer_con(id: usize, peer_con: peer_con::WeakPeerCon) {
+    MANAGER.register_peer_con(id, peer_con);
+}
+
+pub(crate) fn unregister_peer_con(id: usize) {
+    MANAGER.unregister_peer_con(id);
+}
+
+pub(crate) fn register_data_chan(
+    id: usize,
+    data_chan: data_chan::WeakDataChan,
+) {
+    MANAGER.register_data_chan(id, data_chan);
+}
+
+pub(crate) fn unregister_data_chan(id: usize) {
+    MANAGER.unregister_data_chan(id);
+}
+
+static MANAGER: Lazy<Manager> = Lazy::new(|| {
+    unsafe {
+        API.on_event(move |evt| {
+            MANAGER.handle_event(evt);
+        });
+    }
+
+    Manager::new()
+});

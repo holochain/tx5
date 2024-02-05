@@ -591,7 +591,7 @@ impl Cli {
             }
         }));
 
-        let _ = init_recv.await;
+        init_recv.await.map_err(|_| Error::id("ShuttingDown"))??;
 
         Ok((
             Self {
@@ -621,47 +621,36 @@ async fn con_task(
     lair_client: LairClient,
     write_send: WriteSend,
     write_recv: WriteRecv,
-    init: tokio::sync::oneshot::Sender<()>,
+    init: tokio::sync::oneshot::Sender<Result<()>>,
 ) {
-    let mut init = Some(init);
-    let mut write_recv = Some(write_recv);
-    loop {
-        if let Some(socket) = con_open_connection(
-            &use_tls,
-            &host,
-            &con_url,
-            &endpoint,
-            x25519_pub,
-            &ice,
-            &lair_client,
-        )
-        .await
-        {
-            // once we've run open_connection once, proceed with init
-            if let Some(init) = init.take() {
-                let _ = init.send(());
-            }
+    match con_open_connection(
+        &use_tls,
+        &host,
+        &con_url,
+        &endpoint,
+        x25519_pub,
+        &ice,
+        &lair_client,
+    )
+    .await
+    {
+        Ok(socket) => {
+            // once we've run open_connection proceed with init
+            let _ = init.send(Ok(()));
 
-            let a_write_recv = con_manage_connection(
+            con_manage_connection(
                 socket,
                 msg_send.clone(),
                 x25519_pub,
                 &lair_client,
                 write_send.clone(),
-                write_recv.take().unwrap(),
+                write_recv,
             )
             .await;
-            write_recv = Some(a_write_recv);
         }
-
-        // once we've run open_connection once, proceed with init
-        if let Some(init) = init.take() {
-            let _ = init.send(());
+        Err(err) => {
+            let _ = init.send(Err(err));
         }
-
-        let s = rand::Rng::gen_range(&mut rand::thread_rng(), 4.0..8.0);
-        let s = std::time::Duration::from_secs_f64(s);
-        tokio::time::sleep(s).await;
     }
 }
 
@@ -670,24 +659,12 @@ async fn con_stack(
     host: &str,
     con_url: &str,
     addr: std::net::SocketAddr,
-) -> Option<Socket> {
+) -> Result<Socket> {
     tracing::debug!(?addr, "try connect");
 
-    let socket = match tokio::net::TcpStream::connect(addr).await {
-        Ok(socket) => socket,
-        Err(err) => {
-            tracing::debug!(?err);
-            return None;
-        }
-    };
+    let socket = tokio::net::TcpStream::connect(addr).await?;
 
-    let socket = match tcp_configure(socket) {
-        Ok(socket) => socket,
-        Err(err) => {
-            tracing::debug!(?err);
-            return None;
-        }
-    };
+    let socket = tcp_configure(socket)?;
 
     let socket: tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream> =
         if let Some(tls) = use_tls {
@@ -695,37 +672,24 @@ async fn con_stack(
                 .try_into()
                 .unwrap_or_else(|_| "tx5-signal".try_into().unwrap());
 
-            let socket = match tokio_rustls::TlsConnector::from(tls.clone())
+            let socket = tokio_rustls::TlsConnector::from(tls.clone())
                 .connect(name, socket)
-                .await
-            {
-                Ok(socket) => socket,
-                Err(err) => {
-                    tracing::debug!(?err);
-                    return None;
-                }
-            };
+                .await?;
 
             tokio_tungstenite::MaybeTlsStream::Rustls(socket)
         } else {
             tokio_tungstenite::MaybeTlsStream::Plain(socket)
         };
 
-    let (socket, _rsp) = match tokio_tungstenite::client_async_with_config(
+    let (socket, _rsp) = tokio_tungstenite::client_async_with_config(
         con_url,
         socket,
         Some(WS_CONFIG),
     )
     .await
-    {
-        Ok(r) => r,
-        Err(err) => {
-            tracing::debug!(?err);
-            return None;
-        }
-    };
+    .map_err(Error::err)?;
 
-    Some(socket)
+    Ok(socket)
 }
 
 async fn con_open_connection(
@@ -736,51 +700,38 @@ async fn con_open_connection(
     x25519_pub: Id,
     ice: &Mutex<Arc<serde_json::Value>>,
     lair_client: &LairClient,
-) -> Option<Socket> {
+) -> Result<Socket> {
     let mut result_socket = None;
 
-    let addr_list = match tokio::net::lookup_host(&endpoint).await {
-        Ok(addr_list) => addr_list,
-        Err(err) => {
-            tracing::debug!(?err);
-            return None;
-        }
-    };
+    let addr_list = tokio::net::lookup_host(&endpoint).await?;
+
+    let mut err_list = Vec::new();
 
     for addr in addr_list {
-        if let Some(con) = con_stack(use_tls, host, con_url, addr).await {
-            result_socket = Some(con);
-            break;
+        match con_stack(use_tls, host, con_url, addr).await {
+            Ok(con) => {
+                result_socket = Some(con);
+                break;
+            }
+            Err(err) => err_list.push(err),
         }
     }
 
     let mut socket = match result_socket {
         Some(socket) => socket,
         None => {
-            tracing::debug!("failed all sig dns addr connects");
-            return None;
+            err_list.push(Error::str("failed all sig dns addr connects"));
+            return Err(Error::str(format!("{err_list:?}")));
         }
     };
 
     let auth_req = match socket.next().await {
         Some(Ok(auth_req)) => auth_req.into_data(),
-        Some(Err(err)) => {
-            tracing::debug!(?err);
-            return None;
-        }
-        None => {
-            tracing::debug!("InvalidServerAuthReq");
-            return None;
-        }
+        Some(Err(err)) => return Err(Error::err(err)),
+        None => return Err(Error::id("InvalidServerAuthReq")),
     };
 
-    let decode = match wire::Wire::decode(&auth_req) {
-        Ok(decode) => decode,
-        Err(err) => {
-            tracing::debug!(?err);
-            return None;
-        }
-    };
+    let decode = wire::Wire::decode(&auth_req)?;
 
     let (srv_pub, nonce, cipher, got_ice) = match decode {
         wire::Wire::AuthReqV1 {
@@ -790,12 +741,11 @@ async fn con_open_connection(
             ice,
         } => (srv_pub, nonce, cipher, ice),
         _ => {
-            tracing::debug!("InvalidServerAuthReq");
-            return None;
+            return Err(Error::id("InvalidServerAuthReq"));
         }
     };
 
-    let con_key = match lair_client
+    let con_key = lair_client
         .crypto_box_xsalsa_open_by_pub_key(
             srv_pub.0.into(),
             x25519_pub.0.into(),
@@ -803,46 +753,22 @@ async fn con_open_connection(
             nonce.0,
             cipher.0.into(),
         )
-        .await
-    {
-        Ok(con_key) => con_key,
-        Err(err) => {
-            tracing::debug!(?err);
-            return None;
-        }
-    };
+        .await?;
 
-    if let Err(err) = socket
-        .send(Message::binary(
-            match (wire::Wire::AuthResV1 {
-                con_key: match Id::from_slice(&con_key) {
-                    Ok(con_key) => con_key,
-                    Err(err) => {
-                        tracing::debug!(?err);
-                        return None;
-                    }
-                },
-                req_addr: true,
-            })
-            .encode()
-            {
-                Ok(binary) => binary,
-                Err(err) => {
-                    tracing::debug!(?err);
-                    return None;
-                }
-            },
-        ))
-        .await
-    {
-        tracing::debug!(?err);
-        return None;
-    }
+    let con_key = Id::from_slice(&con_key)?;
+    let msg = Message::binary(
+        wire::Wire::AuthResV1 {
+            con_key,
+            req_addr: true,
+        }
+        .encode()?,
+    );
+    socket.send(msg).await.map_err(Error::err)?;
 
     tracing::info!(%got_ice, "signal connection established");
     *ice.lock() = Arc::new(got_ice);
 
-    Some(socket)
+    Ok(socket)
 }
 
 async fn con_manage_connection(

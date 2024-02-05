@@ -142,27 +142,18 @@ impl Manager {
 
                 trait Wk<E> {
                     fn se(&self, evt: E) -> Result<()>;
-                    //fn cl(&self, err: Error);
                 }
 
                 impl Wk<PeerConnectionEvent> for peer_con::WeakPeerCon {
                     fn se(&self, evt: PeerConnectionEvent) -> Result<()> {
                         self.send_evt(evt)
                     }
-
-                    //fn cl(&self, err: Error) {
-                    //    self.close(err);
-                    //}
                 }
 
                 impl Wk<DataChannelEvent> for data_chan::WeakDataChan {
                     fn se(&self, evt: DataChannelEvent) -> Result<()> {
                         self.send_evt(evt)
                     }
-
-                    //fn cl(&self, err: Error) {
-                    //    self.close(err);
-                    //}
                 }
 
                 fn smap<E, W: Wk<E>>(
@@ -174,7 +165,6 @@ impl Manager {
                         map.entry(id)
                     {
                         if o.get().se(evt).is_err() {
-                            //o.get().cl(Error::id("EventSendError").into());
                             o.remove();
                         }
                     }

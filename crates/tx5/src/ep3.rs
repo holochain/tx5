@@ -42,9 +42,6 @@ pub enum Ep3Event {
 
         /// Message sent by the remote peer.
         message: Vec<u8>,
-
-        /// Permit counting the bytes allowed in memory on the receive side.
-        permit: tokio::sync::OwnedSemaphorePermit,
     },
 }
 

@@ -491,12 +491,6 @@ impl Peer {
                                         .send(Ep3Event::Message {
                                             peer_url: peer_url.clone(),
                                             message,
-                                            // TODO - fixme
-                                            permit: Arc::new(
-                                                tokio::sync::Semaphore::new(1),
-                                            )
-                                            .try_acquire_owned()
-                                            .unwrap(),
                                         })
                                         .await
                                         .is_err()

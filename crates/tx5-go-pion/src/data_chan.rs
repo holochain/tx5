@@ -62,28 +62,6 @@ macro_rules! data_chan_weak_core {
 }
 
 impl WeakDataChan {
-    /*
-    pub fn close(&self, err: Error) {
-        if let Some(strong) = self.0.upgrade() {
-            let mut tmp = Err(err.clone());
-
-            {
-                let mut lock = strong.lock().unwrap();
-                let mut do_swap = false;
-                if let Ok(core) = &mut *lock {
-                    core.close(err);
-                    do_swap = true;
-                }
-                if do_swap {
-                    std::mem::swap(&mut *lock, &mut tmp);
-                }
-            }
-
-            // make sure the above lock is released before this is dropped
-            drop(tmp);
-        }
-    }
-    */
     pub fn send_evt(&self, evt: DataChannelEvent) -> Result<()> {
         data_chan_weak_core!(self.0, core, {
             core.evt_send

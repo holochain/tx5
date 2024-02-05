@@ -157,13 +157,8 @@ impl Peer {
 
         let peer_config = BackBuf::from_json(ice_servers)?;
 
-        let (peer, mut peer_recv) = tx5_go_pion::PeerConnection::new(
-            peer_config.imp.buf,
-            Arc::new(tokio::sync::Semaphore::new(
-                sig.config.recv_buffer_bytes_max as usize,
-            )),
-        )
-        .await?;
+        let (peer, mut peer_recv) =
+            tx5_go_pion::PeerConnection::new(peer_config.imp.buf).await?;
 
         let peer = Arc::new(peer);
 
@@ -457,7 +452,7 @@ impl Peer {
                         }
                         Open => (),
                         Close => break,
-                        Message(message, permit) => {
+                        Message(message) => {
                             let mut message = BackBuf::from_raw(message);
 
                             let len = message.len().unwrap();
@@ -496,7 +491,12 @@ impl Peer {
                                         .send(Ep3Event::Message {
                                             peer_url: peer_url.clone(),
                                             message,
-                                            permit,
+                                            // TODO - fixme
+                                            permit: Arc::new(
+                                                tokio::sync::Semaphore::new(1),
+                                            )
+                                            .try_acquire_owned()
+                                            .unwrap(),
                                         })
                                         .await
                                         .is_err()

@@ -207,19 +207,17 @@ async fn main() {
 
 async fn spawn_peer(
     config: PeerConnectionConfig,
-) -> (PeerConnection, EventRecv<PeerConnectionEvent>) {
-    let (con, rcv) = PeerConnection::new(
-        config,
-        Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3)),
-    )
-    .await
-    .unwrap();
+) -> (
+    PeerConnection,
+    tokio::sync::mpsc::UnboundedReceiver<PeerConnectionEvent>,
+) {
+    let (con, rcv) = PeerConnection::new(config).await.unwrap();
     (con, rcv)
 }
 
 async fn spawn_chan(
     data_chan: DataChannel,
-    mut data_recv: EventRecv<DataChannelEvent>,
+    mut data_recv: tokio::sync::mpsc::UnboundedReceiver<DataChannelEvent>,
     start: std::time::Instant,
     chan_ready: Arc<tokio::sync::Barrier>,
     rcv_done: Arc<tokio::sync::Barrier>,
@@ -248,7 +246,7 @@ async fn spawn_chan(
     loop {
         match data_recv.recv().await {
             Some(DataChannelEvent::BufferedAmountLow) => (),
-            Some(DataChannelEvent::Message(mut buf, _)) => {
+            Some(DataChannelEvent::Message(mut buf)) => {
                 assert_eq!(1024, buf.len().unwrap());
                 std::io::Write::write_all(&mut std::io::stdout(), b".")
                     .unwrap();

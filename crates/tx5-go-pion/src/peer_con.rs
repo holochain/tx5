@@ -95,14 +95,15 @@ impl From<&AnswerConfig> for GoBufRef<'static> {
 
 pub(crate) struct PeerConCore {
     peer_con_id: usize,
-    recv_limit: Arc<tokio::sync::Semaphore>,
-    evt_send: EventSend<PeerConnectionEvent>,
+    evt_send: tokio::sync::mpsc::UnboundedSender<PeerConnectionEvent>,
     drop_err: Error,
 }
 
 impl Drop for PeerConCore {
     fn drop(&mut self) {
-        self.evt_send.send_err(self.drop_err.clone());
+        let _ = self
+            .evt_send
+            .send(PeerConnectionEvent::Error(self.drop_err.clone()));
         unregister_peer_con(self.peer_con_id);
         unsafe {
             API.peer_con_free(self.peer_con_id);
@@ -113,12 +114,10 @@ impl Drop for PeerConCore {
 impl PeerConCore {
     pub fn new(
         peer_con_id: usize,
-        recv_limit: Arc<tokio::sync::Semaphore>,
-        evt_send: EventSend<PeerConnectionEvent>,
+        evt_send: tokio::sync::mpsc::UnboundedSender<PeerConnectionEvent>,
     ) -> Self {
         Self {
             peer_con_id,
-            recv_limit,
             evt_send,
             drop_err: Error::id("PeerConnectionDropped").into(),
         }
@@ -154,6 +153,7 @@ macro_rules! peer_con_weak_core {
 }
 
 impl WeakPeerCon {
+    /*
     pub fn close(&self, err: Error) {
         if let Some(strong) = self.0.upgrade() {
             let mut tmp = Err(err.clone());
@@ -174,15 +174,13 @@ impl WeakPeerCon {
             drop(tmp);
         }
     }
-
-    pub fn get_recv_limit(&self) -> Result<Arc<tokio::sync::Semaphore>> {
-        peer_con_weak_core!(self.0, core, { Ok(core.recv_limit.clone()) })
-    }
-
-    pub async fn send_evt(&self, evt: PeerConnectionEvent) -> Result<()> {
-        peer_con_weak_core!(self.0, core, { Ok(core.evt_send.clone()) })?
-            .send(evt)
-            .await
+    */
+    pub fn send_evt(&self, evt: PeerConnectionEvent) -> Result<()> {
+        peer_con_weak_core!(self.0, core, {
+            core.evt_send
+                .send(evt)
+                .map_err(|_| Error::id("PeerConnectionClosed"))
+        })
     }
 }
 
@@ -191,10 +189,15 @@ pub struct PeerConnection(Arc<Mutex<std::result::Result<PeerConCore, Error>>>);
 
 impl PeerConnection {
     /// Construct a new PeerConnection.
+    /// Warning: This returns an unbounded channel,
+    /// you should process this as quickly and synchronously as possible
+    /// to avoid a backlog filling up memory.
     pub async fn new<'a, B>(
         config: B,
-        recv_limit: Arc<tokio::sync::Semaphore>,
-    ) -> Result<(Self, EventRecv<PeerConnectionEvent>)>
+    ) -> Result<(
+        Self,
+        tokio::sync::mpsc::UnboundedReceiver<PeerConnectionEvent>,
+    )>
     where
         B: Into<GoBufRef<'a>>,
     {
@@ -203,11 +206,10 @@ impl PeerConnection {
         r2id!(config);
         tokio::task::spawn_blocking(move || unsafe {
             let peer_con_id = API.peer_con_alloc(config)?;
-            let (evt_send, evt_recv) = EventSend::new(1024);
+            let (evt_send, evt_recv) = tokio::sync::mpsc::unbounded_channel();
 
             let strong = Arc::new(Mutex::new(Ok(PeerConCore::new(
                 peer_con_id,
-                recv_limit,
                 evt_send,
             ))));
 
@@ -328,19 +330,21 @@ impl PeerConnection {
     pub async fn create_data_channel<'a, B>(
         &self,
         config: B,
-    ) -> Result<(DataChannel, EventRecv<DataChannelEvent>)>
+    ) -> Result<(
+        DataChannel,
+        tokio::sync::mpsc::UnboundedReceiver<DataChannelEvent>,
+    )>
     where
         B: Into<GoBufRef<'a>>,
     {
-        let (peer_con_id, recv_limit) = peer_con_strong_core!(self.0, core, {
-            Ok((core.peer_con_id, core.recv_limit.clone()))
-        })?;
+        let peer_con_id =
+            peer_con_strong_core!(self.0, core, { Ok(core.peer_con_id) })?;
 
         r2id!(config);
         tokio::task::spawn_blocking(move || unsafe {
             let data_chan_id =
                 API.peer_con_create_data_chan(peer_con_id, config)?;
-            Ok(DataChannel::new(data_chan_id, recv_limit))
+            Ok(DataChannel::new(data_chan_id))
         })
         .await?
     }

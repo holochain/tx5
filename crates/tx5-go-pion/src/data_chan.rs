@@ -4,14 +4,15 @@ use tx5_go_pion_sys::API;
 
 pub(crate) struct DataChanCore {
     data_chan_id: usize,
-    recv_limit: Arc<tokio::sync::Semaphore>,
-    evt_send: EventSend<DataChannelEvent>,
+    evt_send: tokio::sync::mpsc::UnboundedSender<DataChannelEvent>,
     drop_err: Error,
 }
 
 impl Drop for DataChanCore {
     fn drop(&mut self) {
-        self.evt_send.send_err(self.drop_err.clone());
+        let _ = self
+            .evt_send
+            .send(DataChannelEvent::Error(self.drop_err.clone()));
         unregister_data_chan(self.data_chan_id);
         unsafe {
             API.data_chan_free(self.data_chan_id);
@@ -22,12 +23,10 @@ impl Drop for DataChanCore {
 impl DataChanCore {
     pub fn new(
         data_chan_id: usize,
-        recv_limit: Arc<tokio::sync::Semaphore>,
-        evt_send: EventSend<DataChannelEvent>,
+        evt_send: tokio::sync::mpsc::UnboundedSender<DataChannelEvent>,
     ) -> Self {
         Self {
             data_chan_id,
-            recv_limit,
             evt_send,
             drop_err: Error::id("DataChannelDropped").into(),
         }
@@ -63,6 +62,7 @@ macro_rules! data_chan_weak_core {
 }
 
 impl WeakDataChan {
+    /*
     pub fn close(&self, err: Error) {
         if let Some(strong) = self.0.upgrade() {
             let mut tmp = Err(err.clone());
@@ -83,15 +83,13 @@ impl WeakDataChan {
             drop(tmp);
         }
     }
-
-    pub fn get_recv_limit(&self) -> Result<Arc<tokio::sync::Semaphore>> {
-        data_chan_weak_core!(self.0, core, { Ok(core.recv_limit.clone()) })
-    }
-
-    pub async fn send_evt(&self, evt: DataChannelEvent) -> Result<()> {
-        data_chan_weak_core!(self.0, core, { Ok(core.evt_send.clone()) })?
-            .send(evt)
-            .await
+    */
+    pub fn send_evt(&self, evt: DataChannelEvent) -> Result<()> {
+        data_chan_weak_core!(self.0, core, {
+            core.evt_send
+                .send(evt)
+                .map_err(|_| Error::id("DataChannelClosed"))
+        })
     }
 }
 
@@ -111,13 +109,11 @@ impl std::fmt::Debug for DataChannel {
 impl DataChannel {
     pub(crate) fn new(
         data_chan_id: usize,
-        recv_limit: Arc<tokio::sync::Semaphore>,
-    ) -> (Self, EventRecv<DataChannelEvent>) {
-        let (evt_send, evt_recv) = EventSend::new(1024);
+    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<DataChannelEvent>) {
+        let (evt_send, evt_recv) = tokio::sync::mpsc::unbounded_channel();
 
         let strong = Arc::new(Mutex::new(Ok(DataChanCore::new(
             data_chan_id,
-            recv_limit,
             evt_send.clone(),
         ))));
 
@@ -132,11 +128,9 @@ impl DataChannel {
             // this is a terrible suggestion clippy
             #[allow(clippy::comparison_chain)]
             if ready_state == 2 {
-                let permit = evt_send.try_permit().unwrap();
-                let _ = evt_send.send_permit(DataChannelEvent::Open, permit);
+                let _ = evt_send.send(DataChannelEvent::Open);
             } else if ready_state > 2 {
-                let permit = evt_send.try_permit().unwrap();
-                let _ = evt_send.send_permit(DataChannelEvent::Close, permit);
+                let _ = evt_send.send(DataChannelEvent::Close);
             }
         }
 

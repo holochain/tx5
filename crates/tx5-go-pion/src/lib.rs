@@ -93,22 +93,14 @@ mod tests {
     async fn peer_con() {
         init_tracing();
 
-        let rcv_limit = Arc::new(tokio::sync::Semaphore::new(usize::MAX >> 3));
-
         let (ice, turn) = tx5_go_pion_turn::test_turn_server().await.unwrap();
 
         let config: PeerConnectionConfig =
             serde_json::from_str(&format!("{{\"iceServers\":[{ice}]}}"))
                 .unwrap();
 
-        let (peer1, mut prcv1) =
-            PeerConnection::new(&config, rcv_limit.clone())
-                .await
-                .unwrap();
-        let (peer2, mut prcv2) =
-            PeerConnection::new(&config, rcv_limit.clone())
-                .await
-                .unwrap();
+        let (peer1, mut prcv1) = PeerConnection::new(&config).await.unwrap();
+        let (peer2, mut prcv2) = PeerConnection::new(&config).await.unwrap();
 
         let (data1, mut drcv1) = peer1
             .create_data_channel(DataChannelConfig {
@@ -215,7 +207,7 @@ mod tests {
                             data1.send(GoBuf::from_slice(b"hello").unwrap()).await.unwrap(),
                         );
                     }
-                    Some(DataChannelEvent::Message(mut buf, _permit)) => {
+                    Some(DataChannelEvent::Message(mut buf)) => {
                         assert_eq!(
                             "world",
                             &String::from_utf8_lossy(&buf.to_vec().unwrap()),
@@ -242,7 +234,7 @@ mod tests {
                             data2.send(GoBuf::from_slice(b"world").unwrap()).await.unwrap(),
                         );
                     }
-                    Some(DataChannelEvent::Message(mut buf, _permit)) => {
+                    Some(DataChannelEvent::Message(mut buf)) => {
                         assert_eq!(
                             "hello",
                             &String::from_utf8_lossy(&buf.to_vec().unwrap()),
@@ -298,7 +290,7 @@ mod tests {
         let mut r_count = 0;
         while let Some(evt) = drcv2.recv().await {
             println!("{evt:?}");
-            if matches!(evt, DataChannelEvent::Message(_, _)) {
+            if matches!(evt, DataChannelEvent::Message(_)) {
                 r_count += 1;
                 println!("got {r_count}");
                 if r_count >= COUNT {

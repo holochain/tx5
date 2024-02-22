@@ -339,7 +339,10 @@ fn gen_rust_const() {
 }
 
 fn find_musl_gcc() -> std::path::PathBuf {
-    let output = Command::new("which").arg("musl-gcc").output().expect("musl-gcc not found");
+    let output = Command::new("which")
+        .arg("musl-gcc")
+        .output()
+        .expect("musl-gcc not found");
 
     let s = String::from_utf8_lossy(&output.stdout);
     let s = s.trim();

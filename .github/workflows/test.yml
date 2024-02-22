@@ -48,7 +48,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           rustup target add x86_64-unknown-linux-musl
-          cargo build --release --manifest-path=crates/tx5-go-pion-sys/Cargo.toml --target=x86_64-unknown-linux-musl
+          cargo build --release --target=x86_64-unknown-linux-musl
 
       - name: Cargo Test
         env:

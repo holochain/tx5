@@ -10,6 +10,7 @@ enum LinkType {
 struct Target {
     pub go_arch: &'static str,
     pub go_os: &'static str,
+    pub env: String,
     pub link_type: LinkType,
 }
 
@@ -40,6 +41,8 @@ impl Default for Target {
             oth => panic!("{oth} os not yet supported"),
         };
 
+        let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap();
+
         let mut link_type = match target_os.as_str() {
             "windows" | "android" => LinkType::Dynamic,
             _ => LinkType::Static,
@@ -67,6 +70,7 @@ impl Default for Target {
         Self {
             go_arch,
             go_os,
+            env,
             link_type,
         }
     }
@@ -157,6 +161,20 @@ fn go_build_cmd(
         cmd.env("CC", &linker);
     }
 
+    let mut extra_linker_flags = String::new();
+    match TARGET.env.as_str() {
+        "musl" => {
+            let musl_path = find_musl_gcc();
+            let musl_path = musl_path.to_str().unwrap();
+            cmd.env("CC_FOR_TARGET", musl_path);
+            cmd.env("CC", musl_path);
+            extra_linker_flags += "-linkmode external -extldflags \"-static\"";
+        }
+        _ => {
+            // Permit any other env but no special action to take
+        }
+    };
+
     cmd.env("CGO_ENABLED", "1");
 
     if TARGET.go_os == "ios" {
@@ -188,7 +206,7 @@ fn go_build_cmd(
             .env("GOCACHE", cache)
             .arg("build")
             .arg("-ldflags") // strip debug symbols
-            .arg("-s -w") // strip debug symbols
+            .arg("-s -w ".to_string() + &extra_linker_flags) // strip debug symbols
             .arg("-buildvcs=false") // disable version control stamping binary
             .arg("-o")
             .arg(lib_path)
@@ -318,4 +336,15 @@ fn gen_rust_const() {
         out.push("constants.rs");
         std::fs::write(&out, out_lines.join("\n")).unwrap();
     }
+}
+
+fn find_musl_gcc() -> std::path::PathBuf {
+    let output = Command::new("which")
+        .arg("musl-gcc")
+        .output()
+        .expect("musl-gcc not found");
+
+    let s = String::from_utf8_lossy(&output.stdout);
+    let s = s.trim();
+    std::path::PathBuf::from(s)
 }

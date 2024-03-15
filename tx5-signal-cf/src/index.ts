@@ -1,5 +1,35 @@
+/**
+ * This is currently a PoC, but working towards something production ready.
+ *
+ * What we need to do:
+ *
+ * - batching: clients should batch requests for a number of milliseconds,
+ *   sending within say 5ms if no additional messages are received, but never
+ *   more than 20ms after the first received message. one batch should not
+ *   exceed some byte count... 4096?
+ * - signing: nodes will be identified by an ed25519 pub key, messages
+ *   will be individually signed, like:
+ *   `["sig-base64","[\"fwd\",42,\"dest-base64\",\"msg-content\"]"]`
+ * - websocket hello: to verify the client can sign with that pubkey
+ *   must be received within some milliseconds of establishing the ws connection
+ *   set a DO "alarm"?
+ *   `["sig-base64","[\"hello\",0]"]`
+ * - error if multiple websockets connected to one pubkey do
+ * - ratelimit messages within a single do instance
+ * - ratelimit messages (at larger rate) for an ip
+ * - nonce/message id must be zero for the hello message
+ * - nonce/message id must start at 1 for each peer communicated with
+ *   and increment by exactly 1 for each additional message sent.
+ *   we will need to maintain a map of these peer message ids that
+ *   must be reset/cleared if the websocket is closed.
+ */
+
+import { RateLimit } from './rate-limit.ts';
+import { Msg } from './msg.ts';
+
 export interface Env {
-  MY_DURABLE_OBJECT: DurableObjectNamespace;
+  SIGNAL: DurableObjectNamespace;
+  IP_RATE_LIMIT: DurableObjectNamespace;
 }
 
 // The first path element is the nodeId (ident)
@@ -12,19 +42,53 @@ function parsePath(url: string) {
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
+    let ip = request.headers.get('cf-connecting-ip') || 'no-ip';
+
+    try {
+      const ipId = env.RATE_LIMIT.idFromName(ip);
+      const ipStub = env.RATE_LIMIT.get(ipId);
+      const res = await ipStub.fetch(request);
+      const limit = await res.json();
+      if (limit > 0) {
+        return new Response('rate limit', { status: 429 });
+      }
+    } catch (err) {
+      return new Response(`rate limit`, { status: 429 });
+    }
+
     const { ident, api } = parsePath(request.url);
 
     // DO instanced by our nodeId (ident)
-    const id = env.MY_DURABLE_OBJECT.idFromName(ident);
-    const stub = env.MY_DURABLE_OBJECT.get(id);
+    const id = env.SIGNAL.idFromName(ident);
+    const stub = env.SIGNAL.get(id);
 
     // just forward the full request / response
     return await stub.fetch(request);
   },
 };
 
-export class MyDurableObject implements DurableObject {
+export class DoRateLimit implements DurableObject {
+  state: DurableObjectState;
+  env: Env;
+  rl: RateLimit;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+    this.rl = new RateLimit(5000);
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    return Response.json(this.rl.trackRequest(Date.now(), 1));
+  }
+}
+
+export class DoSignal implements DurableObject {
   state: DurableObjectState;
   env: Env;
   ident: string;
@@ -86,7 +150,9 @@ export class MyDurableObject implements DurableObject {
         throw new Error(`bad api: ${api}`);
       }
     } catch (e) {
-      return new Response(JSON.stringify({ c: 'err', e: e.toString() }), { status: 500 });
+      return new Response(JSON.stringify({ c: 'err', e: e.toString() }), {
+        status: 500,
+      });
     }
   }
 
@@ -108,8 +174,8 @@ export class MyDurableObject implements DurableObject {
         // the client has asked us to forward a message to a different peer
 
         // get the DO that corresponds to that peer
-        const id = this.env.MY_DURABLE_OBJECT.idFromName(m.n);
-        const stub = this.env.MY_DURABLE_OBJECT.get(id);
+        const id = this.env.SIGNAL.idFromName(m.n);
+        const stub = this.env.SIGNAL.get(id);
 
         // make up the request so we can forward the message
         const req = new Request(`http://do/${m.n}/fwd`, {
@@ -137,7 +203,12 @@ export class MyDurableObject implements DurableObject {
   }
 
   // if the websocket is closed... close the websocket??
-  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
+  async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean,
+  ) {
     ws.close(code, reason);
   }
 }

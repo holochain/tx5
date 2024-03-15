@@ -31,6 +31,15 @@ fn print_rcv_done_time(start: std::time::Instant) {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(
+            tracing_subscriber::filter::EnvFilter::from_default_env(),
+        )
+        .with_file(true)
+        .with_line_number(true)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
+
     let mut args = std::env::args();
 
     args.next().unwrap();

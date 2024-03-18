@@ -215,11 +215,22 @@ fn check_ice(ice: &tx5_go_pion::PeerConnectionConfig) -> TurnCheck {
     let mut found_tcp_plain = false;
     let mut found_tcp_tls = false;
 
-    let mut turn_check = None;
+    let mut host = None;
+    let mut user = None;
+    let mut cred = None;
+    let mut stun_port = None;
+    let mut udp_port = None;
+    let mut tcp_plain_port = None;
+    let mut tcp_tls_port = None;
 
     for server in ice.ice_servers.iter() {
-        let user = server.username.as_ref().unwrap();
-        let cred = server.credential.as_ref().unwrap();
+        if let Some(username) = server.username.as_ref() {
+            user = Some(username.clone());
+        }
+
+        if let Some(credential) = server.credential.as_ref() {
+            cred = Some(credential.clone());
+        }
 
         for url in server.urls.iter() {
             let url = url::Url::parse(url).unwrap();
@@ -234,46 +245,40 @@ fn check_ice(ice: &tx5_go_pion::PeerConnectionConfig) -> TurnCheck {
             let url =
                 url::Url::parse(&format!("fake://{}", url.path())).unwrap();
 
-            let host = url.host_str().unwrap().to_string();
+            host = Some(url.host_str().unwrap().to_string());
             let port = url.port().unwrap();
 
             match (scheme.as_str(), transport.as_str()) {
-                ("stun", _) => found_stun = true,
-                ("turn", "udp") => found_udp_plain = true,
-                ("turn", "tcp") => found_tcp_plain = true,
-                ("turns", "tcp") => found_tcp_tls = true,
+                ("stun", _) => {
+                    stun_port = Some(port);
+                    found_stun = true;
+                }
+                ("turn", "udp") => {
+                    udp_port = Some(port);
+                    found_udp_plain = true;
+                }
+                ("turn", "tcp") => {
+                    tcp_plain_port = Some(port);
+                    found_tcp_plain = true;
+                }
+                ("turns", "tcp") => {
+                    tcp_tls_port = Some(port);
+                    found_tcp_tls = true;
+                }
                 oth => panic!("unexpected scheme/transport: {oth:?}"),
-            }
-
-            if turn_check.is_none() {
-                turn_check = Some(TurnCheck {
-                    host,
-                    user: user.clone(),
-                    cred: cred.clone(),
-                    stun_port: port,
-                    udp_port: port,
-                    tcp_plain_port: port,
-                    tcp_tls_port: port,
-                });
-            } else {
-                let r = turn_check.as_mut().unwrap();
-                if r.host != host || &r.user != user || &r.cred != cred {
-                    panic!(
-                        "doctor doesn't support multiple host/user/cred yet"
-                    );
-                }
-                match (scheme.as_str(), transport.as_str()) {
-                    ("stun", _) => r.stun_port = port,
-                    ("turn", "udp") => r.udp_port = port,
-                    ("turn", "tcp") => r.tcp_plain_port = port,
-                    ("turns", "tcp") => r.tcp_tls_port = port,
-                    _ => (),
-                }
             }
         }
     }
 
-    let turn_check = turn_check.unwrap();
+    let turn_check = TurnCheck {
+        host: host.unwrap(),
+        user: user.unwrap(),
+        cred: cred.unwrap(),
+        stun_port: stun_port.unwrap_or_default(),
+        udp_port: udp_port.unwrap_or_default(),
+        tcp_plain_port: tcp_plain_port.unwrap_or_default(),
+        tcp_tls_port: tcp_tls_port.unwrap_or_default(),
+    };
 
     if found_stun {
         if turn_check.stun_port != 80 {
@@ -387,8 +392,8 @@ async fn stun_check(check: &TurnCheck) {
     let config = tx5_go_pion::PeerConnectionConfig {
         ice_servers: vec![tx5_go_pion::IceServer {
             urls: vec![format!("stun:{}:{}", check.host, check.stun_port)],
-            username: Some(check.user.clone()),
-            credential: Some(check.cred.clone()),
+            username: None,
+            credential: None,
         }],
     };
     println!("CHECK_STUN: {config:?}");

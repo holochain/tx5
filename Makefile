@@ -78,6 +78,8 @@ test: static tools
 	RUST_BACKTRACE=1 RUST_LOG=error cargo test -- --nocapture
 
 static: docs tools
+	@#uhhh... better way to do this? depend on cargo-tree?
+	@if [ $$(grep 'name = "sodoken"' Cargo.lock | wc -l) != "1" ]; then echo "ERROR: multiple sodokens"; exit 127; fi
 	cargo fmt -- --check
 	cargo clippy -- -Dwarnings
 	(cd crates/tx5-go-pion-sys; go fmt)

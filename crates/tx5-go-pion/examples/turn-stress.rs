@@ -254,6 +254,7 @@ async fn spawn_chan(
 
     loop {
         match data_recv.recv().await {
+            Some(DataChannelEvent::Open) => (),
             Some(DataChannelEvent::BufferedAmountLow) => (),
             Some(DataChannelEvent::Message(mut buf)) => {
                 assert_eq!(1024, buf.len().unwrap());

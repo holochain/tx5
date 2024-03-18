@@ -1,40 +1,74 @@
 import { describe, expect, assert, it, beforeAll, afterAll } from 'vitest';
-import { Msg } from './msg.ts';
-import * as ed from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha512';
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+import {
+  encodeQuery,
+  encodeSignedQuery,
+  verifySignedQuery,
+  encodeMessage,
+  decodeMessage,
+  encodeSignedMessage,
+  verifySignedMessage,
+} from './msg.ts';
+import { ed } from './ed.ts';
 
 describe('Msg', () => {
+  it('query safe', async () => {
+    for (let i = 0; i < 100; ++i) {
+      const sk = ed.utils.randomPrivateKey();
+      const pk = ed.getPublicKey(sk);
+
+      const q = encodeQuery({
+        nodePubKey: pk,
+        nonce: Date.now(),
+      });
+
+      const s = ed.sign(new TextEncoder('utf8').encode(q), sk);
+
+      const sq = new URL('none:?' + encodeSignedQuery(s, q));
+
+      const ddk = sq.searchParams.get('k');
+      const ddn = sq.searchParams.get('n');
+      const dds = sq.searchParams.get('s');
+
+      verifySignedQuery(ddk, ddn, dds);
+    }
+  });
+
   it('construct and verify', async () => {
     const priv1 = ed.utils.randomPrivateKey();
     const pub1 = ed.getPublicKey(priv1);
     const priv2 = ed.utils.randomPrivateKey();
     const pub2 = ed.getPublicKey(priv2);
+    const nonce = Date.now();
 
-    const msg = Msg.genMessageToSign(pub1, pub2, 42, new Uint8Array(8));
+    const msg = encodeMessage({
+      srcPubKey: pub1,
+      dstPubKey: pub2,
+      nonce,
+      message: new Uint8Array(8),
+    });
 
-    const badSig = ed.sign(msg, priv2);
+    const encMsg = new TextEncoder('utf8').encode(msg);
+
+    const badSig = ed.sign(encMsg, priv2);
+    const badSigned = encodeSignedMessage({
+      signature: badSig,
+      message: msg,
+    });
     expect(() => {
-      Msg.fromPartsVerify(badSig, msg);
+      verifySignedMessage(badSigned);
     }).toThrow();
 
-    const sig = ed.sign(msg, priv1);
-    const signedOth = Msg.fromPartsVerify(sig, msg);
+    const sig = ed.sign(encMsg, priv1);
+    const signed = encodeSignedMessage({
+      signature: sig,
+      message: msg,
+    });
 
-    // shouldn't throw
-    signedOth.verify();
+    const msgParsed = verifySignedMessage(signed);
 
-    const encoded = signedOth.encoded();
-    const signed = Msg.fromSignedVerify(encoded);
-
-    // shouldn't throw
-    signed.verify();
-
-    expect(signed).instanceOf(Msg);
-    expect(signed.len()).toEqual(142);
-    expect(signed.srcPubKey()).toEqual(pub1);
-    expect(signed.dstPubKey()).toEqual(pub2);
-    expect(signed.nonce()).toEqual(42);
-    expect(signed.message()).toEqual(new Uint8Array(8));
+    expect(msgParsed.srcPubKey).toEqual(pub1);
+    expect(msgParsed.dstPubKey).toEqual(pub2);
+    expect(msgParsed.nonce).toEqual(nonce);
+    expect(msgParsed.message).toEqual(new Uint8Array(8));
   });
 });

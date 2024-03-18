@@ -2,6 +2,8 @@ import { unstable_dev } from 'wrangler';
 import type { UnstableDevWorker } from 'wrangler';
 import { describe, expect, assert, it, beforeAll, afterAll } from 'vitest';
 import WebSocket from 'ws';
+import { ed } from './ed.ts';
+import { encodeQuery, encodeSignedQuery } from './msg.ts';
 
 type RecvFunction = (msg: Array<string>) => void;
 
@@ -64,14 +66,48 @@ describe('Worker', () => {
     await worker.stop();
   });
 
+  /*
   it('count', async () => {
     const res = await worker.fetch('http://' + addr + '/blabla/count');
     const txt = await res.text();
     assert(txt.startsWith('websocket count: '));
     expect(res.status).toBe(200);
   });
+  */
 
   it('websocket', async () => {
+    const skA = ed.utils.randomPrivateKey();
+    const pkA = ed.getPublicKey(skA);
+    const skB = ed.utils.randomPrivateKey();
+    const pkB = ed.getPublicKey(skB);
+
+    const qA = encodeQuery({
+      nodePubKey: pkA,
+      nonce: Date.now(),
+    });
+    const sA = ed.sign(new TextEncoder('utf8').encode(qA), skA);
+    const sqA = encodeSignedQuery(sA, qA);
+
+    const wsA = await C.connect(`ws://${addr}/?${sqA}`);
+
+    const qB = encodeQuery({
+      nodePubKey: pkB,
+      nonce: Date.now(),
+    });
+    const sB = ed.sign(new TextEncoder('utf8').encode(qB), skB);
+    const sqB = encodeSignedQuery(sB, qB);
+
+    const wsB = await C.connect(`ws://${addr}/?${sqB}`);
+
+    /*
+    const msg = encodeMessage({
+      srcPubKey: pk,
+      dstPubKey: new Uint8Array(32),
+      nonce,
+      message: new Uint8Array(0),
+    });
+
+
     const msgList = [];
     const wsA = await C.connect('ws://' + addr + '/nodeA/websocket');
     const wsB = await C.connect('ws://' + addr + '/nodeB/websocket');
@@ -90,5 +126,6 @@ describe('Worker', () => {
     expect(resAD).toStrictEqual({ status: 200, text: 'ok' });
     const resB = JSON.parse((await recvPromiseB)[0]);
     expect(resB).toStrictEqual({ c: 'fwd', s: 'nodeA', d: 'hello' });
+    */
   });
 });

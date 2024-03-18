@@ -25,20 +25,43 @@
  */
 
 import { RateLimit } from './rate-limit.ts';
-import { Msg } from './msg.ts';
+import { verifySignedQuery, verifySignedMessage } from './msg.ts';
+import { fromUint8Array } from 'js-base64';
 
 export interface Env {
   SIGNAL: DurableObjectNamespace;
   IP_RATE_LIMIT: DurableObjectNamespace;
 }
 
-// The first path element is the nodeId (ident)
-// The second path element is the api command (api)
-function parsePath(url: string) {
-  const pathParts = new URL(url).pathname.split('/');
-  const ident = pathParts[1] || '';
-  const api = pathParts[2] || '';
-  return { ident, api };
+async function ipRateLimit(env: Env, ip: string) {
+  try {
+    const ipId = env.RATE_LIMIT.idFromName(ip);
+    const ipStub = env.RATE_LIMIT.get(ipId);
+    const res = await ipStub.fetch(new Request(`http://do`));
+    const { limit } = await res.json();
+    if (limit > 0) {
+      throw new Error(`limit ${limit}`);
+    }
+  } catch (err) {
+    throw new Error(`limit ${err}`);
+  }
+}
+
+function checkNonce(last: number, nonce: number) {
+  if (nonce < last) {
+    throw new Error('received earlier nonce, replay?');
+  }
+  if (nonce < Date.now() - 5000) {
+    throw new Error('nonce older than 5 sec, update clock?');
+  }
+}
+
+function sleep(ms: number): Promise<null> {
+  return new Promise((res, _) => {
+    setTimeout(ms, () => {
+      res(null);
+    });
+  });
 }
 
 export default {
@@ -50,21 +73,45 @@ export default {
     let ip = request.headers.get('cf-connecting-ip') || 'no-ip';
 
     try {
-      const ipId = env.RATE_LIMIT.idFromName(ip);
-      const ipStub = env.RATE_LIMIT.get(ipId);
-      const res = await ipStub.fetch(request);
-      const limit = await res.json();
-      if (limit > 0) {
-        return new Response('rate limit', { status: 429 });
-      }
+      await ipRateLimit(env, ip);
     } catch (err) {
-      return new Response(`rate limit`, { status: 429 });
+      console.error('limit', err);
+      return new Response(err, { status: 429 });
     }
 
-    const { ident, api } = parsePath(request.url);
+    const method = request.method;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const body = await request.arrayBuffer();
 
-    // DO instanced by our nodeId (ident)
-    const id = env.SIGNAL.idFromName(ident);
+    if (method !== 'GET') {
+      return new Response('expected GET', { status: 400 });
+    }
+
+    if (path !== '/') {
+      return new Response('expected root path ("/")', { status: 400 });
+    }
+
+    if (body.byteLength > 0) {
+      return new Response('invalid body content', { status: 400 });
+    }
+
+    let nodeId = '';
+
+    try {
+      const k = url.searchParams.get('k');
+      const n = url.searchParams.get('n');
+      const s = url.searchParams.get('s');
+      const q = verifySignedQuery(k, n, s);
+      checkNonce(0, q.nonce);
+      nodeId = fromUint8Array(q.nodePubKey);
+    } catch (e) {
+      console.error(e);
+      return new Response(`invalid signature ${e}`, { status: 400 });
+    }
+
+    // DO instanced by our nodeId
+    const id = env.SIGNAL.idFromName(nodeId);
     const stub = env.SIGNAL.get(id);
 
     // just forward the full request / response
@@ -84,29 +131,32 @@ export class DoRateLimit implements DurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
-    return Response.json(this.rl.trackRequest(Date.now(), 1));
+    return Response.json({ limit: this.rl.trackRequest(Date.now(), 1) });
   }
 }
 
 export class DoSignal implements DurableObject {
   state: DurableObjectState;
   env: Env;
-  ident: string;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
-    this.ident = '';
   }
 
   async fetch(request: Request): Promise<Response> {
     try {
-      const { ident, api } = parsePath(request.url);
+      if (request.headers.get('Upgrade') !== 'websocket') {
+        return new Response('Expected Websocket', { status: 426 });
+      }
 
-      // store our identity... would be nice if this was in the constructor,
-      // but we are instantiated by this always so this is equivalent.
-      this.ident = ident;
+      const [client, server] = Object.values(new WebSocketPair());
 
+      this.state.acceptWebSocket(server);
+
+      return new Response(null, { status: 101, webSocket: client });
+
+      /*
       // switch based of the api command
       if (api === 'websocket') {
         // we are a websocket
@@ -126,11 +176,6 @@ export class DoSignal implements DurableObject {
 
         // notify the client of the successful websocket upgrade
         return new Response(null, { status: 101, webSocket: client });
-      } else if (api === 'count') {
-        // this is just a debugging api, TODO - delete this
-
-        const count = this.state.getWebSockets().length;
-        return new Response(`websocket count: ${count}`);
       } else if (api === 'fwd') {
         // a different durable object has forwarded a message to us
         // we need to pass it back down to our connected websocket(s)
@@ -149,6 +194,7 @@ export class DoSignal implements DurableObject {
       } else {
         throw new Error(`bad api: ${api}`);
       }
+      */
     } catch (e) {
       return new Response(JSON.stringify({ c: 'err', e: e.toString() }), {
         status: 500,

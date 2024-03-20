@@ -5,33 +5,61 @@ import WebSocket from 'ws';
 import { ed } from './ed.ts';
 import { encodeQuery, encodeSignedQuery } from './msg.ts';
 
-type RecvFunction = (msg: Array<string>) => void;
+type RecvFunction = (msg: Array<Uint8Array>) => void;
 
 // helper class for client websocket testing
 class C {
   ws: WebSocket;
-  pend: Array<string>;
+  sk: Uint8Array;
+  pk: Uint8Array;
+  pend: Array<Uint8Array>;
   res: RecvFunction | null;
+  closing: boolean;
 
-  constructor(ws: WebSocket) {
+  constructor(sk: Uint8Array, pk: Uint8Array, ws: WebSocket) {
+    this.sk = sk;
+    this.pk = pk;
     this.ws = ws;
     this.pend = [];
     this.res = null;
+    this.closing = false;
   }
 
-  static connect(url: string): Promise<C> {
+  static connect(addr: string): Promise<C> {
     return new Promise((res, _) => {
-      const ws = new WebSocket(url);
-      const out = new C(ws);
+      const sk = ed.utils.randomPrivateKey();
+      const pk = ed.getPublicKey(sk);
+      const q = encodeQuery({
+        nodePubKey: pk,
+        nonce: Date.now(),
+      });
+      const s = ed.sign(new TextEncoder().encode(q), sk);
+      const sq = encodeSignedQuery(s, q);
+
+      const ws = new WebSocket(`ws://${addr}/?${sq}`);
+      const out = new C(sk, pk, ws);
+
       ws.on('error', (err) => {
         console.error(`error: ${err}`);
         throw err;
       });
-      ws.on('open', () => {
+      ws.on('open', async () => {
+        const nonce = (await out.recv())[0];
+        const handshake = ed.sign(nonce, out.sk);
+        out.ws.send(handshake);
         res(out);
       });
+      ws.on('close', (code, reason) => {
+        if (!out.closing) {
+          const v = `close code ${code} reason ${reason}`;
+          console.error(v);
+          throw new Error(v);
+        }
+      });
       ws.on('message', (msg) => {
-        msg = msg.toString('utf8');
+        if (!(msg instanceof Uint8Array)) {
+          throw new Error('invalid rcv message type');
+        }
         out.pend.push(msg);
         if (out.res) {
           const res = out.res;
@@ -42,11 +70,27 @@ class C {
     });
   }
 
-  send(data: string) {
-    this.ws.send(data);
+  close() {
+    this.closing = true;
+    this.ws.close();
   }
 
-  recv(): Promise<Array<string>> {
+  pubKey(): Uint8Array {
+    return this.pk;
+  }
+
+  send(peer: Uint8Array, data: string) {
+    const enc = new TextEncoder().encode(data);
+    const out = new Uint8Array(peer.byteLength + enc.byteLength);
+    out.set(peer);
+    out.set(enc, peer.byteLength);
+    this.ws.send(out);
+  }
+
+  recv(): Promise<Array<Uint8Array>> {
+    if (this.pend.length) {
+      return Promise.resolve(this.pend.splice(0));
+    }
     return new Promise((res, _) => {
       this.res = res;
     });
@@ -66,66 +110,25 @@ describe('Worker', () => {
     await worker.stop();
   });
 
-  /*
-  it('count', async () => {
-    const res = await worker.fetch('http://' + addr + '/blabla/count');
-    const txt = await res.text();
-    assert(txt.startsWith('websocket count: '));
-    expect(res.status).toBe(200);
+  it('now', async () => {
+    const res = await worker.fetch('http://' + addr + '/now');
+    const json = (await res.json()) as { now: number };
+    expect(json.now).to.be.above(Date.now() - 5000);
+    expect(json.now).to.be.below(Date.now() + 5000);
   });
-  */
 
   it('websocket', async () => {
-    const skA = ed.utils.randomPrivateKey();
-    const pkA = ed.getPublicKey(skA);
-    const skB = ed.utils.randomPrivateKey();
-    const pkB = ed.getPublicKey(skB);
+    const wsA = await C.connect(addr);
+    const wsB = await C.connect(addr);
 
-    const qA = encodeQuery({
-      nodePubKey: pkA,
-      nonce: Date.now(),
-    });
-    const sA = ed.sign(new TextEncoder('utf8').encode(qA), skA);
-    const sqA = encodeSignedQuery(sA, qA);
-
-    const wsA = await C.connect(`ws://${addr}/?${sqA}`);
-
-    const qB = encodeQuery({
-      nodePubKey: pkB,
-      nonce: Date.now(),
-    });
-    const sB = ed.sign(new TextEncoder('utf8').encode(qB), skB);
-    const sqB = encodeSignedQuery(sB, qB);
-
-    const wsB = await C.connect(`ws://${addr}/?${sqB}`);
-
-    /*
-    const msg = encodeMessage({
-      srcPubKey: pk,
-      dstPubKey: new Uint8Array(32),
-      nonce,
-      message: new Uint8Array(0),
-    });
-
-
-    const msgList = [];
-    const wsA = await C.connect('ws://' + addr + '/nodeA/websocket');
-    const wsB = await C.connect('ws://' + addr + '/nodeB/websocket');
     const recvPromiseA = wsA.recv();
-    const recvPromiseB = wsB.recv();
-    wsA.send(
-      JSON.stringify({
-        c: 'fwd',
-        n: 'nodeB',
-        d: 'hello',
-      }),
-    );
-    const resA = JSON.parse((await recvPromiseA)[0]);
-    expect(resA.c).toBe('resp');
-    const resAD = JSON.parse(resA.d);
-    expect(resAD).toStrictEqual({ status: 200, text: 'ok' });
-    const resB = JSON.parse((await recvPromiseB)[0]);
-    expect(resB).toStrictEqual({ c: 'fwd', s: 'nodeA', d: 'hello' });
-    */
+    wsB.send(wsA.pubKey(), 'test');
+    const result = (await recvPromiseA)[0];
+
+    wsA.close();
+    wsB.close();
+
+    expect(new Uint8Array(result).subarray(0, 32)).toEqual(wsB.pubKey());
+    expect(new TextDecoder().decode(result.subarray(32))).toEqual('test');
   });
 });

@@ -25,12 +25,13 @@
  */
 
 import { RateLimit } from './rate-limit.ts';
-import { verifySignedQuery, verifySignedMessage } from './msg.ts';
-import { fromUint8Array } from 'js-base64';
+import { verifySignedQuery, verifySignedHandshake } from './msg.ts';
+import { err } from './err.ts';
+import { toB64Url, fromB64Url } from './b64.ts';
 
 export interface Env {
   SIGNAL: DurableObjectNamespace;
-  IP_RATE_LIMIT: DurableObjectNamespace;
+  RATE_LIMIT: DurableObjectNamespace;
 }
 
 async function ipRateLimit(env: Env, ip: string) {
@@ -38,30 +39,26 @@ async function ipRateLimit(env: Env, ip: string) {
     const ipId = env.RATE_LIMIT.idFromName(ip);
     const ipStub = env.RATE_LIMIT.get(ipId);
     const res = await ipStub.fetch(new Request(`http://do`));
-    const { limit } = await res.json();
-    if (limit > 0) {
-      throw new Error(`limit ${limit}`);
+    if (res.status !== 200) {
+      throw err(`limit bad status ${res.status}`, 429);
     }
-  } catch (err) {
-    throw new Error(`limit ${err}`);
+    const { limit } = (await res.json()) as { limit: number };
+    if (limit > 0) {
+      throw err(`limit ${limit}`, 429);
+    }
+  } catch (e) {
+    throw err(`limit ${e}`, 429);
   }
 }
 
-function checkNonce(last: number, nonce: number) {
-  if (nonce < last) {
-    throw new Error('received earlier nonce, replay?');
+function checkNonce(nonce: number) {
+  const now = Date.now();
+  if (nonce < now - 5000) {
+    throw err('nonce older than 5 sec, update clock, or call /now', 400);
   }
-  if (nonce < Date.now() - 5000) {
-    throw new Error('nonce older than 5 sec, update clock?');
+  if (nonce > now + 5000) {
+    throw err('nonce newer than 5 sec, update clock, or call /now', 400);
   }
-}
-
-function sleep(ms: number): Promise<null> {
-  return new Promise((res, _) => {
-    setTimeout(ms, () => {
-      res(null);
-    });
-  });
 }
 
 export default {
@@ -70,52 +67,52 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<Response> {
-    let ip = request.headers.get('cf-connecting-ip') || 'no-ip';
-
     try {
+      const ip = request.headers.get('cf-connecting-ip') || 'no-ip';
+
       await ipRateLimit(env, ip);
-    } catch (err) {
-      console.error('limit', err);
-      return new Response(err, { status: 429 });
+
+      const method = request.method;
+      const url = new URL(request.url);
+
+      // @ts-expect-error // cf typescript bug //
+      const path: string = url.pathname;
+
+      // TODO - check headers for content-length / chunked encoding and reject?
+
+      if (method !== 'GET') {
+        throw err('expected GET', 400);
+      }
+
+      if (path === '/now') {
+        return Response.json({ now: Date.now() });
+      }
+
+      if (path !== '/') {
+        throw err('expected root path ("/")', 400);
+      }
+
+      // @ts-expect-error // cf typescript bug //
+      const nodeId: string = url.searchParams.get('k');
+      // @ts-expect-error // cf typescript bug //
+      const n: string = url.searchParams.get('n');
+      // @ts-expect-error // cf typescript bug //
+      const s: string = url.searchParams.get('s');
+
+      const q = verifySignedQuery(nodeId, n, s);
+      checkNonce(q.nonce);
+
+      // DO instanced by our nodeId
+      const id = env.SIGNAL.idFromName(nodeId);
+      const stub = env.SIGNAL.get(id);
+
+      // just forward the full request / response
+      return await stub.fetch(request);
+    } catch (e: any) {
+      return new Response(JSON.stringify({ err: e.toString() }), {
+        status: e.status || 500,
+      });
     }
-
-    const method = request.method;
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const body = await request.arrayBuffer();
-
-    if (method !== 'GET') {
-      return new Response('expected GET', { status: 400 });
-    }
-
-    if (path !== '/') {
-      return new Response('expected root path ("/")', { status: 400 });
-    }
-
-    if (body.byteLength > 0) {
-      return new Response('invalid body content', { status: 400 });
-    }
-
-    let nodeId = '';
-
-    try {
-      const k = url.searchParams.get('k');
-      const n = url.searchParams.get('n');
-      const s = url.searchParams.get('s');
-      const q = verifySignedQuery(k, n, s);
-      checkNonce(0, q.nonce);
-      nodeId = fromUint8Array(q.nodePubKey);
-    } catch (e) {
-      console.error(e);
-      return new Response(`invalid signature ${e}`, { status: 400 });
-    }
-
-    // DO instanced by our nodeId
-    const id = env.SIGNAL.idFromName(nodeId);
-    const stub = env.SIGNAL.get(id);
-
-    // just forward the full request / response
-    return await stub.fetch(request);
   },
 };
 
@@ -146,58 +143,51 @@ export class DoSignal implements DurableObject {
 
   async fetch(request: Request): Promise<Response> {
     try {
-      if (request.headers.get('Upgrade') !== 'websocket') {
-        return new Response('Expected Websocket', { status: 426 });
-      }
+      const ip = request.headers.get('cf-connecting-ip') || 'no-ip';
+      const url = new URL(request.url);
+      // @ts-expect-error // cf typescript bug //
+      const path: string = url.pathname;
 
-      const [client, server] = Object.values(new WebSocketPair());
-
-      this.state.acceptWebSocket(server);
-
-      return new Response(null, { status: 101, webSocket: client });
-
-      /*
-      // switch based of the api command
-      if (api === 'websocket') {
-        // we are a websocket
-
-        // expect an upgrade
+      if (path === '/fwd') {
+        const message = await request.arrayBuffer();
+        for (const ws of this.state.getWebSockets()) {
+          ws.send(message);
+        }
+        return new Response('ok');
+      } else if (path === '/') {
+        if (this.state.getWebSockets().length > 0) {
+          throw err('websocket already connected', 400);
+        }
         if (request.headers.get('Upgrade') !== 'websocket') {
-          return new Response('Expected Websocket', { status: 426 });
+          throw err('expected websocket', 426);
         }
 
-        // get the websocket pair
         const [client, server] = Object.values(new WebSocketPair());
 
-        // this makes this a hibernating websocket
-        // so we don't use up a bunch of cpu time...
-        // the signal protocol is going to be very sparse
         this.state.acceptWebSocket(server);
 
-        // notify the client of the successful websocket upgrade
+        const nonce = new Uint8Array(32);
+        crypto.getRandomValues(nonce);
+
+        // @ts-expect-error // cf typescript bug //
+        const nodeId = fromB64Url(url.searchParams.get('k'));
+
+        server.serializeAttachment({
+          nodeId,
+          ip,
+          nonce,
+          valid: false,
+        });
+
+        server.send(nonce);
+
         return new Response(null, { status: 101, webSocket: client });
-      } else if (api === 'fwd') {
-        // a different durable object has forwarded a message to us
-        // we need to pass it back down to our connected websocket(s)
-
-        const data = JSON.parse(await request.text());
-
-        // the normal use-case would be for a client to only be connected
-        // to their DO websocket server once... but if they are muliply
-        // connected, just forward the message to all of them
-        for (const ws of this.state.getWebSockets()) {
-          ws.send(JSON.stringify({ c: 'fwd', s: data.s, d: data.d }));
-        }
-
-        // let the other DO know we succeeded
-        return new Response('ok');
       } else {
-        throw new Error(`bad api: ${api}`);
+        throw err('invalid path', 400);
       }
-      */
-    } catch (e) {
-      return new Response(JSON.stringify({ c: 'err', e: e.toString() }), {
-        status: 500,
+    } catch (e: any) {
+      return new Response(JSON.stringify({ err: e.toString() }), {
+        status: e.status || 500,
       });
     }
   }
@@ -205,46 +195,57 @@ export class DoSignal implements DurableObject {
   // handle incoming websocket messages
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
     try {
-      // convert binary messages into javascript strings
-      if (message instanceof ArrayBuffer) {
-        const dec = new TextDecoder('utf-8');
-        message = dec.decode(message);
+      const { nodeId, ip, nonce, valid } = ws.deserializeAttachment();
+      if (!nodeId) {
+        throw err('no associated nodeId');
+      }
+      if (!ip) {
+        throw err('no associated ip');
       }
 
-      const m = JSON.parse(message);
+      // convert strings into binary
+      let msg: Uint8Array;
+      if (message instanceof ArrayBuffer) {
+        msg = new Uint8Array(message);
+      } else {
+        const enc = new TextEncoder();
+        msg = enc.encode(message);
+      }
 
-      const c = m.c || '[unknown]';
+      if (!valid) {
+        if (!nonce) {
+          throw err('no associated nonce');
+        }
+        verifySignedHandshake(nodeId, nonce, msg);
+        ws.serializeAttachment({
+          nodeId,
+          ip,
+          nonce: true, // don't need to keep the actual nonce anymore
+          valid: true,
+        });
+      } else {
+        if (msg.byteLength < 32) {
+          throw err('invalid destination', 400);
+        }
 
-      // switch on the command in the json message
-      if (c === 'fwd') {
-        // the client has asked us to forward a message to a different peer
+        const dest = new Uint8Array(32);
+        dest.set(msg.subarray(0, 32));
+        msg.set(nodeId);
 
-        // get the DO that corresponds to that peer
-        const id = this.env.SIGNAL.idFromName(m.n);
-        const stub = this.env.SIGNAL.get(id);
-
-        // make up the request so we can forward the message
-        const req = new Request(`http://do/${m.n}/fwd`, {
+        const req = new Request('http://do/fwd', {
           method: 'POST',
-          body: JSON.stringify({ c: 'fwd', s: this.ident, d: m.d }),
+          body: msg,
         });
 
-        // actually forward the message
-        const resp = await stub.fetch(req);
+        const id = this.env.SIGNAL.idFromName(toB64Url(dest));
+        const stub = this.env.SIGNAL.get(id);
 
-        // parse the response
-        const out = {
-          status: resp.status,
-          text: await resp.text(),
-        };
-
-        // return the response to the node that requested the forward
-        ws.send(JSON.stringify({ c: 'resp', d: JSON.stringify(out) }));
-      } else {
-        throw new Error(`invalid c: ${c}`);
+        // intentionally ignore errors here
+        await stub.fetch(req);
       }
-    } catch (e) {
-      ws.send(JSON.stringify({ c: 'err', e: e.toString() }));
+    } catch (e: any) {
+      console.error(e);
+      ws.close(4000 + (e.status || 500), e.toString());
     }
   }
 

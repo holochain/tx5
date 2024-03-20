@@ -39,7 +39,7 @@ export function verifySignedHandshake(
   sig: Uint8Array,
 ) {
   if (sig.byteLength !== 64) {
-    throw err('invalid signature length', 400);
+    throw err(`invalid signature length ${sig.byteLength}`, 400);
   }
   if (!ed.verify(sig, nonce, pk)) {
     throw err('invalid handshake signature', 400);

@@ -44,9 +44,13 @@ class C {
         throw err;
       });
       ws.on('open', async () => {
-        const nonce = (await out.recv())[0];
+        const list = await out.recv();
+        if (list.length !== 1) {
+          throw new Error('invalid recv length');
+        }
+        const nonce = list[0];
         const handshake = ed.sign(nonce, out.sk);
-        out.ws.send(handshake);
+        await out._send(handshake);
         res(out);
       });
       ws.on('close', (code, reason) => {
@@ -79,12 +83,23 @@ class C {
     return this.pk;
   }
 
-  send(peer: Uint8Array, data: string) {
+  _send(data: Uint8Array): Promise<null> {
+    return new Promise((res, _) => {
+      this.ws.send(data, {}, (e: any) => {
+        if (e) {
+          throw e;
+        }
+        res(null);
+      });
+    });
+  }
+
+  async send(peer: Uint8Array, data: string) {
     const enc = new TextEncoder().encode(data);
     const out = new Uint8Array(peer.byteLength + enc.byteLength);
     out.set(peer);
     out.set(enc, peer.byteLength);
-    this.ws.send(out);
+    await this.ws.send(out);
   }
 
   recv(): Promise<Array<Uint8Array>> {
@@ -122,7 +137,7 @@ describe('Worker', () => {
     const wsB = await C.connect(addr);
 
     const recvPromiseA = wsA.recv();
-    wsB.send(wsA.pubKey(), 'test');
+    await wsB.send(wsA.pubKey(), 'test');
     const result = (await recvPromiseA)[0];
 
     wsA.close();

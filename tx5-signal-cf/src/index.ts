@@ -135,118 +135,129 @@ export class DoRateLimit implements DurableObject {
 export class DoSignal implements DurableObject {
   state: DurableObjectState;
   env: Env;
+  rl: RateLimit;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
+    this.rl = new RateLimit(5000);
   }
 
   async fetch(request: Request): Promise<Response> {
-    try {
-      const ip = request.headers.get('cf-connecting-ip') || 'no-ip';
-      const url = new URL(request.url);
-      // @ts-expect-error // cf typescript bug //
-      const path: string = url.pathname;
-
-      if (path === '/fwd') {
-        const message = await request.arrayBuffer();
-        for (const ws of this.state.getWebSockets()) {
-          ws.send(message);
-        }
-        return new Response('ok');
-      } else if (path === '/') {
-        if (this.state.getWebSockets().length > 0) {
-          throw err('websocket already connected', 400);
-        }
-        if (request.headers.get('Upgrade') !== 'websocket') {
-          throw err('expected websocket', 426);
-        }
-
-        const [client, server] = Object.values(new WebSocketPair());
-
-        this.state.acceptWebSocket(server);
-
-        const nonce = new Uint8Array(32);
-        crypto.getRandomValues(nonce);
-
+    return await this.state.blockConcurrencyWhile(async () => {
+      try {
+        const ip = request.headers.get('cf-connecting-ip') || 'no-ip';
+        const url = new URL(request.url);
         // @ts-expect-error // cf typescript bug //
-        const nodeId = fromB64Url(url.searchParams.get('k'));
+        const path: string = url.pathname;
 
-        server.serializeAttachment({
-          nodeId,
-          ip,
-          nonce,
-          valid: false,
+        if (path === '/fwd') {
+          const message = await request.arrayBuffer();
+          for (const ws of this.state.getWebSockets()) {
+            ws.send(message);
+          }
+          return new Response('ok');
+        } else if (path === '/') {
+          if (this.state.getWebSockets().length > 0) {
+            throw err('websocket already connected', 400);
+          }
+          if (request.headers.get('Upgrade') !== 'websocket') {
+            throw err('expected websocket', 426);
+          }
+
+          const [client, server] = Object.values(new WebSocketPair());
+
+          this.state.acceptWebSocket(server);
+
+          const nonce = new Uint8Array(32);
+          crypto.getRandomValues(nonce);
+
+          // @ts-expect-error // cf typescript bug //
+          const nodeId = fromB64Url(url.searchParams.get('k'));
+
+          server.serializeAttachment({
+            nodeId,
+            ip,
+            nonce,
+            valid: false,
+          });
+
+          server.send(nonce);
+
+          return new Response(null, { status: 101, webSocket: client });
+        } else {
+          throw err('invalid path', 400);
+        }
+      } catch (e: any) {
+        return new Response(JSON.stringify({ err: e.toString() }), {
+          status: e.status || 500,
         });
-
-        server.send(nonce);
-
-        return new Response(null, { status: 101, webSocket: client });
-      } else {
-        throw err('invalid path', 400);
       }
-    } catch (e: any) {
-      return new Response(JSON.stringify({ err: e.toString() }), {
-        status: e.status || 500,
-      });
-    }
+    });
   }
 
   // handle incoming websocket messages
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
-    try {
-      const { nodeId, ip, nonce, valid } = ws.deserializeAttachment();
-      if (!nodeId) {
-        throw err('no associated nodeId');
-      }
-      if (!ip) {
-        throw err('no associated ip');
-      }
-
-      // convert strings into binary
-      let msg: Uint8Array;
-      if (message instanceof ArrayBuffer) {
-        msg = new Uint8Array(message);
-      } else {
-        const enc = new TextEncoder();
-        msg = enc.encode(message);
-      }
-
-      if (!valid) {
-        if (!nonce) {
-          throw err('no associated nonce');
+    await this.state.blockConcurrencyWhile(async () => {
+      try {
+        const { nodeId, ip, nonce, valid } = ws.deserializeAttachment();
+        if (!nodeId) {
+          throw err('no associated nodeId');
         }
-        verifySignedHandshake(nodeId, nonce, msg);
-        ws.serializeAttachment({
-          nodeId,
-          ip,
-          nonce: true, // don't need to keep the actual nonce anymore
-          valid: true,
-        });
-      } else {
-        if (msg.byteLength < 32) {
-          throw err('invalid destination', 400);
+        if (!ip) {
+          throw err('no associated ip');
         }
 
-        const dest = new Uint8Array(32);
-        dest.set(msg.subarray(0, 32));
-        msg.set(nodeId);
+        await ipRateLimit(this.env, ip);
 
-        const req = new Request('http://do/fwd', {
-          method: 'POST',
-          body: msg,
-        });
+        if (this.rl.trackRequest(Date.now(), 20) > 0) {
+          throw err('rate limit', 429);
+        }
 
-        const id = this.env.SIGNAL.idFromName(toB64Url(dest));
-        const stub = this.env.SIGNAL.get(id);
+        // convert strings into binary
+        let msg: Uint8Array;
+        if (message instanceof ArrayBuffer) {
+          msg = new Uint8Array(message);
+        } else {
+          const enc = new TextEncoder();
+          msg = enc.encode(message);
+        }
 
-        // intentionally ignore errors here
-        await stub.fetch(req);
+        if (!valid) {
+          if (!nonce) {
+            throw err('no associated nonce');
+          }
+          verifySignedHandshake(nodeId, nonce, msg);
+          ws.serializeAttachment({
+            nodeId,
+            ip,
+            nonce: true, // don't need to keep the actual nonce anymore
+            valid: true,
+          });
+        } else {
+          if (msg.byteLength < 32) {
+            throw err('invalid destination', 400);
+          }
+
+          const dest = new Uint8Array(32);
+          dest.set(msg.subarray(0, 32));
+          msg.set(nodeId);
+
+          const req = new Request('http://do/fwd', {
+            method: 'POST',
+            body: msg,
+          });
+
+          const id = this.env.SIGNAL.idFromName(toB64Url(dest));
+          const stub = this.env.SIGNAL.get(id);
+
+          // intentionally ignore errors here
+          await stub.fetch(req);
+        }
+      } catch (e: any) {
+        ws.close(4000 + (e.status || 500), e.toString());
       }
-    } catch (e: any) {
-      console.error(e);
-      ws.close(4000 + (e.status || 500), e.toString());
-    }
+    });
   }
 
   // if the websocket is closed... close the websocket??

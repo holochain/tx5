@@ -424,11 +424,44 @@ impl Ep3 {
                 if let Ok(sig) = fut.await {
                     // see if we are still banning this id.
                     if ep.ban_map.lock().unwrap().is_banned(rem_id) {
-                        sig.ban(rem_id);
+                        sig.close(rem_id);
                     }
                 }
             });
         }
+    }
+
+    /// Request that the peer connection identified by the given `peer_url` is closed.
+    pub fn close(&self, peer_url: PeerUrl) -> Result<()> {
+        if !peer_url.is_client() {
+            return Err(Error::str("Expected PeerUrl, got SigUrl"));
+        }
+
+        let peer_id = peer_url.id().unwrap();
+
+        let sig_url = peer_url.to_server();
+        match self._sig_map.lock().unwrap().get(&sig_url) {
+            Some((_, fut)) => {
+                let fut = fut.clone();
+                tokio::task::spawn(async move {
+                    if let Ok(sig) = fut.await {
+                        sig.close(peer_id);
+                    } else {
+                        tracing::warn!(
+                            "Unable to close peer connection: {}",
+                            peer_url
+                        );
+                    }
+                });
+            }
+            None => {
+                return Err(Error::str(
+                    "No connections held for this signal server",
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Send data to a remote on this tx5 endpoint.

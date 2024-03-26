@@ -311,7 +311,7 @@ impl Sig {
         }
     }
 
-    pub fn ban(&self, id: Id) {
+    pub fn close(&self, id: Id) {
         let r = self.peer_map.lock().unwrap().get(&id).cloned();
         if let Some((uniq, _, _, _)) = r {
             close_peer(&self.sig.weak_peer_map, id, uniq);

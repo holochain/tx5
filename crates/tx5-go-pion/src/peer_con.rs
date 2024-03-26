@@ -95,6 +95,7 @@ impl From<&AnswerConfig> for GoBufRef<'static> {
 
 pub(crate) struct PeerConCore {
     peer_con_id: usize,
+    con_state: PeerConnectionState,
     evt_send: tokio::sync::mpsc::UnboundedSender<PeerConnectionEvent>,
     drop_err: Error,
 }
@@ -118,6 +119,7 @@ impl PeerConCore {
     ) -> Self {
         Self {
             peer_con_id,
+            con_state: PeerConnectionState::New,
             evt_send,
             drop_err: Error::id("PeerConnectionDropped").into(),
         }
@@ -200,14 +202,55 @@ impl PeerConnection {
         .await?
     }
 
+    /// Set the connection state. This should only be set based on connection state events
+    /// coming from the underlying webrtc library.
+    pub fn set_con_state(&self, con_state: PeerConnectionState) {
+        let mut lock = self.0.lock().unwrap();
+        if let Ok(core) = &mut *lock {
+            core.con_state = con_state;
+        } else {
+            tracing::warn!(
+                ?con_state,
+                "Unable to set peer connection state: {:?}",
+                self.get_peer_con_id()
+            );
+        }
+    }
+
+    /// Get the connection state.
+    pub fn get_con_state(&self) -> Result<PeerConnectionState> {
+        peer_con_strong_core!(self.0, core, { Ok(core.con_state) })
+    }
+
     /// Close this connection.
-    pub fn close(&self, err: Error) {
+    pub fn close<E: Into<Error>>(&self, err: E) {
+        let err = err.into();
         let mut tmp = Err(err.clone());
 
         {
             let mut lock = self.0.lock().unwrap();
             let mut do_swap = false;
             if let Ok(core) = &mut *lock {
+                tracing::info!(
+                    "Closing connection in state {:?}",
+                    core.con_state
+                );
+
+                // Connections should only be getting closed when they have been established or have failed
+                // to establish. This function is effectively a 'force close' and is expected to be called with
+                // with an error. Allow the close anyway but warn the caller.
+                match core.con_state {
+                    PeerConnectionState::Connected
+                    | PeerConnectionState::Failed => {
+                        // Allow the connection to be closed
+                    }
+                    _ => {
+                        tracing::warn!(
+                            "Closing peer connection in invalid state: {:?}",
+                            core.con_state
+                        );
+                    }
+                }
                 core.close(err.clone());
                 do_swap = true;
             }

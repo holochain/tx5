@@ -444,13 +444,14 @@ impl Ep3 {
             Some((_, fut)) => {
                 let fut = fut.clone();
                 tokio::task::spawn(async move {
-                    if let Ok(sig) = fut.await {
-                        sig.close(peer_id);
-                    } else {
-                        tracing::warn!(
-                            "Unable to close peer connection: {}",
-                            peer_url
-                        );
+                    match fut.await {
+                        Ok(sig) => sig.close(peer_id),
+                        Err(e) => {
+                            tracing::debug!(
+                                ?e,
+                                "Unable to close peer connection",
+                            );
+                        }
                     }
                 });
             }

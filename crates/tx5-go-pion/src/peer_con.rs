@@ -231,11 +231,6 @@ impl PeerConnection {
             let mut lock = self.0.lock().unwrap();
             let mut do_swap = false;
             if let Ok(core) = &mut *lock {
-                tracing::info!(
-                    "Closing connection in state {:?}",
-                    core.con_state
-                );
-
                 // Connections should only be getting closed when they have been established or have failed
                 // to establish. This function is effectively a 'force close' and is expected to be called with
                 // with an error. Allow the close anyway but warn the caller.

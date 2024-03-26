@@ -2,7 +2,9 @@ use crate::{Error, Result};
 use std::sync::Arc;
 
 /// Permit for sending on the channel.
-pub struct EventPermit(Option<tokio::sync::OwnedSemaphorePermit>);
+pub struct EventPermit(
+    #[allow(dead_code)] Option<tokio::sync::OwnedSemaphorePermit>,
+);
 
 impl std::fmt::Debug for EventPermit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

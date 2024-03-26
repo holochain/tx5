@@ -5,7 +5,7 @@ use tx5_go_pion_sys::Event as SysEvent;
 use tx5_go_pion_sys::API;
 
 /// PeerConnectionState events.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum PeerConnectionState {
     /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
     New = 0x01,

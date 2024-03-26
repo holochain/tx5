@@ -310,9 +310,9 @@ mod tests {
         println!("close data 2");
         data2.close(Error::id("").into());
         println!("close peer 1");
-        peer1.close(Error::id("").into());
+        peer1.close(Error::id(""));
         println!("close peer 2");
-        peer2.close(Error::id("").into());
+        peer2.close(Error::id(""));
 
         println!("close turn");
         turn.stop().await.unwrap();

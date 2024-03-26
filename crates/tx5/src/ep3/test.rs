@@ -475,6 +475,39 @@ async fn ep3_preflight_happy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ep3_close_connection() {
+    let config = Arc::new(Config3::default());
+    let test = Test::new().await;
+
+    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
+    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
+
+    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
+        }
+        _ => panic!(),
+    }
+
+    ep1.close(cli_url2).unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Disconnected { .. } => (),
+        e => panic!("Actually got event {:?}", e),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ep3_ban_after_connected_outgoing_side() {
     let config = Arc::new(Config3::default());
     let test = Test::new().await;

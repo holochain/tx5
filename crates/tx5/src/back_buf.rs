@@ -64,10 +64,10 @@ impl std::io::Read for BackBuf {
 /// Conversion type facilitating Into<&mut BackBuf>.
 pub(crate) enum BackBufRef<'lt> {
     /// An owned BackBuf.
-    Owned(Result<BackBuf>),
+    Owned(#[allow(dead_code)] Result<BackBuf>),
 
     /// A borrowed BackBuf.
-    Borrowed(Result<&'lt mut BackBuf>),
+    Borrowed(#[allow(dead_code)] Result<&'lt mut BackBuf>),
 }
 
 impl From<BackBuf> for BackBufRef<'static> {

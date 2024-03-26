@@ -58,7 +58,6 @@ pub(crate) struct Peer {
     cmd_task: tokio::task::JoinHandle<()>,
     recv_task: tokio::task::JoinHandle<()>,
     data_task: tokio::task::JoinHandle<()>,
-    #[allow(dead_code)]
     peer: Arc<tx5_go_pion::PeerConnection>,
     data_chan: Arc<tx5_go_pion::DataChannel>,
     send_limit: Arc<tokio::sync::Semaphore>,
@@ -70,6 +69,7 @@ pub(crate) struct Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
+        self.peer.close("Close");
         let evt_send = self.sig.evt_send.clone();
         let msg = Ep3Event::Disconnected {
             peer_url: self.peer_url.clone(),
@@ -355,6 +355,7 @@ impl Peer {
         };
 
         let recv_task = {
+            let weak_peer = Arc::downgrade(&peer);
             let sig = sig.clone();
             tokio::task::spawn(async move {
                 while let Some(evt) = peer_recv.recv().await {
@@ -364,7 +365,13 @@ impl Peer {
                             tracing::warn!(?err);
                             break;
                         }
-                        Evt::State(_state) => (),
+                        Evt::State(state) => {
+                            if let Some(peer) = weak_peer.upgrade() {
+                                peer.set_con_state(state);
+                            } else {
+                                break;
+                            }
+                        }
                         Evt::ICECandidate(mut ice) => {
                             let ice = match ice.as_json() {
                                 Err(err) => {

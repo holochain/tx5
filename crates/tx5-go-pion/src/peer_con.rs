@@ -95,6 +95,7 @@ impl From<&AnswerConfig> for GoBufRef<'static> {
 
 pub(crate) struct PeerConCore {
     peer_con_id: usize,
+    con_state: PeerConnectionState,
     evt_send: tokio::sync::mpsc::UnboundedSender<PeerConnectionEvent>,
     drop_err: Error,
 }
@@ -118,6 +119,7 @@ impl PeerConCore {
     ) -> Self {
         Self {
             peer_con_id,
+            con_state: PeerConnectionState::New,
             evt_send,
             drop_err: Error::id("PeerConnectionDropped").into(),
         }
@@ -200,8 +202,29 @@ impl PeerConnection {
         .await?
     }
 
+    /// Set the connection state. This should only be set based on connection state events
+    /// coming from the underlying webrtc library.
+    pub fn set_con_state(&self, con_state: PeerConnectionState) {
+        let mut lock = self.0.lock().unwrap();
+        if let Ok(core) = &mut *lock {
+            core.con_state = con_state;
+        } else {
+            tracing::warn!(
+                ?con_state,
+                "Unable to set peer connection state: {:?}",
+                self.get_peer_con_id()
+            );
+        }
+    }
+
+    /// Get the connection state.
+    pub fn get_con_state(&self) -> Result<PeerConnectionState> {
+        peer_con_strong_core!(self.0, core, { Ok(core.con_state) })
+    }
+
     /// Close this connection.
-    pub fn close(&self, err: Error) {
+    pub fn close<E: Into<Error>>(&self, err: E) {
+        let err = err.into();
         let mut tmp = Err(err.clone());
 
         {

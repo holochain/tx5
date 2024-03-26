@@ -239,11 +239,7 @@ async fn spawn_chan(
     for _ in 0..MSG_CNT {
         let buf = GoBuf::from_slice(ONE_KB).unwrap();
         data_chan.send(buf).await.unwrap();
-    }
 
-    let mut cnt = 0;
-
-    loop {
         match data_recv.recv().await {
             Some(DataChannelEvent::Open) => (),
             Some(DataChannelEvent::BufferedAmountLow) => (),
@@ -252,13 +248,11 @@ async fn spawn_chan(
                 std::io::Write::write_all(&mut std::io::stdout(), b".")
                     .unwrap();
                 std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                cnt += 1;
-                if cnt == MSG_CNT {
-                    break;
-                }
             }
             oth => panic!("{oth:?}"),
         }
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
     rcv_done.wait().await;

@@ -155,6 +155,7 @@ impl Peer {
             Some(sig_hnd) => sig_hnd,
         };
 
+        eprintln!("peer con using ice: {ice_servers:#?}");
         let peer_config = BackBuf::from_json(ice_servers)?;
 
         let (peer, mut peer_recv) =

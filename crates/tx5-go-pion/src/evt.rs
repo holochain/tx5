@@ -41,6 +41,35 @@ impl PeerConnectionState {
     }
 }
 
+/// PeerConnectionState events.
+#[derive(Debug)]
+pub enum PeerConnectionICEGatheringState {
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#ICEGathererState>
+    New = 0x01,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#ICEGathererState>
+    Gathering = 0x02,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#ICEGathererState>
+    Complete = 0x03,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#ICEGathererState>
+    Closed = 0x04,
+}
+
+impl PeerConnectionICEGatheringState {
+    /// Construct from a raw integer value.
+    pub fn from_raw(raw: usize) -> Self {
+        match raw {
+            0x01 => PeerConnectionICEGatheringState::New,
+            0x02 => PeerConnectionICEGatheringState::Gathering,
+            0x03 => PeerConnectionICEGatheringState::Complete,
+            0x04 => PeerConnectionICEGatheringState::Closed,
+            _ => panic!("invalid raw PeerConnectionICEGatheringState value: {raw}"),
+        }
+    }
+}
+
 /// Incoming events related to a PeerConnection.
 #[derive(Debug)]
 pub enum PeerConnectionEvent {
@@ -49,6 +78,9 @@ pub enum PeerConnectionEvent {
 
     /// PeerConnectionState event.
     State(PeerConnectionState),
+
+    /// PeerConnectionIceGatheringState event.
+    ICEGatheringState(PeerConnectionICEGatheringState),
 
     /// Received a trickle ICE candidate.
     ICECandidate(GoBuf),
@@ -200,6 +232,20 @@ impl Manager {
                                     peer_con_id,
                                     PeerConnectionEvent::State(
                                         PeerConnectionState::from_raw(
+                                            peer_con_state,
+                                        ),
+                                    ),
+                                );
+                            }
+                            SysEvent::PeerConICEGatheringStateChange {
+                                peer_con_id,
+                                peer_con_state,
+                            } => {
+                                smap(
+                                    &mut peer_map,
+                                    peer_con_id,
+                                    PeerConnectionEvent::ICEGatheringState(
+                                        PeerConnectionICEGatheringState::from_raw(
                                             peer_con_state,
                                         ),
                                     ),

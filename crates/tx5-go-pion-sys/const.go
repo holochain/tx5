@@ -128,11 +128,17 @@ const (
 	// - msg slot_b: state id
 	TyPeerConOnStateChange UintPtrT = 0x9802
 
+	// OnConICEGatheringStateChange event on an existing peer con.
+	// - allowed contexts: Event
+	// - msg slot_a: peer_con id
+	// - msg slot_b: state id
+	TyPeerConOnICEGatheringStateChange UintPtrT = 0x9803
+
 	// OnDataChannel event on an existing peer con.
 	// - allowed contexts: Event
 	// - msg slot_a: peer_con id
 	// - msg slot_b: data_chan id
-	TyPeerConOnDataChannel UintPtrT = 0x9803
+	TyPeerConOnDataChannel UintPtrT = 0x9804
 
 	// Request an existing data chan be closed and released.
 	// - allowed contexts: Call, Response

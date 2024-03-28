@@ -366,6 +366,7 @@ impl Peer {
                             break;
                         }
                         Evt::State(_state) => (),
+                        Evt::ICEGatheringState(_state) => (),
                         Evt::ICECandidate(mut ice) => {
                             let ice = match ice.as_json() {
                                 Err(err) => {

@@ -96,6 +96,9 @@ pub async fn check_nat_type(stun_a: String, stun_b: String) -> NatType {
         let _ = r.await;
 
         let lock = result2.lock().unwrap();
+
+        eprintln!("GOT: {lock:#?}");
+
         if lock.is_empty() {
             Result::Ok(NatType::UdpFailureTurnRequired)
         } else {

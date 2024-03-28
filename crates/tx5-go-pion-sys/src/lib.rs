@@ -267,6 +267,10 @@ pub enum Event {
         peer_con_id: PeerConId,
         peer_con_state: PeerConState,
     },
+    PeerConICEGatheringStateChange {
+        peer_con_id: PeerConId,
+        peer_con_state: PeerConState,
+    },
     PeerConDataChan {
         peer_con_id: PeerConId,
         data_chan_id: DataChanId,
@@ -332,6 +336,10 @@ impl Api {
                     candidate: slot_b,
                 },
                 TY_PEER_CON_ON_STATE_CHANGE => Event::PeerConStateChange {
+                    peer_con_id: slot_a,
+                    peer_con_state: slot_b,
+                },
+                TY_PEER_CON_ON_ICE_GATHERING_STATE_CHANGE => Event::PeerConICEGatheringStateChange {
                     peer_con_id: slot_a,
                     peer_con_state: slot_b,
                 },

@@ -733,7 +733,7 @@ async fn con_open_connection(
 
     let decode = wire::Wire::decode(&auth_req)?;
 
-    let (srv_pub, nonce, cipher, got_ice) = match decode {
+    let (srv_pub, nonce, cipher, mut got_ice) = match decode {
         wire::Wire::AuthReqV1 {
             srv_pub,
             nonce,
@@ -764,6 +764,17 @@ async fn con_open_connection(
         .encode()?,
     );
     socket.send(msg).await.map_err(Error::err)?;
+
+    if std::env::var_os("TX5_STUN_ONLY").is_some() {
+        got_ice
+            .as_object_mut()
+            .unwrap()
+            .get_mut("iceServers")
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .remove(1);
+    }
 
     tracing::info!(%got_ice, "signal connection established");
     *ice.lock() = Arc::new(got_ice);

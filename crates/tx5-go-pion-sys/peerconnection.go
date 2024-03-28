@@ -148,6 +148,16 @@ func CallPeerConAlloc(
 		)
 	})
 
+  con.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
+    EmitEvent(
+      TyPeerConOnICEGatheringStateChange,
+      handle,
+      UintPtrT(state),
+      0,
+      0,
+    )
+  })
+
 	con.OnDataChannel(func(ch *webrtc.DataChannel) {
 		dataChan := NewDataChan(ch)
 

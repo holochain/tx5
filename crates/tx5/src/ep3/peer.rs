@@ -86,6 +86,20 @@ impl Drop for Peer {
     }
 }
 
+/// Removes all iceServer urls that use the turn protocol.
+/// Then removes all blocks that have no iceServer urls.
+fn filter_turn(
+    ice: &serde_json::Value,
+) -> Result<tx5_go_pion::PeerConnectionConfig> {
+    let mut ice: tx5_go_pion::PeerConnectionConfig =
+        serde_json::from_str(&serde_json::to_string(ice)?)?;
+    ice.ice_servers.retain_mut(|x| {
+        x.urls.retain_mut(|x| !x.starts_with("turn"));
+        !x.urls.is_empty()
+    });
+    Ok(ice)
+}
+
 impl Peer {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -97,6 +111,7 @@ impl Peer {
         ice_servers: Arc<serde_json::Value>,
         new_peer_dir: NewPeerDir,
         mut peer_cmd_recv: EventRecv<PeerCmd>,
+        ice_filter: IceFilter,
     ) -> CRes<Arc<Self>> {
         use influxive_otel_atomic_obs::MeterExt;
         use opentelemetry_api::metrics::MeterProvider;
@@ -155,7 +170,11 @@ impl Peer {
             Some(sig_hnd) => sig_hnd,
         };
 
-        let peer_config = BackBuf::from_json(ice_servers)?;
+        let peer_config = if ice_filter == IceFilter::StunOnly {
+            BackBuf::from_json(filter_turn(&ice_servers)?)?
+        } else {
+            BackBuf::from_json(&ice_servers)?
+        };
 
         let (peer, mut peer_recv) =
             tx5_go_pion::PeerConnection::new(peer_config.imp.buf).await?;

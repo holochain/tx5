@@ -18,12 +18,51 @@ pub struct IceServer {
     pub credential: Option<String>,
 }
 
+/// ICETransportPolicy events.
+#[derive(
+    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum ICETransportPolicy {
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#ICETransportPolicy>
+    All = 0x00,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#ICETransportPolicy>
+    Relay = 0x01,
+}
+
+impl Default for ICETransportPolicy {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl ICETransportPolicy {
+    /// Construct from a raw integer value.
+    pub fn from_raw(raw: usize) -> Self {
+        match raw {
+            0x00 => ICETransportPolicy::All,
+            0x01 => ICETransportPolicy::Relay,
+            _ => panic!("invalid raw ICETransportPolicy value: {raw}"),
+        }
+    }
+
+    /// Returns true if this ICETransportPolicy instance is "All".
+    pub fn is_default(&self) -> bool {
+        *self == ICETransportPolicy::All
+    }
+}
+
 /// Configuration for a go pion webrtc PeerConnection.
 #[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(crate = "tx5_core::deps::serde", rename_all = "camelCase")]
 pub struct PeerConnectionConfig {
     /// ICE server list.
     pub ice_servers: Vec<IceServer>,
+
+    /// ICE Transport Policy.
+    #[serde(default, skip_serializing_if = "ICETransportPolicy::is_default")]
+    pub ice_transport_policy: ICETransportPolicy,
 }
 
 impl From<PeerConnectionConfig> for GoBufRef<'static> {

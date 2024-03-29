@@ -4046,6 +4046,7 @@ dependencies = [
  "tracing-subscriber",
  "tx5-core",
  "tx5-go-pion",
+ "tx5-go-pion-turn",
  "tx5-signal",
  "tx5-signal-srv",
  "url",
@@ -4097,6 +4098,7 @@ version = "0.0.8-alpha"
 dependencies = [
  "futures",
  "parking_lot",
+ "serde",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -47,6 +47,7 @@ rustls-native-certs = "0.6.2"
 rustls-pemfile = "1.0.2"
 serde = { version = "1.0.160", features = [ "derive", "rc" ] }
 serde_json = { version = "1.0.96", features = [ "preserve_order" ] }
+serde_repr = "0.1.18"
 sha2 = "0.10.6"
 socket2 = { version = "0.5.2", features = [ "all" ] }
 sodoken = "=0.0.11"

@@ -38,8 +38,9 @@ func (peerCon *PeerCon) Free() {
 }
 
 type PeerConConfig struct {
-	ICEServers   []webrtc.ICEServer `json:"iceServers,omitempty"`
-	Certificates []string           `json:"certificates,omitempty"`
+	ICEServers         []webrtc.ICEServer        `json:"iceServers,omitempty"`
+	Certificates       []string                  `json:"certificates,omitempty"`
+	ICETransportPolicy webrtc.ICETransportPolicy `json:"iceTransportPolicy,omitempty"`
 }
 
 func CallPeerConAlloc(
@@ -78,6 +79,7 @@ func CallPeerConAlloc(
 
 	var config_parsed webrtc.Configuration
 	config_parsed.ICEServers = tmpConfig.ICEServers
+	config_parsed.ICETransportPolicy = tmpConfig.ICETransportPolicy
 
 	for _, certPem := range tmpConfig.Certificates {
 		cert, err := webrtc.CertificateFromPEM(certPem)

@@ -48,6 +48,7 @@ async fn main() {
 
     let config = PeerConnectionConfig {
         ice_servers: vec![ice],
+        ..Default::default()
     };
 
     println!("running with: {config:?}");

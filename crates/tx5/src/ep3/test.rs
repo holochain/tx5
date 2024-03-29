@@ -4,10 +4,16 @@ struct Test {
     sig_srv_hnd: Option<tx5_signal_srv::SrvHnd>,
     sig_port: Option<u16>,
     sig_url: Option<SigUrl>,
+    ice: tx5_go_pion::PeerConnectionConfig,
+    _turn: tx5_go_pion_turn::Tx5TurnServer,
 }
 
 impl Test {
     pub async fn new() -> Self {
+        Self::with_config(false).await
+    }
+
+    pub async fn with_config(relay: bool) -> Self {
         let subscriber = tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(
                 tracing_subscriber::filter::EnvFilter::from_default_env(),
@@ -18,10 +24,36 @@ impl Test {
 
         let _ = tracing::subscriber::set_global_default(subscriber);
 
+        let (ice, _turn) = tx5_go_pion_turn::test_turn_server().await.unwrap();
+        let mut ice: tx5_go_pion::PeerConnectionConfig =
+            serde_json::from_str(&format!("{{\"iceServers\":[{ice}]}}"))
+                .unwrap();
+        let url = ice.ice_servers.get(0).unwrap().urls.get(0).unwrap().clone();
+        let mut url = url.split("?");
+        let url = url.next().unwrap();
+        let mut url = url.split(":");
+        url.next().unwrap();
+        let a = url.next().unwrap();
+        let p = url.next().unwrap();
+        ice.ice_servers.insert(
+            0,
+            tx5_go_pion::IceServer {
+                urls: vec![format!("stun:{a}:{p}"), format!("stun:{a}:{p}")],
+                username: None,
+                credential: None,
+            },
+        );
+        if relay {
+            ice.ice_transport_policy = tx5_go_pion::ICETransportPolicy::Relay;
+        }
+        //println!("iceServers: {ice:#?}");
+
         let mut this = Test {
             sig_srv_hnd: None,
             sig_port: None,
             sig_url: None,
+            ice,
+            _turn,
         };
 
         this.restart_sig().await;
@@ -51,6 +83,9 @@ impl Test {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
         let mut srv_config = tx5_signal_srv::Config::default();
+        srv_config.ice_servers =
+            serde_json::from_str(&serde_json::to_string(&self.ice).unwrap())
+                .unwrap();
         srv_config.port = self.sig_port.unwrap_or(0);
 
         let (sig_srv_hnd, addr_list, _) =
@@ -71,6 +106,33 @@ impl Test {
         }
         tracing::info!(%sig_url);
         self.sig_url = Some(sig_url);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ep3_turn_fallback_works() {
+    let mut config = Config3::default();
+    config.timeout = std::time::Duration::from_secs(5);
+    let config = Arc::new(config);
+    let test = Test::with_config(true).await;
+
+    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
+    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
+
+    ep1.send(cli_url2, b"hello").await.unwrap();
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Connected { .. } => (),
+        _ => panic!(),
+    }
+
+    let res = ep2_recv.recv().await.unwrap();
+    match res {
+        Ep3Event::Message { message, .. } => {
+            assert_eq!(&b"hello"[..], &message);
+        }
+        oth => panic!("{oth:?}"),
     }
 }
 

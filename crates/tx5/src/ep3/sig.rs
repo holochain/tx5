@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum IceFilter {
+    StunOnly,
+    TurnOkay,
+}
+
 type PeerCmdSend = EventSend<PeerCmd>;
 type AnswerSend =
     Arc<Mutex<Option<tokio::sync::oneshot::Sender<serde_json::Value>>>>;
@@ -125,6 +131,7 @@ impl Sig {
                                                 peer_url,
                                                 rem_pub,
                                                 PeerDir::Incoming { offer },
+                                                IceFilter::StunOnly,
                                             )
                                             .await;
                                     });
@@ -215,6 +222,7 @@ impl Sig {
         peer_url: PeerUrl,
         peer_id: Id,
         peer_dir: PeerDir,
+        ice_filter: IceFilter,
     ) -> CRes<Arc<Peer>> {
         if peer_id == self.sig.this_id {
             return Err(Error::str("Cannot establish connection with remote peer id matching this id").into());
@@ -281,6 +289,7 @@ impl Sig {
                                 ice_servers,
                                 new_peer_dir,
                                 peer_cmd_recv,
+                                ice_filter,
                             ),
                         ),
                     )

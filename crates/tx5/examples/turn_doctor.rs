@@ -395,6 +395,7 @@ async fn stun_check(check: &TurnCheck) {
             username: None,
             credential: None,
         }],
+        ..Default::default()
     };
     println!("CHECK_STUN: {config:?}");
     let ice = gather_ice(config).await;
@@ -421,6 +422,7 @@ async fn turn_udp_check(check: &TurnCheck) {
                 username: Some(check.user.clone()),
                 credential: Some(check.cred.clone()),
             }],
+            ..Default::default()
         },
     )
     .await;
@@ -438,6 +440,7 @@ async fn turn_tcp_plain_check(check: &TurnCheck) {
                 username: Some(check.user.clone()),
                 credential: Some(check.cred.clone()),
             }],
+            ..Default::default()
         },
     )
     .await;
@@ -455,6 +458,7 @@ async fn turn_tcp_tls_check(check: &TurnCheck) {
                 username: Some(check.user.clone()),
                 credential: Some(check.cred.clone()),
             }],
+            ..Default::default()
         },
     )
     .await;

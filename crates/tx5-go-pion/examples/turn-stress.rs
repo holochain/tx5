@@ -118,6 +118,7 @@ async fn main() {
                 Cmd::PeerEvt(PeerConnectionEvent::State(
                     PeerConnectionState::Connected,
                 )) => (),
+                Cmd::PeerEvt(PeerConnectionEvent::ICEGatheringState(_)) => (),
                 Cmd::PeerEvt(PeerConnectionEvent::ICECandidate(mut ice)) => {
                     if is_ice_relay(&mut ice) {
                         o2t_snd.send(Cmd::Ice(ice)).unwrap();
@@ -160,6 +161,7 @@ async fn main() {
             Cmd::PeerEvt(PeerConnectionEvent::State(
                 PeerConnectionState::Connected,
             )) => (),
+            Cmd::PeerEvt(PeerConnectionEvent::ICEGatheringState(_)) => (),
             Cmd::PeerEvt(PeerConnectionEvent::ICECandidate(mut ice)) => {
                 if is_ice_relay(&mut ice) {
                     t2o_snd.send(Cmd::Ice(ice)).unwrap();

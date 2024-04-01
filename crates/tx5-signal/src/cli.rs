@@ -33,6 +33,15 @@ pub enum SignalMsg {
         offer: serde_json::Value,
     },
 
+    /// WebRTC Ice Restart Offer.
+    RestartOffer {
+        /// The remote Id sending the offer.
+        rem_pub: Id,
+
+        /// The WebRTC offer.
+        offer: serde_json::Value,
+    },
+
     /// WebRTC answer.
     Answer {
         /// The remote Id sending the answer.
@@ -339,6 +348,21 @@ impl Cli {
         self.priv_send(
             rem_pub,
             wire::FwdInnerV1::Offer {
+                seq: 0.0, // set in priv_send
+                offer,
+            },
+        )
+    }
+
+    /// Send a WebRTC restart offer to a remote node on the signal server.
+    pub fn restart_offer(
+        &self,
+        rem_pub: Id,
+        offer: serde_json::Value,
+    ) -> impl Future<Output = Result<()>> + 'static + Send {
+        self.priv_send(
+            rem_pub,
+            wire::FwdInnerV1::RestartOffer {
                 seq: 0.0, // set in priv_send
                 offer,
             },
@@ -893,6 +917,11 @@ async fn decode_fwd(
     match msg {
         wire::FwdInnerV1::Offer { offer, .. } => {
             let _ = msg_send.send(SignalMsg::Offer { rem_pub, offer }).await;
+        }
+        wire::FwdInnerV1::RestartOffer { offer, .. } => {
+            let _ = msg_send
+                .send(SignalMsg::RestartOffer { rem_pub, offer })
+                .await;
         }
         wire::FwdInnerV1::Answer { answer, .. } => {
             let _ = msg_send.send(SignalMsg::Answer { rem_pub, answer }).await;

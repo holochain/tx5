@@ -482,29 +482,14 @@ impl Ep3 {
 
         let sig = assert_sig(&self.ep, &sig_url).await?;
 
-        let peer = match sig
+        let peer = sig
             .assert_peer(
                 peer_url.clone(),
                 peer_id,
                 PeerDir::ActiveOrOutgoing,
                 IceFilter::StunOnly,
             )
-            .await
-        {
-            Ok(peer) => peer,
-            Err(err) => {
-                tracing::error!(?err, "@@@@-test-@@@@");
-                eprintln!("{err:?} @@@@-test-@@@@");
-
-                sig.assert_peer(
-                    peer_url,
-                    peer_id,
-                    PeerDir::ActiveOrOutgoing,
-                    IceFilter::TurnOkay,
-                )
-                .await?
-            }
-        };
+            .await?;
 
         peer.send(data).await
     }

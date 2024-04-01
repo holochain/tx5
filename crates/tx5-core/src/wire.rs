@@ -164,6 +164,16 @@ pub enum FwdInnerV1 {
         offer: serde_json::Value,
     },
 
+    /// WebRTC restart offer.
+    #[serde(rename_all = "camelCase")]
+    RestartOffer {
+        /// Sequence.
+        seq: f64,
+
+        /// WebRTC offer.
+        offer: serde_json::Value,
+    },
+
     /// WebRTC answer.
     #[serde(rename_all = "camelCase")]
     Answer {
@@ -202,6 +212,7 @@ impl FwdInnerV1 {
     pub fn set_seq(&mut self, new_seq: f64) {
         match self {
             FwdInnerV1::Offer { seq, .. } => *seq = new_seq,
+            FwdInnerV1::RestartOffer { seq, .. } => *seq = new_seq,
             FwdInnerV1::Answer { seq, .. } => *seq = new_seq,
             FwdInnerV1::Ice { seq, .. } => *seq = new_seq,
         }
@@ -211,6 +222,7 @@ impl FwdInnerV1 {
     pub fn get_seq(&self) -> f64 {
         match self {
             FwdInnerV1::Offer { seq, .. } => *seq,
+            FwdInnerV1::RestartOffer { seq, .. } => *seq,
             FwdInnerV1::Answer { seq, .. } => *seq,
             FwdInnerV1::Ice { seq, .. } => *seq,
         }

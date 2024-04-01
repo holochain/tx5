@@ -12,20 +12,25 @@ impl From<Error> for PeerCmd {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum PeerDir {
     ActiveOrOutgoing,
+    OutgoingRestart,
     Incoming { offer: serde_json::Value },
+    IncomingRestart { offer: serde_json::Value },
 }
 
 impl PeerDir {
     pub fn is_incoming(&self) -> bool {
         matches!(self, PeerDir::Incoming { .. })
+            || matches!(self, PeerDir::IncomingRestart { .. })
     }
 }
 
 pub(crate) enum NewPeerDir {
     Outgoing {
         answer_recv: tokio::sync::oneshot::Receiver<serde_json::Value>,
+        is_restart: bool,
     },
     Incoming {
         offer: serde_json::Value,
@@ -293,7 +298,10 @@ impl Peer {
         let mut chan_send = Some(chan_send);
 
         match new_peer_dir {
-            NewPeerDir::Outgoing { answer_recv } => {
+            NewPeerDir::Outgoing {
+                answer_recv,
+                is_restart,
+            } => {
                 let chan = peer
                     .create_data_channel(tx5_go_pion::DataChannelConfig {
                         label: Some("data".into()),
@@ -312,7 +320,11 @@ impl Peer {
 
                 tracing::debug!(?offer_json, "create_offer");
 
-                sig_hnd.offer(peer_id, offer_json).await?;
+                if is_restart {
+                    sig_hnd.restart_offer(peer_id, offer_json).await?;
+                } else {
+                    sig_hnd.offer(peer_id, offer_json).await?;
+                }
 
                 peer.set_local_description(offer).await?;
 

@@ -139,6 +139,34 @@ impl Sig {
                                     break;
                                 }
                             }
+                            RestartOffer { rem_pub, offer } => {
+                                // only respect restart offers if we are
+                                // the polite side of the pairing.
+                                if rem_pub > ep.this_id {
+                                    tracing::trace!(%ep.ep_uniq, %sig_uniq, ?rem_pub, ?offer, "Sig Recv Respected RestartOffer");
+                                    if let Some(sig) = weak_sig.upgrade() {
+                                        let peer_url =
+                                            sig_url.to_client(rem_pub);
+                                        // fire and forget this
+                                        tokio::task::spawn(async move {
+                                            let _ = sig
+                                                .assert_peer(
+                                                    peer_url,
+                                                    rem_pub,
+                                                    PeerDir::IncomingRestart {
+                                                        offer,
+                                                    },
+                                                    IceFilter::TurnOkay,
+                                                )
+                                                .await;
+                                        });
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    tracing::trace!(%ep.ep_uniq, %sig_uniq, ?rem_pub, ?offer, "Sig Recv Ignored RestartOffer");
+                                }
+                            }
                             Answer { rem_pub, answer } => {
                                 tracing::trace!(%ep.ep_uniq, %sig_uniq, ?rem_pub, ?answer, "Sig Recv Answer");
                                 if let Some(peer_map) = weak_peer_map.upgrade()
@@ -224,6 +252,48 @@ impl Sig {
         peer_dir: PeerDir,
         ice_filter: IceFilter,
     ) -> CRes<Arc<Peer>> {
+        if let PeerDir::OutgoingRestart = peer_dir {
+            unreachable!()
+        }
+        let is_polite = peer_id > self.sig.this_id;
+        let is_incoming = peer_dir.is_incoming();
+        match self
+            .assert_peer_inner(
+                peer_url.clone(),
+                peer_id,
+                peer_dir.clone(),
+                ice_filter,
+            )
+            .await
+        {
+            Ok(peer) => Ok(peer),
+            Err(err) => {
+                if !is_polite && !is_incoming {
+                    tracing::debug!(
+                        ?err,
+                        "Attempting Restart Offer Due To Error"
+                    );
+                    self.assert_peer_inner(
+                        peer_url,
+                        peer_id,
+                        PeerDir::OutgoingRestart,
+                        IceFilter::TurnOkay,
+                    )
+                    .await
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    pub async fn assert_peer_inner(
+        &self,
+        peer_url: PeerUrl,
+        peer_id: Id,
+        peer_dir: PeerDir,
+        ice_filter: IceFilter,
+    ) -> CRes<Arc<Peer>> {
         if peer_id == self.sig.this_id {
             return Err(Error::str("Cannot establish connection with remote peer id matching this id").into());
         }
@@ -247,6 +317,10 @@ impl Sig {
                 // registered connection because we're the impolite node.
             }
 
+            if let PeerDir::OutgoingRestart = peer_dir {
+                tmp = lock.remove(&peer_id);
+            }
+
             lock.entry(peer_id)
                 .or_insert_with(|| {
                     let mut answer_send = None;
@@ -254,9 +328,21 @@ impl Sig {
                         PeerDir::ActiveOrOutgoing => {
                             let (s, r) = tokio::sync::oneshot::channel();
                             answer_send = Some(s);
-                            NewPeerDir::Outgoing { answer_recv: r }
+                            NewPeerDir::Outgoing {
+                                answer_recv: r,
+                                is_restart: false,
+                            }
                         }
-                        PeerDir::Incoming { offer } => {
+                        PeerDir::OutgoingRestart => {
+                            let (s, r) = tokio::sync::oneshot::channel();
+                            answer_send = Some(s);
+                            NewPeerDir::Outgoing {
+                                answer_recv: r,
+                                is_restart: true,
+                            }
+                        }
+                        PeerDir::Incoming { offer }
+                        | PeerDir::IncomingRestart { offer } => {
                             NewPeerDir::Incoming { offer }
                         }
                     };

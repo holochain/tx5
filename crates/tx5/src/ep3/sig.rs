@@ -256,7 +256,6 @@ impl Sig {
             unreachable!()
         }
         let is_polite = peer_id > self.sig.this_id;
-        let is_incoming = peer_dir.is_incoming();
         match self
             .assert_peer_inner(
                 peer_url.clone(),
@@ -268,7 +267,7 @@ impl Sig {
         {
             Ok(peer) => Ok(peer),
             Err(err) => {
-                if !is_polite && !is_incoming {
+                if !is_polite {
                     tracing::debug!(
                         ?err,
                         "Attempting Restart Offer Due To Error"
@@ -281,6 +280,19 @@ impl Sig {
                     )
                     .await
                 } else {
+                    // wait a short time to see if a restart comes from the
+                    // remote side
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                    // if a new peer got added in the mean time, return that instead
+                    let r =
+                        self.peer_map.lock().unwrap().get(&peer_id).cloned();
+
+                    if let Some((_new_peer_uniq, _cmd, _ans, new_peer_fut)) = r
+                    {
+                        return new_peer_fut.await;
+                    }
+
                     Err(err)
                 }
             }
@@ -304,12 +316,16 @@ impl Sig {
 
         let mut tmp = None;
 
+        let is_polite = peer_id > self.sig.this_id;
+
+        tracing::trace!(%is_polite, ?peer_id, ?self.sig.this_id, ?peer_dir);
+
         let (peer_uniq, _peer_cmd_send, _answer_send, fut) = {
             let mut lock = self.peer_map.lock().unwrap();
 
             if peer_dir.is_incoming() && lock.contains_key(&peer_id) {
                 // we need to check negotiation
-                if peer_id > self.sig.this_id {
+                if is_polite {
                     // we are the polite node, drop our existing connection
                     tmp = lock.remove(&peer_id);
                 }

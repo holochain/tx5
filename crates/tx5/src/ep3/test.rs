@@ -46,7 +46,6 @@ impl Test {
         if relay {
             ice.ice_transport_policy = tx5_go_pion::ICETransportPolicy::Relay;
         }
-        //println!("iceServers: {ice:#?}");
 
         let mut this = Test {
             sig_srv_hnd: None,
@@ -109,15 +108,57 @@ impl Test {
     }
 }
 
+async fn test_eps_by_politeness(
+    test: &Test,
+    config: &Arc<Config3>,
+    polite_first: bool,
+) -> (
+    (PeerUrl, Ep3, EventRecv<Ep3Event>),
+    (PeerUrl, Ep3, EventRecv<Ep3Event>),
+) {
+    let (u1, e1, r1) = test.ep(config.clone()).await;
+    let (u2, e2, r2) = test.ep(config.clone()).await;
+    let first_is_polite = u1.id().unwrap() < u2.id().unwrap();
+    match (first_is_polite, polite_first) {
+        (true, true) | (false, false) => ((u1, e1, r1), (u2, e2, r2)),
+        _ => ((u2, e2, r2), (u1, e1, r1)),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_turn_fallback_works() {
+async fn ep3_turn_fallback_works_polite_first() {
+    inner_ep3_turn_fallback_works(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ep3_turn_fallback_works_impolite_first() {
+    inner_ep3_turn_fallback_works(false).await;
+}
+
+async fn inner_ep3_turn_fallback_works(polite_first: bool) {
+    /*
+     * This test works by setting iceTransportPolicy to RELAY,
+     * meaning the connections will only accept RELAY type ice messages.
+     * Holochain, however, always starts by attempting STUN only,
+     * that is, it filters out the TURN servers from the initial
+     * iceServers list. This, therefore, should always fail to connect,
+     * and thus, we'll execute the turn fallback code path.
+     *
+     * We also need to make sure this works whether the initial outgoing
+     * connection was the polite node, or if it was the impolite node.
+     *
+     * The impolite one is always the node to send the restart offer,
+     * so there is a slightly different code path if that was also the initial
+     * offer-er or if it was initially the answer, and now needs to offer.
+     */
+
     let mut config = Config3::default();
     config.timeout = std::time::Duration::from_secs(5);
     let config = Arc::new(config);
     let test = Test::with_config(true).await;
 
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
+    let ((_cli_url1, ep1, _ep1_recv), (cli_url2, _ep2, mut ep2_recv)) =
+        test_eps_by_politeness(&test, &config, polite_first).await;
 
     ep1.send(cli_url2, b"hello").await.unwrap();
 

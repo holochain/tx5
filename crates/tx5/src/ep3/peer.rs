@@ -12,7 +12,7 @@ impl From<Error> for PeerCmd {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) enum PeerDir {
     ActiveOrOutgoing,
     OutgoingRestart,

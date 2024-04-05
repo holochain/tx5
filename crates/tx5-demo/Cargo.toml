@@ -1,6 +1,6 @@
 [package]
 name = "tx5-demo"
-version = "0.0.8-alpha"
+version = "0.0.9-alpha"
 edition = "2021"
 description = "Demo crate showing off Tx5 WebRTC functionality"
 license = "MIT OR Apache-2.0"

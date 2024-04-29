@@ -3511,6 +3511,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tx5-connection"
+version = "0.0.9-alpha"
+dependencies = [
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tx5-core",
+ "tx5-signal",
+]
+
+[[package]]
 name = "tx5-core"
 version = "0.0.9-alpha"
 dependencies = [

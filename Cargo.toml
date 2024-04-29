@@ -2,6 +2,7 @@
 members = [
   "crates/tx5",
   "crates/tx5-core",
+  "crates/tx5-connection",
   "crates/tx5-online",
   "crates/tx5-go-pion-sys",
   "crates/tx5-go-pion",

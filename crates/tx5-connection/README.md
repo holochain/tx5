@@ -30,8 +30,10 @@
 
 <!-- cargo-rdme start -->
 
-#### tx5-core
+#### tx5-connection
 
-Holochain WebRTC p2p communication ecosystem core types.
+Holochain webrtc connection.
+Starts by sending messages over the sbd signal server, if we can
+upgrade to a proper webrtc p2p connection, we do so.
 
 <!-- cargo-rdme end -->

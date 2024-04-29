@@ -7,6 +7,7 @@ SHELL = /usr/bin/env sh -eu
 all: test
 
 publish-all:
+	$(MAKE) publish crate=tx5-connection
 	$(MAKE) publish crate=tx5-core
 	$(MAKE) publish crate=tx5-online
 	$(MAKE) publish crate=tx5-go-pion-turn
@@ -18,6 +19,9 @@ publish-all:
 
 publish:
 	@case "$(crate)" in \
+		tx5-connection) \
+			export MANIFEST="./crates/tx5-connection/Cargo.toml"; \
+			;; \
 		tx5-core) \
 			export MANIFEST="./crates/tx5-core/Cargo.toml"; \
 			;; \
@@ -43,6 +47,7 @@ publish:
 			export MANIFEST="./crates/tx5-demo/Cargo.toml"; \
 			;; \
 		*) \
+			echo "USAGE: make publish crate=tx5-connection"; \
 			echo "USAGE: make publish crate=tx5-core"; \
 			echo "USAGE: make publish crate=tx5-online"; \
 			echo "USAGE: make publish crate=tx5-go-pion-turn"; \
@@ -85,6 +90,8 @@ docs: tools
 	cp -f crates/tx5-core/src/README.tpl README.md
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-core/README.md
 	cargo rdme --force -w tx5-core
+	cp -f crates/tx5-core/src/README.tpl crates/tx5-connection/README.md
+	cargo rdme --force -w tx5-connection
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-online/README.md
 	cargo rdme --force -w tx5-online
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-go-pion-turn/README.md

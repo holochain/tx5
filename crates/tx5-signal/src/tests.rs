@@ -1,3 +1,4 @@
+/*
 use crate::*;
 use lair_keystore_api::prelude::*;
 use std::sync::Arc;
@@ -257,3 +258,4 @@ async fn sanity_inner(srv_port: u16) {
     tracing::info!(?msg);
     assert!(matches!(msg, Some(SignalMsg::Demo { .. })));
 }
+*/

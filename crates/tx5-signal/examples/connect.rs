@@ -15,6 +15,7 @@ fn init_tracing() {
 async fn main() {
     init_tracing();
 
+    /*
     let sig_url = std::env::args().collect::<Vec<_>>();
     let sig_url = sig_url.get(1).expect("expect sig_url");
     let sig_url = url::Url::parse(sig_url).expect("expect sig_url to be a url");
@@ -31,4 +32,5 @@ async fn main() {
         "{}",
         serde_json::to_string_pretty(&cli.ice_servers()).expect("expect json")
     );
+    */
 }

@@ -12,7 +12,6 @@ publish-all:
 	$(MAKE) publish crate=tx5-go-pion-turn
 	$(MAKE) publish crate=tx5-go-pion-sys
 	$(MAKE) publish crate=tx5-go-pion
-	$(MAKE) publish crate=tx5-signal-srv
 	$(MAKE) publish crate=tx5-signal
 	$(MAKE) publish crate=tx5
 	$(MAKE) publish crate=tx5-demo
@@ -34,9 +33,6 @@ publish:
 		tx5-go-pion) \
 			export MANIFEST="./crates/tx5-go-pion/Cargo.toml"; \
 			;; \
-		tx5-signal-srv) \
-			export MANIFEST="./crates/tx5-signal-srv/Cargo.toml"; \
-			;; \
 		tx5-signal) \
 			export MANIFEST="./crates/tx5-signal/Cargo.toml"; \
 			;; \
@@ -52,7 +48,6 @@ publish:
 			echo "USAGE: make publish crate=tx5-go-pion-turn"; \
 			echo "USAGE: make publish crate=tx5-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx5-go-pion"; \
-			echo "USAGE: make publish crate=tx5-signal-srv"; \
 			echo "USAGE: make publish crate=tx5-signal"; \
 			echo "USAGE: make publish crate=tx5"; \
 			echo "USAGE: make publish crate=tx5-demo"; \
@@ -88,13 +83,6 @@ static: docs tools
 
 docs: tools
 	cp -f crates/tx5-core/src/README.tpl README.md
-	printf '### The `tx5-signal-srv` executable\n`tx5-signal-srv --help`\n```text\n' > crates/tx5-signal-srv/src/docs/srv_help.md
-	cargo run --manifest-path crates/tx5-signal-srv/Cargo.toml -- --help >> crates/tx5-signal-srv/src/docs/srv_help.md
-	printf '\n```\n' >> crates/tx5-signal-srv/src/docs/srv_help.md
-	cp -f crates/tx5-core/src/README.tpl crates/tx5-signal-srv/README.md
-	cargo rdme --force -w tx5-signal-srv
-	printf '\n' >> crates/tx5-signal-srv/README.md
-	cat crates/tx5-signal-srv/src/docs/srv_help.md >> crates/tx5-signal-srv/README.md
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-core/README.md
 	cargo rdme --force -w tx5-core
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-online/README.md

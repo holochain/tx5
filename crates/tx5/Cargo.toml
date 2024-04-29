@@ -49,7 +49,6 @@ openssl-sys = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
 tracing-subscriber = { workspace = true }
-tx5-signal-srv = { workspace = true }
 rand = { workspace = true }
 rand-utf8 = { workspace = true }
 

@@ -11,33 +11,13 @@ categories = ["network-programming"]
 edition = "2021"
 
 [dependencies]
-futures = { workspace = true }
-lair_keystore_api = { workspace = true }
-once_cell = { workspace = true }
-parking_lot = { workspace = true }
 rand = { workspace = true }
-rand-utf8 = { workspace = true }
-rcgen = { workspace = true }
-ring = { workspace = true }
-rustls = { workspace = true }
-rustls-native-certs = { workspace = true }
-rustls-pemfile = { workspace = true }
+sbd-e2e-crypto-client = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
-socket2 = { workspace = true }
-tokio = { workspace = true, features = [ "full" ] }
-tokio-rustls = { workspace = true }
-tokio-tungstenite = { workspace = true }
+tokio = { workspace = true, features = [ "sync" ] }
 tracing = { workspace = true }
 tx5-core = { workspace = true }
-url = { workspace = true }
-
-[target.'cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))'.dependencies]
-webpki-roots = { workspace = true }
 
 [dev-dependencies]
-rand = { workspace = true }
-rand-utf8 = { workspace = true }
-sodoken = { workspace = true }
+tokio = { workspace = true, features = [ "full" ] }
 tracing-subscriber = { workspace = true }
-tx5-signal-srv = { workspace = true }

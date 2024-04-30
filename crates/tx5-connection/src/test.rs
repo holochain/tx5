@@ -63,3 +63,38 @@ async fn sanity() {
     c2.send(b"world".to_vec()).await.unwrap();
     assert_eq!(b"world", c1.recv().await.unwrap().as_slice());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn framed_sanity() {
+    let srv = TestSrv::new().await;
+
+    let hub1 = srv.hub().await;
+    let pk1 = hub1.pub_key().clone();
+
+    let hub2 = srv.hub().await;
+    let pk2 = hub2.pub_key().clone();
+
+    let (c1, c2) = tokio::join!(
+        async {
+            let c1 = hub1.connect(pk2).await.unwrap();
+            let limit =
+                Arc::new(tokio::sync::Semaphore::new(512 * 1024 * 1024));
+            let c1 = Tx5ConnFramed::new(c1, limit).await.unwrap();
+            c1
+        },
+        async {
+            let c2 = hub2.accept().await.unwrap();
+            assert_eq!(&pk1, c2.pub_key());
+            let limit =
+                Arc::new(tokio::sync::Semaphore::new(512 * 1024 * 1024));
+            let c2 = Tx5ConnFramed::new(c2, limit).await.unwrap();
+            c2
+        },
+    );
+
+    c1.send(b"hello".to_vec()).await.unwrap();
+    assert_eq!(b"hello", c2.recv().await.unwrap().as_slice());
+
+    c2.send(b"world".to_vec()).await.unwrap();
+    assert_eq!(b"world", c1.recv().await.unwrap().as_slice());
+}

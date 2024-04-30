@@ -3533,6 +3533,8 @@ dependencies = [
 name = "tx5-connection"
 version = "0.0.9-alpha"
 dependencies = [
+ "bit_field",
+ "rand",
  "sbd-server",
  "tokio",
  "tracing",

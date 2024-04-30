@@ -11,11 +11,11 @@ categories = ["network-programming"]
 edition = "2021"
 
 [dependencies]
-tokio = { workspace = true, features = [ "sync" ] }
+tokio = { workspace = true, features = [ "full" ] }
 tracing = { workspace = true }
 tx5-core = { workspace = true }
 tx5-signal = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = [ "full" ] }
 tracing-subscriber = { workspace = true }
+sbd-server = { workspace = true }

@@ -8,6 +8,14 @@ pub struct SignalConnection {
     client: Arc<sbd_e2e_crypto_client::SbdClientCrypto>,
 }
 
+impl std::ops::Deref for SignalConnection {
+    type Target = sbd_e2e_crypto_client::SbdClientCrypto;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
 impl SignalConnection {
     /// Establish a new client connection to a tx5 signal server.
     pub async fn connect(url: &str, config: Arc<SignalConfig>) -> Result<Self> {
@@ -18,13 +26,8 @@ impl SignalConnection {
         Ok(Self { client })
     }
 
-    /// The public key identifier of *this* client node.
-    pub fn pub_key(&self) -> &PubKey {
-        self.client.pub_key()
-    }
-
     /// Receive a message from a remote peer.
-    pub async fn recv(&self) -> Option<(PubKey, SignalMessage)> {
+    pub async fn recv_message(&self) -> Option<(PubKey, SignalMessage)> {
         loop {
             let (pub_key, msg) = self.client.recv().await?;
             match SignalMessage::parse(msg) {
@@ -108,15 +111,5 @@ impl SignalConnection {
         let msg = SignalMessage::message(message)?;
         self.client.send(pub_key, &msg).await?;
         Ok(())
-    }
-
-    /// Close a connection to a specific peer.
-    pub async fn close_peer(&self, pub_key: &PubKey) {
-        self.client.close_peer(pub_key).await;
-    }
-
-    /// Close the entire signal client connection.
-    pub async fn close(&self) {
-        self.client.close().await;
     }
 }

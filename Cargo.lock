@@ -2758,6 +2758,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sbd-server"
+version = "0.0.1-alpha"
+dependencies = [
+ "anstyle",
+ "base64 0.22.0",
+ "bytes",
+ "clap",
+ "ed25519-dalek",
+ "futures",
+ "rand",
+ "rustls 0.22.4",
+ "rustls-pemfile 2.1.2",
+ "slab",
+ "tokio",
+ "tokio-rustls 0.25.0",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3514,6 +3533,7 @@ dependencies = [
 name = "tx5-connection"
 version = "0.0.9-alpha"
 dependencies = [
+ "sbd-server",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4509,7 +4529,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "sbd-server"
-version = "0.0.1-alpha"

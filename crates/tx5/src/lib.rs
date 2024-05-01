@@ -22,15 +22,48 @@
 //! make sure the backend doesn't change out from under you, set
 //! no-default-features and explicitly enable the backend of your choice.
 
-#[cfg(any(
-    not(any(feature = "backend-go-pion", feature = "backend-webrtc-rs")),
-    all(feature = "backend-go-pion", feature = "backend-webrtc-rs"),
-))]
-compile_error!("Must specify exactly 1 webrtc backend");
+use std::collections::HashMap;
+use std::io::{Error, Result};
+use std::sync::{Arc, Mutex, Weak};
 
-pub use tx5_core::Tx5InitConfig;
+pub use tx5_connection::tx5_signal::PubKey;
 
-pub(crate) mod proto;
+mod url;
+pub use url::*;
+
+/// Dynamic future type.
+pub type BoxFuture<'lt, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'lt + Send>>;
+
+/// Callback in charge of sending preflight data if any.
+pub type PreflightSendCb = Arc<
+    dyn Fn(&PeerUrl) -> BoxFuture<'static, Result<Vec<u8>>>
+        + 'static
+        + Send
+        + Sync,
+>;
+
+/// Callback in charge of validating preflight data if any.
+pub type PreflightCheckCb = Arc<
+    dyn Fn(&PeerUrl, Vec<u8>) -> BoxFuture<'static, Result<()>>
+        + 'static
+        + Send
+        + Sync,
+>;
+
+mod config;
+pub use config::*;
+
+mod sig;
+pub(crate) use sig::*;
+
+mod peer;
+pub(crate) use peer::*;
+
+mod ep;
+pub use ep::*;
+
+//pub use tx5_core::Tx5InitConfig;
 
 // #[cfg(test)]
 // mod test_behavior;

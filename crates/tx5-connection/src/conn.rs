@@ -103,6 +103,7 @@ impl Tx5Connection {
                 match cmd {
                     ConnCmd::SigRecv(sig) => {
                         use tx5_signal::SignalMessage::*;
+                        #[allow(clippy::single_match)] // placeholder
                         match sig {
                             Message(msg) => {
                                 if msg_send.send(msg).await.is_err() {

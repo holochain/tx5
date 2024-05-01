@@ -122,8 +122,10 @@ fn validate(path: &std::path::PathBuf, hash: &str) -> Result<std::fs::File> {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(data);
-    let on_disk_hash =
-        base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
+
+    use base64::Engine;
+    let on_disk_hash = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(hasher.finalize());
 
     if on_disk_hash != hash {
         return Err(Error::err(format!("FileCheckHashMiss({path:?})")));
@@ -183,8 +185,10 @@ mod tests {
         use sha2::Digest;
         let mut hasher = sha2::Sha256::new();
         hasher.update(&data[..]);
-        let hash =
-            base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
+
+        use base64::Engine;
+        let hash = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(hasher.finalize());
 
         let mut task_list = Vec::new();
 

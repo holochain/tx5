@@ -10,12 +10,22 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 edition = "2021"
 
+[features]
+default = [ "backend-go-pion" ]
+
+# use the tx5-go-pion crate as the webrtc backend
+backend-go-pion = [ "dep:tx5-go-pion" ]
+
+# use the webrtc-rs crate as the webrtc backend
+backend-webrtc-rs = [ ]
+
 [dependencies]
 bit_field = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing = { workspace = true }
 tx5-core = { workspace = true }
 tx5-signal = { workspace = true }
+tx5-go-pion = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand = { workspace = true }

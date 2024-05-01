@@ -14,43 +14,19 @@ categories = ["network-programming"]
 default = [ "backend-go-pion" ]
 
 # use the tx5-go-pion crate as the webrtc backend
-backend-go-pion = [ "tx5-go-pion" ]
+backend-go-pion = [ "tx5-connection/backend-go-pion" ]
 
 # use the webrtc-rs crate as the webrtc backend
-backend-webrtc-rs = [ "webrtc" ]
+backend-webrtc-rs = [ "tx5-connection/backend-webrtc-rs" ]
 
 [dependencies]
-bit_field = { workspace = true }
-bytes = { workspace = true }
-futures = { workspace = true }
-influxive-otel-atomic-obs = { workspace = true }
-once_cell = { workspace = true }
-opentelemetry_api = { workspace = true }
-parking_lot = { workspace = true }
-rand = { workspace = true }
-rand-utf8 = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { workspace = true, features = [ "rt", "sync" ] }
-tracing = { workspace = true }
+base64 = { workspace = true }
+tokio = { workspace = true, features = [ "full" ] }
+tx5-connection = { workspace = true, default-features = false }
 tx5-core = { workspace = true }
-tx5-go-pion = { workspace = true, optional = true }
-tx5-signal = { workspace = true }
 url = { workspace = true }
-webrtc = { workspace = true, optional = true }
 
 [dev-dependencies]
-backtrace = { workspace = true }
-better-panic = { workspace = true }
-criterion = { workspace = true }
-influxive-child-svc = { workspace = true }
-influxive = { workspace = true }
-openssl-sys = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = [ "macros", "rt", "rt-multi-thread", "sync" ] }
-tracing-subscriber = { workspace = true }
-rand = { workspace = true }
-rand-utf8 = { workspace = true }
 
 [[bench]]
 name = "throughput"

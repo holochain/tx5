@@ -42,7 +42,7 @@ pub mod deps {
     pub use tx5_core::deps::*;
 }
 
-pub use tx5_core::{Error, ErrorExt, Id, Result};
+pub use tx5_core::{Error, ErrorExt, Result};
 
 use once_cell::sync::Lazy;
 use std::sync::Arc;

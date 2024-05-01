@@ -77,17 +77,13 @@ impl Tx5ConnectionHub {
         let cmd_send2 = cmd_send.clone();
         let weak_client = Arc::downgrade(&client);
         task_list.push(tokio::task::spawn(async move {
-            loop {
-                if let Some(client) = weak_client.upgrade() {
-                    if let Some((pub_key, msg)) = client.recv_message().await {
-                        if cmd_send2
-                            .send(HubCmd::CliRecv { pub_key, msg })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    } else {
+            while let Some(client) = weak_client.upgrade() {
+                if let Some((pub_key, msg)) = client.recv_message().await {
+                    if cmd_send2
+                        .send(HubCmd::CliRecv { pub_key, msg })
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 } else {

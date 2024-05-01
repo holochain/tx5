@@ -44,13 +44,9 @@ impl Tx5ConnFramed {
         let cmd_send2 = cmd_send.clone();
         let weak_conn = Arc::downgrade(&conn);
         let recv_task = tokio::task::spawn(async move {
-            loop {
-                if let Some(conn) = weak_conn.upgrade() {
-                    if let Some(msg) = conn.recv().await {
-                        if cmd_send2.send(Cmd::Recv(msg)).await.is_err() {
-                            break;
-                        }
-                    } else {
+            while let Some(conn) = weak_conn.upgrade() {
+                if let Some(msg) = conn.recv().await {
+                    if cmd_send2.send(Cmd::Recv(msg)).await.is_err() {
                         break;
                     }
                 } else {

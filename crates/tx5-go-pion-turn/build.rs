@@ -163,8 +163,10 @@ fn go_build(path: &std::path::Path) {
     let data = std::fs::read(path).expect("failed to read generated exe");
     let mut hasher = sha2::Sha256::new();
     hasher.update(data);
-    let hash =
-        base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
+
+    use base64::Engine;
+    let hash = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(hasher.finalize());
 
     let mut exe_hash = out_dir;
     exe_hash.push("exe_hash.rs");

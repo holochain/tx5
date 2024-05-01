@@ -22,11 +22,14 @@ backend-webrtc-rs = [ "tx5-connection/backend-webrtc-rs" ]
 [dependencies]
 base64 = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
+tracing = { workspace = true }
 tx5-connection = { workspace = true, default-features = false }
 tx5-core = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+sbd-server = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "throughput"

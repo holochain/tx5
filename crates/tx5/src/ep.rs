@@ -36,6 +36,32 @@ pub enum EndpointEvent {
     },
 }
 
+impl std::fmt::Debug for EndpointEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ListeningAddressOpen { local_url } => {
+                f.debug_struct("ListeningAddressOpen").field("peer_url", local_url).finish()
+            }
+            Self::ListeningAddressClosed { local_url } => {
+                f.debug_struct("ListeningAddressClosed")
+                    .field("peer_url", local_url)
+                    .finish()
+            }
+            Self::Connected { peer_url } => {
+                f.debug_struct("Connected").field("peer_url", peer_url).finish()
+            }
+            Self::Disconnected { peer_url } => {
+                f.debug_struct("Disconnected")
+                    .field("peer_url", peer_url)
+                    .finish()
+            }
+            Self::Message { peer_url, .. } => {
+                f.debug_struct("Message").field("peer_url", peer_url).finish()
+            }
+        }
+    }
+}
+
 pub(crate) struct EpInner {
     this: Weak<Mutex<EpInner>>,
     config: Arc<Config>,

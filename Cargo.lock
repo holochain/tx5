@@ -2608,7 +2608,10 @@ name = "tx5"
 version = "0.0.9-alpha"
 dependencies = [
  "base64 0.22.1",
+ "sbd-server",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "tx5-connection",
  "tx5-core",
  "url",

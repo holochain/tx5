@@ -63,6 +63,9 @@ pub(crate) use peer::*;
 mod ep;
 pub use ep::*;
 
+#[cfg(test)]
+mod test;
+
 //pub use tx5_core::Tx5InitConfig;
 
 // #[cfg(test)]

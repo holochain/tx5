@@ -24,16 +24,20 @@ fn parse_url<R: AsRef<str>>(r: R) -> Result<(String, Option<PubKey>)> {
                 if it.next().is_some() {
                     return Err(Error::other("ExtraPathInfo"));
                 }
-                use base64::Engine;
-                let dec = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(v)
-                    .map_err(Error::other)?;
+                if v.is_empty() {
+                    None
+                } else {
+                    use base64::Engine;
+                    let dec = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .decode(v)
+                        .map_err(Error::other)?;
 
-                if dec.len() != 32 {
-                    return Err(Error::other("InvalidPubKey"));
+                    if dec.len() != 32 {
+                        return Err(Error::other("InvalidPubKey"));
+                    }
+
+                    Some(PubKey(Arc::new(dec.try_into().unwrap())))
                 }
-
-                Some(PubKey(Arc::new(dec.try_into().unwrap())))
             }
         },
     };

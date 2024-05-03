@@ -2608,6 +2608,7 @@ name = "tx5"
 version = "0.0.9-alpha"
 dependencies = [
  "base64 0.22.1",
+ "futures",
  "sbd-server",
  "tokio",
  "tracing",
@@ -2738,6 +2739,7 @@ version = "0.0.9-alpha"
 dependencies = [
  "rand",
  "sbd-e2e-crypto-client",
+ "sbd-server",
  "serde_json",
  "tokio",
  "tracing",

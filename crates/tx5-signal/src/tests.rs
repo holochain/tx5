@@ -1,6 +1,4 @@
-/*
 use crate::*;
-use lair_keystore_api::prelude::*;
 use std::sync::Arc;
 
 fn init_tracing() {
@@ -14,248 +12,79 @@ fn init_tracing() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
-struct Test {
-    pub _keystore: lair_keystore_api::in_proc_keystore::InProcKeystore,
-    pub cli: cli::Cli,
+pub struct TestSrv {
+    server: sbd_server::SbdServer,
 }
 
-impl Test {
-    pub async fn new(
-        port: u16,
-    ) -> (Self, tokio::sync::mpsc::Receiver<SignalMsg>) {
-        let passphrase = sodoken::BufRead::new_no_lock(b"test-passphrase");
-        let keystore_config = PwHashLimits::Minimum
-            .with_exec(|| LairServerConfigInner::new("/", passphrase.clone()))
-            .await
-            .unwrap();
+impl TestSrv {
+    pub async fn new() -> Self {
+        let config = Arc::new(sbd_server::Config {
+            bind: vec!["127.0.0.1:0".to_string(), "[::1]:0".to_string()],
+            ..Default::default()
+        });
 
-        let keystore = PwHashLimits::Minimum
-            .with_exec(|| {
-                lair_keystore_api::in_proc_keystore::InProcKeystore::new(
-                    Arc::new(keystore_config),
-                    lair_keystore_api::mem_store::create_mem_store_factory(),
-                    passphrase,
-                )
-            })
-            .await
-            .unwrap();
+        let server = sbd_server::SbdServer::new(config).await.unwrap();
 
-        let lair_client = keystore.new_client().await.unwrap();
-        let tag: Arc<str> =
-            rand_utf8::rand_utf8(&mut rand::thread_rng(), 32).into();
+        Self { server }
+    }
 
-        lair_client
-            .new_seed(tag.clone(), None, false)
-            .await
-            .unwrap();
-
-        let (cli, msg_recv) = cli::Cli::builder()
-            .with_lair_client(lair_client)
-            .with_lair_tag(tag)
-            .with_url(
-                url::Url::parse(&format!("ws://localhost:{}/tx5-ws", port))
-                    .unwrap(),
+    pub async fn cli(&self) -> (SignalConnection, MsgRecv) {
+        for addr in self.server.bind_addrs() {
+            if let Ok(r) = SignalConnection::connect(
+                &format!("ws://{addr}"),
+                Arc::new(SignalConfig {
+                    listener: true,
+                    allow_plain_text: true,
+                    ..Default::default()
+                }),
             )
-            .build()
             .await
-            .unwrap();
-
-        (
-            Self {
-                _keystore: keystore,
-                cli,
-            },
-            msg_recv,
-        )
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn server_stop_restart() {
-    init_tracing();
-
-    let mut task = None;
-    let mut port = None;
-
-    for p in 31181..31191 {
-        let mut srv_config = tx5_signal_srv::Config::default();
-        srv_config.port = p;
-        srv_config.ice_servers = serde_json::json!([]);
-
-        if let Ok((srv_hnd, _, _)) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config).await
-        {
-            task = Some(srv_hnd);
-            port = Some(p);
-            break;
+            {
+                return r;
+            }
         }
+
+        panic!()
     }
-
-    let mut task = task.unwrap();
-    let port = port.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    // test setup
-    let (cli1, mut rcv1) = Test::new(port).await;
-    let id1 = *cli1.cli.local_id();
-
-    cli1.cli
-        .ice(id1, serde_json::json!({"test": "ice"}))
-        .await
-        .unwrap();
-
-    let msg = rcv1.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, Some(SignalMsg::Ice { .. })));
-
-    // drop server
-    drop(task);
-
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    // make sure it now errors
-
-    // first just trigger an update
-    let _ = cli1.cli.ice(id1, serde_json::json!({"test": "ice"})).await;
-
-    // now our receive ends
-    let msg = rcv1.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, None));
-
-    // now we get errors on send
-    cli1.cli
-        .ice(id1, serde_json::json!({"test": "ice"}))
-        .await
-        .unwrap_err();
-
-    // new server on same port
-
-    let mut srv_config = tx5_signal_srv::Config::default();
-    srv_config.port = port;
-    srv_config.ice_servers = serde_json::json!([]);
-
-    let (srv_hnd, _, _) = tx5_signal_srv::exec_tx5_signal_srv(srv_config)
-        .await
-        .unwrap();
-
-    task = srv_hnd;
-
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    // test continuation
-    let (cli1, mut rcv1) = Test::new(port).await;
-    let id1 = *cli1.cli.local_id();
-
-    cli1.cli
-        .ice(id1, serde_json::json!({"test": "ice"}))
-        .await
-        .unwrap();
-
-    let msg = rcv1.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, Some(SignalMsg::Ice { .. })));
-
-    // cleanup
-    drop(task);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn wrong_version() {
-    init_tracing();
-
-    let mut srv_config = tx5_signal_srv::Config::default();
-    srv_config.port = 0;
-    srv_config.ice_servers = serde_json::json!([]);
-    srv_config.demo = true;
-
-    let (_srv_hnd, addr_list, _) =
-        tx5_signal_srv::exec_tx5_signal_srv(srv_config)
-            .await
-            .unwrap();
-
-    let srv_port = addr_list.get(0).unwrap().port();
-
-    tracing::info!(%srv_port);
-
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-    tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v1/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.unwrap();
-    assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{srv_port}/tx5-ws/v0/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sanity() {
     init_tracing();
 
-    let mut srv_config = tx5_signal_srv::Config::default();
-    srv_config.port = 0;
-    srv_config.ice_servers = serde_json::json!([]);
-    srv_config.demo = true;
+    let test = TestSrv::new().await;
 
-    let (_srv_hnd, addr_list, _) =
-        tx5_signal_srv::exec_tx5_signal_srv(srv_config)
-            .await
-            .unwrap();
+    let (cli1, mut rcv1) = test.cli().await;
 
-    let srv_port = addr_list.get(0).unwrap().port();
+    let cli1_pk = cli1.pub_key().clone();
+    tracing::info!(?cli1_pk);
 
-    tracing::info!(%srv_port);
+    let (cli2, mut rcv2) = test.cli().await;
 
-    // TODO remove
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let cli2_pk = cli2.pub_key().clone();
+    tracing::info!(?cli2_pk);
 
-    sanity_inner(srv_port).await;
+    cli1.send_offer(&cli2_pk, serde_json::json!({ "type": "offer" }))
+        .await
+        .unwrap();
+
+    let (_, msg) = rcv2.recv_message().await.unwrap();
+    tracing::info!(?msg);
+    assert!(matches!(msg, SignalMessage::Offer { .. }));
+
+    cli2.send_answer(&cli1_pk, serde_json::json!({ "type": "answer" }))
+        .await
+        .unwrap();
+
+    let (_, msg) = rcv1.recv_message().await.unwrap();
+    tracing::info!(?msg);
+    assert!(matches!(msg, SignalMessage::Answer { .. }));
+
+    cli1.send_ice(&cli2_pk, serde_json::json!({ "type": "ice" }))
+        .await
+        .unwrap();
+
+    let (_, msg) = rcv2.recv_message().await.unwrap();
+    tracing::info!(?msg);
+    assert!(matches!(msg, SignalMessage::Ice { .. }));
 }
-
-async fn sanity_inner(srv_port: u16) {
-    let (cli1, mut rcv1) = Test::new(srv_port).await;
-
-    let cli1_pk = *cli1.cli.local_id();
-    tracing::info!(%cli1_pk);
-
-    let (cli2, mut rcv2) = Test::new(srv_port).await;
-
-    let cli2_pk = *cli2.cli.local_id();
-    tracing::info!(%cli2_pk);
-
-    cli1.cli
-        .offer(cli2_pk, serde_json::json!({ "type": "offer" }))
-        .await
-        .unwrap();
-
-    let msg = rcv2.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, Some(SignalMsg::Offer { .. })));
-
-    cli2.cli
-        .answer(cli1_pk, serde_json::json!({ "type": "answer" }))
-        .await
-        .unwrap();
-
-    let msg = rcv1.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, Some(SignalMsg::Answer { .. })));
-
-    cli1.cli
-        .ice(cli2_pk, serde_json::json!({ "type": "ice" }))
-        .await
-        .unwrap();
-
-    let msg = rcv2.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, Some(SignalMsg::Ice { .. })));
-
-    cli1.cli.demo();
-
-    let msg = rcv1.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, Some(SignalMsg::Demo { .. })));
-
-    let msg = rcv2.recv().await;
-    tracing::info!(?msg);
-    assert!(matches!(msg, Some(SignalMsg::Demo { .. })));
-}
-*/

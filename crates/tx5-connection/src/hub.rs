@@ -1,6 +1,28 @@
 pub use super::*;
 
-type HubMap = HashMap<PubKey, (Weak<Conn>, tokio::sync::mpsc::Sender<ConnCmd>)>;
+type HubMapT =
+    HashMap<PubKey, (Weak<Conn>, Arc<tokio::sync::mpsc::Sender<ConnCmd>>)>;
+struct HubMap(HubMapT);
+
+impl std::ops::Deref for HubMap {
+    type Target = HubMapT;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for HubMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl HubMap {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+}
 
 async fn hub_map_assert(
     pub_key: PubKey,
@@ -9,14 +31,15 @@ async fn hub_map_assert(
 ) -> Result<(
     Option<ConnRecv>,
     Arc<Conn>,
-    tokio::sync::mpsc::Sender<ConnCmd>,
+    Arc<tokio::sync::mpsc::Sender<ConnCmd>>,
 )> {
     let mut found_during_prune = None;
 
     map.retain(|_, c| {
-        if let Some(f) = c.0.upgrade() {
-            if f.pub_key() == &pub_key {
-                found_during_prune = Some((f, c.1.clone()));
+        if let Some(conn) = c.0.upgrade() {
+            let cmd_send = c.1.clone();
+            if conn.pub_key() == &pub_key {
+                found_during_prune = Some((conn, cmd_send));
             }
             true
         } else {
@@ -42,7 +65,7 @@ async fn hub_map_assert(
     Ok((Some(recv), conn, cmd_send))
 }
 
-enum HubCmd {
+pub(crate) enum HubCmd {
     CliRecv {
         pub_key: PubKey,
         msg: tx5_signal::SignalMessage,
@@ -92,6 +115,8 @@ impl Hub {
             tx5_signal::SignalConnection::connect(url, config).await?;
         let client = Arc::new(client);
 
+        tracing::debug!(%url, pub_key = ?client.pub_key(), "hub connected");
+
         let mut task_list = Vec::new();
 
         let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
@@ -113,6 +138,8 @@ impl Hub {
 
         let (conn_send, conn_recv) = tokio::sync::mpsc::channel(32);
         let weak_client = Arc::downgrade(&client);
+        let url = url.to_string();
+        let pub_key = client.pub_key().clone();
         task_list.push(tokio::task::spawn(async move {
             let mut map = HubMap::new();
             while let Some(cmd) = cmd_recv.recv().await {
@@ -159,6 +186,8 @@ impl Hub {
             if let Some(client) = weak_client.upgrade() {
                 client.close().await;
             }
+
+            tracing::debug!(%url, ?pub_key, "hub close");
         }));
 
         Ok((

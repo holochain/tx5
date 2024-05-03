@@ -19,5 +19,6 @@ tracing = { workspace = true }
 tx5-core = { workspace = true }
 
 [dev-dependencies]
+sbd-server = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing-subscriber = { workspace = true }

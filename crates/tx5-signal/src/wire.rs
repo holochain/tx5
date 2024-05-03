@@ -35,6 +35,21 @@ pub enum SignalMessage {
     Unknown,
 }
 
+impl std::fmt::Debug for SignalMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HandshakeReq(_) => f.write_str("HandshakeReq"),
+            Self::HandshakeRes(_) => f.write_str("HandshakeRes"),
+            Self::OfferReq => f.write_str("OfferReq"),
+            Self::Offer(_) => f.write_str("Offer"),
+            Self::Answer(_) => f.write_str("Answer"),
+            Self::Ice(_) => f.write_str("Ice"),
+            Self::Message(_) => f.write_str("Message"),
+            Self::Unknown => f.write_str("Unknown"),
+        }
+    }
+}
+
 impl SignalMessage {
     /// Initiate a handshake with a peer.
     pub(crate) fn handshake_req() -> ([u8; 32], Vec<u8>) {

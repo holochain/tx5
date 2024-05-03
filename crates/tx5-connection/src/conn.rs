@@ -2,6 +2,8 @@ use super::*;
 
 pub(crate) enum ConnCmd {
     SigRecv(tx5_signal::SignalMessage),
+    #[allow(dead_code)]
+    Close,
 }
 
 /// Receive messages from a tx5 connection.
@@ -32,12 +34,13 @@ impl Conn {
     pub(crate) fn priv_new(
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
-    ) -> (Arc<Self>, ConnRecv, tokio::sync::mpsc::Sender<ConnCmd>) {
+    ) -> (Arc<Self>, ConnRecv, Arc<tokio::sync::mpsc::Sender<ConnCmd>>) {
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
 
         let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
         let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
+        let cmd_send = Arc::new(cmd_send);
 
         let ready2 = ready.clone();
         let client2 = client.clone();
@@ -84,6 +87,11 @@ impl Conn {
                                     }
                                 }
                             }
+                            ConnCmd::Close => {
+                                return Err(Error::other(
+                                    "close during handshake",
+                                ))
+                            }
                         }
                         if got_peer_res && sent_our_res {
                             break;
@@ -121,6 +129,7 @@ impl Conn {
                             _ => (),
                         }
                     }
+                    ConnCmd::Close => break,
                 }
             }
         });

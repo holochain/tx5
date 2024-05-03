@@ -3,7 +3,7 @@ use crate::*;
 struct TestEp {
     ep: Arc<Endpoint>,
     task: tokio::task::JoinHandle<()>,
-    recv: tokio::sync::mpsc::UnboundedReceiver<(PeerUrl, Vec<u8>)>,
+    recv: Option<tokio::sync::mpsc::UnboundedReceiver<(PeerUrl, Vec<u8>)>>,
     peer_url: Arc<Mutex<PeerUrl>>,
 }
 
@@ -47,6 +47,17 @@ impl TestEp {
                                 let _ = s.send(());
                             }
                         }
+                        EndpointEvent::Disconnected { peer_url } => {
+                            if send
+                                .send((
+                                    peer_url,
+                                    b"<<<test-disconnect>>>".to_vec(),
+                                ))
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
                         EndpointEvent::Message { peer_url, message } => {
                             if send.send((peer_url, message)).is_err() {
                                 break;
@@ -65,7 +76,7 @@ impl TestEp {
         Self {
             ep,
             task,
-            recv,
+            recv: Some(recv),
             peer_url,
         }
     }
@@ -75,7 +86,16 @@ impl TestEp {
     }
 
     async fn recv(&mut self) -> Option<(PeerUrl, Vec<u8>)> {
-        self.recv.recv().await
+        match self.recv.as_mut() {
+            Some(recv) => recv.recv().await,
+            None => None,
+        }
+    }
+
+    fn take_recv(
+        &mut self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<(PeerUrl, Vec<u8>)>> {
+        self.recv.take()
     }
 }
 
@@ -132,6 +152,7 @@ impl Test {
 
         let config = Arc::new(sbd_server::Config {
             bind,
+            disable_rate_limiting: true,
             ..Default::default()
         });
 
@@ -262,7 +283,6 @@ async fn ep_drop() {
     assert_eq!(&b"world"[..], &msg);
 }
 
-/*
 /// Test negotiation (polite / impolite node logic) by setting up a lot
 /// of nodes and having them all try to make connections to each other
 /// at the same time and see if we get all the messages.
@@ -272,9 +292,11 @@ async fn ep_negotiation() {
 
     let mut url_list = Vec::new();
     let mut ep_list = Vec::new();
-    let mut recv_list = Vec::new();
 
-    let config = Arc::new(Config3::default());
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
     let test = Test::new().await;
 
     let mut fut_list = Vec::new();
@@ -282,10 +304,9 @@ async fn ep_negotiation() {
         fut_list.push(test.ep(config.clone()));
     }
 
-    for (url, ep, recv) in futures::future::join_all(fut_list).await {
-        url_list.push(url);
+    for ep in futures::future::join_all(fut_list).await {
+        url_list.push(ep.peer_url());
         ep_list.push(ep);
-        recv_list.push(recv);
     }
 
     let first_url = url_list.get(0).unwrap().clone();
@@ -295,7 +316,7 @@ async fn ep_negotiation() {
     let mut fut_list = Vec::new();
     for (i, ep) in ep_list.iter_mut().enumerate() {
         if i != 0 {
-            fut_list.push(ep.send(first_url.clone(), b"hello"));
+            fut_list.push(ep.send(first_url.clone(), b"hello".to_vec()));
         }
     }
 
@@ -308,7 +329,7 @@ async fn ep_negotiation() {
     for (i, ep) in ep_list.iter_mut().enumerate() {
         for (j, url) in url_list.iter().enumerate() {
             if i != j {
-                fut_list.push(ep.send(url.clone(), b"world"));
+                fut_list.push(ep.send(url.clone(), b"world".to_vec()));
             }
         }
     }
@@ -320,10 +341,15 @@ async fn ep_negotiation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ep_messages_contiguous() {
-    let config = Arc::new(Config3::default());
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
     let test = Test::new().await;
 
-    let (dest_url, _dest_ep, mut dest_recv) = test.ep(config.clone()).await;
+    let mut ep = test.ep(config.clone()).await;
+    let dest_url = ep.peer_url();
+    let mut dest_recv = ep.take_recv().unwrap();
 
     const NODE_COUNT: usize = 3; // 3 nodes
     const SEND_COUNT: usize = 10; // sending 10 messages
@@ -338,10 +364,8 @@ async fn ep_messages_contiguous() {
         let dest_url = dest_url.clone();
         let start = start.clone();
         let stop = stop.clone();
-        let (_url, ep, _recv) = test.ep(config.clone()).await;
+        let ep = test.ep(config.clone()).await;
         all_tasks.push(tokio::task::spawn(async move {
-            let _recv = _recv;
-
             let mut messages = Vec::new();
 
             for msg_id in 0..SEND_COUNT {
@@ -357,13 +381,22 @@ async fn ep_messages_contiguous() {
                 messages.push(chunks);
             }
 
+            println!("{node_id} start wait");
             start.wait().await;
 
+            let mut msg_id = 0;
+
+            println!("{node_id} writing");
             for message in messages {
-                ep.send(dest_url.clone(), &message).await.unwrap();
+                msg_id += 1;
+
+                println!("{node_id} writing message {msg_id}");
+                ep.send(dest_url.clone(), message).await.unwrap();
             }
 
+            println!("{node_id} stop wait");
             stop.wait().await;
+            println!("{node_id} done");
         }));
     }
 
@@ -372,33 +405,28 @@ async fn ep_messages_contiguous() {
     let mut count = 0;
 
     loop {
-        let res = dest_recv.recv().await.unwrap();
-        match res {
-            Ep3Event::Message {
-                peer_url, message, ..
-            } => {
-                assert_eq!(((16 * 1024) - 4) * CHUNK_COUNT, message.len());
-                for chunk_id in 0..CHUNK_COUNT {
-                    let s = ((16 * 1024) - 4) * chunk_id;
-                    let s = String::from_utf8_lossy(&message[s..s + 32]);
-                    let mut s = s.split("-");
-                    let s = s.next().unwrap();
-                    let mut parts = s.split(':');
-                    let node = parts.next().unwrap().parse().unwrap();
-                    let msg = parts.next().unwrap().parse().unwrap();
-                    let chunk = parts.next().unwrap().parse().unwrap();
-                    sort.entry(peer_url.to_string())
-                        .or_default()
-                        .push((node, msg, chunk));
-                }
+        let (peer_url, message) = dest_recv.recv().await.unwrap();
 
-                count += 1;
+        assert_eq!(((16 * 1024) - 4) * CHUNK_COUNT, message.len());
 
-                if count >= NODE_COUNT * SEND_COUNT {
-                    break;
-                }
-            }
-            _ => (),
+        for chunk_id in 0..CHUNK_COUNT {
+            let s = ((16 * 1024) - 4) * chunk_id;
+            let s = String::from_utf8_lossy(&message[s..s + 32]);
+            let mut s = s.split("-");
+            let s = s.next().unwrap();
+            let mut parts = s.split(':');
+            let node = parts.next().unwrap().parse().unwrap();
+            let msg = parts.next().unwrap().parse().unwrap();
+            let chunk = parts.next().unwrap().parse().unwrap();
+            sort.entry(peer_url.to_string())
+                .or_default()
+                .push((node, msg, chunk));
+        }
+
+        count += 1;
+
+        if count >= NODE_COUNT * SEND_COUNT {
+            break;
         }
     }
 
@@ -441,14 +469,10 @@ async fn ep_messages_contiguous() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ep_preflight_happy() {
-    use rand::Rng;
-
     let did_send = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let did_valid = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut config = Config3::default();
 
-    let mut preflight = vec![0; 17 * 1024];
-    rand::thread_rng().fill(&mut preflight[..]);
+    let preflight = vec![0xdb; 17 * 1024];
 
     let pf_send: PreflightSendCb = {
         let did_send = did_send.clone();
@@ -469,29 +493,22 @@ async fn ep_preflight_happy() {
         })
     };
 
-    config.preflight = Some((pf_send, pf_check));
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        preflight: Some((pf_send, pf_check)),
+        ..Default::default()
+    });
 
-    let config = Arc::new(config);
     let test = Test::new().await;
 
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
+    let ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config).await;
+    let mut ep2_recv = ep2.take_recv().unwrap();
 
-    ep1.send(cli_url2, b"hello").await.unwrap();
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (_, message) = ep2_recv.recv().await.unwrap();
+    assert_eq!(&b"hello"[..], &message);
 
     assert_eq!(true, did_send.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(true, did_valid.load(std::sync::atomic::Ordering::SeqCst));
@@ -499,180 +516,57 @@ async fn ep_preflight_happy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ep_close_connection() {
-    let config = Arc::new(Config3::default());
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
     let test = Test::new().await;
 
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
+    let ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config).await;
+    let mut ep2_recv = ep2.take_recv().unwrap();
 
-    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
+    let (_, message) = ep2_recv.recv().await.unwrap();
+    assert_eq!(&b"hello"[..], &message);
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        _ => panic!(),
-    }
+    ep1.close(&ep2.peer_url());
 
-    ep1.close(cli_url2).unwrap();
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Disconnected { .. } => (),
-        e => panic!("Actually got event {:?}", e),
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn ep_ban_after_connected_outgoing_side() {
-    let config = Arc::new(Config3::default());
-    let test = Test::new().await;
-
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
-
-    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        _ => panic!(),
-    }
-
-    ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_secs(10));
-
-    assert!(ep1.send(cli_url2, b"hello").await.is_err());
-
-    let stats = ep1.get_stats().await;
-
-    println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn ep_recon_after_ban() {
-    let config = Arc::new(Config3::default());
-    let test = Test::new().await;
-
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config).await;
-
-    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        oth => panic!("{oth:?}"),
-    }
-
-    ep1.ban(cli_url2.id().unwrap(), std::time::Duration::from_millis(10));
-
-    assert!(ep1.send(cli_url2.clone(), b"hello").await.is_err());
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Disconnected { .. } => (),
-        oth => panic!("{oth:?}"),
-    }
-
-    tokio::time::sleep(std::time::Duration::from_millis(15)).await;
-
-    ep1.send(cli_url2.clone(), b"world").await.unwrap();
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        oth => panic!("{oth:?}"),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"world"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (url, message) = ep2_recv.recv().await.unwrap();
+    assert_eq!(ep2.peer_url(), url);
+    assert_eq!(&b"<<<test-disconnect>>>"[..], &message);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ep_broadcast_happy() {
-    let config = Arc::new(Config3::default());
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
     let test = Test::new().await;
 
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, _ep2, mut ep2_recv) = test.ep(config.clone()).await;
-    let (cli_url3, _ep3, mut ep3_recv) = test.ep(config).await;
+    let ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config.clone()).await;
+    let mut ep2_recv = ep2.take_recv().unwrap();
+    let mut ep3 = test.ep(config).await;
+    let mut ep3_recv = ep3.take_recv().unwrap();
 
-    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    ep1.send(cli_url3.clone(), b"hello").await.unwrap();
+    ep1.send(ep3.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
+    let (_, message) = ep2_recv.recv().await.unwrap();
+    assert_eq!(&b"hello"[..], &message);
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        _ => panic!(),
-    }
-
-    let res = ep3_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep3_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (_, message) = ep3_recv.recv().await.unwrap();
+    assert_eq!(&b"hello"[..], &message);
 
     ep1.broadcast(b"world").await;
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"world"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (_, message) = ep2_recv.recv().await.unwrap();
+    assert_eq!(&b"world"[..], &message);
 
-    let res = ep3_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"world"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (_, message) = ep3_recv.recv().await.unwrap();
+    assert_eq!(&b"world"[..], &message);
 }
-*/

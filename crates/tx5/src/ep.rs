@@ -106,8 +106,8 @@ impl EpInner {
             .clone()
     }
 
-    pub fn drop_peer(&mut self, peer: Arc<Peer>) {
-        self.peer_map.retain(|_, p| !Arc::ptr_eq(p, &peer))
+    pub fn drop_peer_url(&mut self, peer_url: &PeerUrl) {
+        self.peer_map.remove(peer_url);
     }
 
     pub fn connect_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
@@ -194,6 +194,12 @@ impl Endpoint {
     /// You probably only want to call this once.
     pub fn listen(&self, sig_url: SigUrl) {
         let _ = self.inner.lock().unwrap().assert_sig(sig_url, true);
+    }
+
+    /// Request that the peer connection identified by the given `peer_url`
+    /// is closed.
+    pub fn close(&self, peer_url: &PeerUrl) {
+        self.inner.lock().unwrap().drop_peer_url(peer_url);
     }
 
     /// Send data to a remote on this tx5 endpoint.

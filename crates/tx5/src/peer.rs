@@ -26,7 +26,7 @@ impl Peer {
         peer_url: PeerUrl,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ) -> Arc<Self> {
-        Arc::new_cyclic(|this| {
+        Arc::new_cyclic(|_this| {
             let wait = Arc::new(tokio::sync::Semaphore::new(0));
             let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
 
@@ -34,7 +34,6 @@ impl Peer {
                 config,
                 recv_limit,
                 ep,
-                this.clone(),
                 peer_url,
                 evt_send,
                 ready.clone(),
@@ -53,7 +52,7 @@ impl Peer {
         conn_recv: ConnRecv,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ) -> Arc<Self> {
-        Arc::new_cyclic(|this| {
+        Arc::new_cyclic(|_this| {
             let wait = Arc::new(tokio::sync::Semaphore::new(0));
             let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
 
@@ -61,7 +60,6 @@ impl Peer {
                 config,
                 recv_limit,
                 ep,
-                this.clone(),
                 Some((conn, conn_recv)),
                 peer_url,
                 evt_send,
@@ -94,7 +92,6 @@ async fn connect(
     config: Arc<Config>,
     recv_limit: Arc<tokio::sync::Semaphore>,
     ep: Weak<Mutex<EpInner>>,
-    this: Weak<Peer>,
     peer_url: PeerUrl,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ready: Arc<Mutex<MaybeReady>>,
@@ -120,24 +117,30 @@ async fn connect(
         None
     };
 
-    task(
-        config, recv_limit, ep, this, conn, peer_url, evt_send, ready,
-    )
-    .await;
+    task(config, recv_limit, ep, conn, peer_url, evt_send, ready).await;
 }
 
 struct DropPeer {
     ep: Weak<Mutex<EpInner>>,
-    peer: Weak<Peer>,
+    peer_url: PeerUrl,
+    evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
 }
 
 impl Drop for DropPeer {
     fn drop(&mut self) {
+        tracing::debug!(?self.peer_url, "peer closed");
+
         if let Some(ep_inner) = self.ep.upgrade() {
-            if let Some(peer) = self.peer.upgrade() {
-                ep_inner.lock().unwrap().drop_peer(peer);
-            }
+            ep_inner.lock().unwrap().drop_peer_url(&self.peer_url);
         }
+
+        let evt_send = self.evt_send.clone();
+        let peer_url = self.peer_url.clone();
+        tokio::task::spawn(async move {
+            let _ = evt_send
+                .send(EndpointEvent::Disconnected { peer_url })
+                .await;
+        });
     }
 }
 
@@ -146,13 +149,16 @@ async fn task(
     config: Arc<Config>,
     recv_limit: Arc<tokio::sync::Semaphore>,
     ep: Weak<Mutex<EpInner>>,
-    this: Weak<Peer>,
     conn: Option<(Arc<Conn>, ConnRecv)>,
     peer_url: PeerUrl,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ready: Arc<Mutex<MaybeReady>>,
 ) {
-    let _drop = DropPeer { ep, peer: this };
+    let _drop = DropPeer {
+        ep,
+        peer_url: peer_url.clone(),
+        evt_send: evt_send.clone(),
+    };
 
     let (conn, conn_recv) = match conn {
         None => return,
@@ -166,6 +172,34 @@ async fn task(
             Ok(conn) => conn,
             Err(_) => return,
         };
+
+    if let Some((pf_send, pf_check)) = &config.preflight {
+        let pf_data = match pf_send(&peer_url).await {
+            Ok(pf_data) => pf_data,
+            Err(err) => {
+                tracing::debug!(?err, "preflight get send error");
+                return;
+            }
+        };
+
+        if let Err(err) = conn.send(pf_data).await {
+            tracing::debug!(?err, "preflight send error");
+            return;
+        }
+
+        let pf_data = match conn_recv.recv().await {
+            Some(pf_data) => pf_data,
+            None => {
+                tracing::debug!("closed awaiting preflight data");
+                return;
+            }
+        };
+
+        if let Err(err) = pf_check(&peer_url, pf_data).await {
+            tracing::debug!(?err, "preflight check error");
+            return;
+        }
+    }
 
     {
         let mut lock = ready.lock().unwrap();
@@ -194,14 +228,9 @@ async fn task(
             .await;
     }
 
-    // wait at the end to account for a delay before the next try
-    tokio::time::sleep(config.backoff_start).await;
-
     let _ = evt_send
         .send(EndpointEvent::Disconnected {
             peer_url: peer_url.clone(),
         })
         .await;
-
-    tracing::debug!(?peer_url, "peer closed");
 }

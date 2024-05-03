@@ -202,3 +202,82 @@ async fn framed_end_when_disconnected() {
     assert!(hub1.connect(pk2).await.is_err());
     assert!(hub2.connect(pk1).await.is_err());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_con_drop_disconnects() {
+    init_tracing();
+
+    let srv = TestSrv::new().await;
+
+    let (hub1, _hubr1) = srv.hub().await;
+    let pk1 = hub1.pub_key().clone();
+
+    let (hub2, mut hubr2) = srv.hub().await;
+    let pk2 = hub2.pub_key().clone();
+
+    println!("connect");
+    let (c1, mut r1) = hub1.connect(pk2.clone()).await.unwrap();
+    println!("accept");
+    let (c2, mut r2) = hubr2.accept().await.unwrap();
+
+    println!("await ready");
+    tokio::join!(c1.ready(), c2.ready());
+    println!("ready");
+
+    assert_eq!(&pk1, c2.pub_key());
+
+    c1.send(b"hello".to_vec()).await.unwrap();
+    assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());
+
+    c2.send(b"world".to_vec()).await.unwrap();
+    assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+
+    println!("drop c1");
+    drop(c1);
+
+    println!("check r1");
+    assert!(r1.recv().await.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn framed_con_drop_disconnects() {
+    init_tracing();
+
+    let srv = TestSrv::new().await;
+
+    let (hub1, _hubr1) = srv.hub().await;
+    let pk1 = hub1.pub_key().clone();
+
+    let (hub2, mut hubr2) = srv.hub().await;
+    let pk2 = hub2.pub_key().clone();
+
+    let ((c1, mut r1), (c2, mut r2)) = tokio::join!(
+        async {
+            let (c1, r2) = hub1.connect(pk2.clone()).await.unwrap();
+            let limit =
+                Arc::new(tokio::sync::Semaphore::new(512 * 1024 * 1024));
+            let f = FramedConn::new(c1, r2, limit).await.unwrap();
+            f
+        },
+        async {
+            let (c2, r2) = hubr2.accept().await.unwrap();
+            assert_eq!(&pk1, c2.pub_key());
+            let limit =
+                Arc::new(tokio::sync::Semaphore::new(512 * 1024 * 1024));
+            let f = FramedConn::new(c2, r2, limit).await.unwrap();
+            f
+        },
+    );
+
+    c1.send(b"hello".to_vec()).await.unwrap();
+    assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());
+
+    c2.send(b"world".to_vec()).await.unwrap();
+    assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+
+    println!("drop c1");
+    drop(c1);
+
+    println!("check r1");
+    assert!(r1.recv().await.is_none());
+}

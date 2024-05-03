@@ -1,5 +1,84 @@
 use crate::*;
 
+struct TestEp {
+    ep: Arc<Endpoint>,
+    task: tokio::task::JoinHandle<()>,
+    recv: tokio::sync::mpsc::UnboundedReceiver<(PeerUrl, Vec<u8>)>,
+    peer_url: Arc<Mutex<PeerUrl>>,
+}
+
+impl std::ops::Deref for TestEp {
+    type Target = Endpoint;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ep
+    }
+}
+
+impl Drop for TestEp {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl TestEp {
+    pub async fn new(ep: Endpoint) -> Self {
+        let ep = Arc::new(ep);
+        let (send, recv) = tokio::sync::mpsc::unbounded_channel();
+
+        let peer_url = Arc::new(Mutex::new(
+            PeerUrl::parse(
+                "ws://bad/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            )
+            .unwrap(),
+        ));
+        let (s, r) = tokio::sync::oneshot::channel();
+        let mut s = Some(s);
+
+        let weak = Arc::downgrade(&ep);
+        let peer_url2 = peer_url.clone();
+        let task = tokio::task::spawn(async move {
+            while let Some(ep) = weak.upgrade() {
+                if let Some(evt) = ep.recv().await {
+                    match evt {
+                        EndpointEvent::ListeningAddressOpen { local_url } => {
+                            *peer_url2.lock().unwrap() = local_url;
+                            if let Some(s) = s.take() {
+                                let _ = s.send(());
+                            }
+                        }
+                        EndpointEvent::Message { peer_url, message } => {
+                            if send.send((peer_url, message)).is_err() {
+                                break;
+                            }
+                        }
+                        _ => (),
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
+
+        r.await.unwrap();
+
+        Self {
+            ep,
+            task,
+            recv,
+            peer_url,
+        }
+    }
+
+    fn peer_url(&self) -> PeerUrl {
+        self.peer_url.lock().unwrap().clone()
+    }
+
+    async fn recv(&mut self) -> Option<(PeerUrl, Vec<u8>)> {
+        self.recv.recv().await
+    }
+}
+
 struct Test {
     sig_srv_hnd: Option<sbd_server::SbdServer>,
     sig_port: Option<u16>,
@@ -29,24 +108,13 @@ impl Test {
         this
     }
 
-    pub async fn ep(
-        &self,
-        config: Arc<Config>,
-    ) -> (PeerUrl, Endpoint) {
+    pub async fn ep(&self, config: Arc<Config>) -> TestEp {
         let sig_url = self.sig_url.clone().unwrap();
 
         let ep = Endpoint::new(config);
         ep.listen(sig_url);
 
-        loop {
-            match ep.recv().await {
-                None => panic!(),
-                Some(EndpointEvent::ListeningAddressOpen { local_url }) => {
-                    return (local_url, ep);
-                }
-                _ => (),
-            }
-        }
+        TestEp::new(ep).await
     }
 
     pub fn drop_sig(&mut self) {
@@ -60,10 +128,7 @@ impl Test {
 
         let port = self.sig_port.unwrap_or(0);
 
-        let bind = vec![
-            format!("127.0.0.1:{port}"),
-            format!("[::1]:{port}"),
-        ];
+        let bind = vec![format!("127.0.0.1:{port}"), format!("[::1]:{port}")];
 
         let config = Arc::new(sbd_server::Config {
             bind,
@@ -84,7 +149,7 @@ impl Test {
             }
         }
 
-        tracing::info!(%sig_url);
+        eprintln!("sig_url: {sig_url}");
         self.sig_url = Some(sig_url);
 
         self.sig_srv_hnd = Some(server);
@@ -92,68 +157,53 @@ impl Test {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_sanity() {
-    let config = Arc::new(Config::default());
+async fn ep_sanity() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
     let test = Test::new().await;
 
-    let (_cli_url1, ep1) = test.ep(config.clone()).await;
-    let (cli_url2, ep2) = test.ep(config).await;
+    let ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config).await;
 
-    ep1.send(cli_url2, b"hello".to_vec()).await.unwrap();
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let res = ep2.recv().await.unwrap();
-    match res {
-        EndpointEvent::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep2.recv().await.unwrap();
-    match res {
-        EndpointEvent::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        oth => panic!("{oth:?}"),
-    }
+    let (from, msg) = ep2.recv().await.unwrap();
+    assert_eq!(ep1.peer_url(), from);
+    assert_eq!(&b"hello"[..], &msg);
 
     //let stats = ep1.get_stats().await;
 
     //println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
 }
 
-/*
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_sig_down() {
+async fn ep_sig_down() {
     eprintln!("-- STARTUP --");
 
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-    let mut config = Config3::default();
-    config.timeout = TIMEOUT * 2;
-    config.backoff_start = std::time::Duration::from_millis(200);
-    config.backoff_max = std::time::Duration::from_millis(200);
+    let config = Config {
+        signal_allow_plain_text: true,
+        timeout: TIMEOUT * 2,
+        backoff_start: std::time::Duration::from_millis(2000),
+        backoff_max: std::time::Duration::from_millis(2000),
+        ..Default::default()
+    };
     let config = Arc::new(config);
     let mut test = Test::new().await;
 
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, ep2, mut ep2_recv) = test.ep(config.clone()).await;
+    let ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config.clone()).await;
 
     eprintln!("-- Establish Connection --");
 
-    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (from, msg) = ep2.recv().await.unwrap();
+    assert_eq!(ep1.peer_url(), from);
+    assert_eq!(&b"hello"[..], &msg);
 
     eprintln!("-- Drop Sig --");
 
@@ -161,23 +211,11 @@ async fn ep3_sig_down() {
 
     tokio::time::sleep(TIMEOUT).await;
 
-    // need to trigger another signal message so we know the connection is down
-    let (cli_url3, _ep3, _ep3_recv) = test.ep(config).await;
-
-    let (a, b) = tokio::join!(
-        ep1.send(cli_url3.clone(), b"hello",),
-        ep2.send(cli_url3, b"hello"),
-    );
-
-    a.unwrap_err();
-    b.unwrap_err();
-
-    tokio::time::sleep(TIMEOUT).await;
-
-    // now a send to cli_url2 should *also* fail
     eprintln!("-- Send Should Fail --");
 
-    ep1.send(cli_url2.clone(), b"hello").await.unwrap_err();
+    ep1.send(ep2.peer_url(), b"hello".to_vec())
+        .await
+        .unwrap_err();
 
     eprintln!("-- Restart Sig --");
 
@@ -187,82 +225,49 @@ async fn ep3_sig_down() {
 
     eprintln!("-- Send Should Succeed --");
 
-    ep1.send(cli_url2.clone(), b"hello").await.unwrap();
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Disconnected { .. } => (),
-        oth => panic!("{oth:?}"),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        oth => panic!("{oth:?}"),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        oth => panic!("{oth:?}"),
-    }
+    let (from, msg) = ep2.recv().await.unwrap();
+    assert_eq!(ep1.peer_url(), from);
+    assert_eq!(&b"hello"[..], &msg);
 
     eprintln!("-- Done --");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_drop() {
-    let config = Arc::new(Config3::default());
+async fn ep_drop() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
     let test = Test::new().await;
 
-    let (_cli_url1, ep1, _ep1_recv) = test.ep(config.clone()).await;
-    let (cli_url2, ep2, mut ep2_recv) = test.ep(config.clone()).await;
+    let ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config.clone()).await;
 
-    ep1.send(cli_url2, b"hello").await.unwrap();
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep2_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"hello"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (from, msg) = ep2.recv().await.unwrap();
+    assert_eq!(ep1.peer_url(), from);
+    assert_eq!(&b"hello"[..], &msg);
 
     drop(ep2);
-    drop(ep2_recv);
 
-    let (cli_url3, _ep3, mut ep3_recv) = test.ep(config).await;
+    let mut ep3 = test.ep(config).await;
 
-    ep1.send(cli_url3, b"world").await.unwrap();
+    ep1.send(ep3.peer_url(), b"world".to_vec()).await.unwrap();
 
-    let res = ep3_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Connected { .. } => (),
-        _ => panic!(),
-    }
-
-    let res = ep3_recv.recv().await.unwrap();
-    match res {
-        Ep3Event::Message { message, .. } => {
-            assert_eq!(&b"world"[..], &message);
-        }
-        _ => panic!(),
-    }
+    let (from, msg) = ep3.recv().await.unwrap();
+    assert_eq!(ep1.peer_url(), from);
+    assert_eq!(&b"world"[..], &msg);
 }
 
+/*
 /// Test negotiation (polite / impolite node logic) by setting up a lot
 /// of nodes and having them all try to make connections to each other
 /// at the same time and see if we get all the messages.
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_negotiation() {
+async fn ep_negotiation() {
     const NODE_COUNT: usize = 9;
 
     let mut url_list = Vec::new();
@@ -314,7 +319,7 @@ async fn ep3_negotiation() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_messages_contiguous() {
+async fn ep_messages_contiguous() {
     let config = Arc::new(Config3::default());
     let test = Test::new().await;
 
@@ -435,7 +440,7 @@ async fn ep3_messages_contiguous() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_preflight_happy() {
+async fn ep_preflight_happy() {
     use rand::Rng;
 
     let did_send = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -493,7 +498,7 @@ async fn ep3_preflight_happy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_close_connection() {
+async fn ep_close_connection() {
     let config = Arc::new(Config3::default());
     let test = Test::new().await;
 
@@ -526,7 +531,7 @@ async fn ep3_close_connection() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_ban_after_connected_outgoing_side() {
+async fn ep_ban_after_connected_outgoing_side() {
     let config = Arc::new(Config3::default());
     let test = Test::new().await;
 
@@ -559,7 +564,7 @@ async fn ep3_ban_after_connected_outgoing_side() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_recon_after_ban() {
+async fn ep_recon_after_ban() {
     let config = Arc::new(Config3::default());
     let test = Test::new().await;
 
@@ -612,7 +617,7 @@ async fn ep3_recon_after_ban() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ep3_broadcast_happy() {
+async fn ep_broadcast_happy() {
     let config = Arc::new(Config3::default());
     let test = Test::new().await;
 

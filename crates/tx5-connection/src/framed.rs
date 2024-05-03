@@ -7,32 +7,43 @@ enum Cmd {
         got_permit: tokio::sync::oneshot::Sender<()>,
     },
     RemotePermit(tokio::sync::OwnedSemaphorePermit, u32),
+    Close,
+}
+
+/// Receive a framed message on the connection.
+pub struct FramedConnRecv(tokio::sync::mpsc::Receiver<Vec<u8>>);
+
+impl FramedConnRecv {
+    /// Receive a framed message on the connection.
+    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+        self.0.recv().await
+    }
 }
 
 /// A framed wrapper that can send and receive larger messages than
 /// the base connection.
-pub struct Tx5ConnFramed {
+pub struct FramedConn {
     pub_key: PubKey,
-    conn: tokio::sync::Mutex<Arc<Tx5Connection>>,
+    conn: tokio::sync::Mutex<Arc<Conn>>,
     cmd_send: tokio::sync::mpsc::Sender<Cmd>,
     recv_task: tokio::task::JoinHandle<()>,
     cmd_task: tokio::task::JoinHandle<()>,
-    msg_recv: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Vec<u8>>>,
 }
 
-impl Drop for Tx5ConnFramed {
+impl Drop for FramedConn {
     fn drop(&mut self) {
         self.recv_task.abort();
         self.cmd_task.abort();
     }
 }
 
-impl Tx5ConnFramed {
+impl FramedConn {
     /// Construct a new framed wrapper around the base connection.
     pub async fn new(
-        conn: Arc<Tx5Connection>,
+        conn: Arc<Conn>,
+        mut conn_recv: ConnRecv,
         recv_limit: Arc<tokio::sync::Semaphore>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, FramedConnRecv)> {
         conn.ready().await;
 
         let (a, b, c, d) = crate::proto::PROTO_VER_2.encode()?;
@@ -42,17 +53,14 @@ impl Tx5ConnFramed {
         let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
 
         let cmd_send2 = cmd_send.clone();
-        let weak_conn = Arc::downgrade(&conn);
         let recv_task = tokio::task::spawn(async move {
-            while let Some(conn) = weak_conn.upgrade() {
-                if let Some(msg) = conn.recv().await {
-                    if cmd_send2.send(Cmd::Recv(msg)).await.is_err() {
-                        break;
-                    }
-                } else {
+            while let Some(msg) = conn_recv.recv().await {
+                if cmd_send2.send(Cmd::Recv(msg)).await.is_err() {
                     break;
                 }
             }
+
+            let _ = cmd_send2.send(Cmd::Close).await;
         });
 
         let cmd_send2 = cmd_send.clone();
@@ -125,30 +133,28 @@ impl Tx5ConnFramed {
                             break;
                         }
                     }
+                    Cmd::Close => break,
                 }
             }
         });
 
         let pub_key = conn.pub_key().clone();
 
-        Ok(Self {
-            pub_key,
-            conn: tokio::sync::Mutex::new(conn),
-            cmd_send,
-            recv_task,
-            cmd_task,
-            msg_recv: tokio::sync::Mutex::new(msg_recv),
-        })
+        Ok((
+            Self {
+                pub_key,
+                conn: tokio::sync::Mutex::new(conn),
+                cmd_send,
+                recv_task,
+                cmd_task,
+            },
+            FramedConnRecv(msg_recv),
+        ))
     }
 
     /// The pub key of the remote peer this is connected to.
     pub fn pub_key(&self) -> &PubKey {
         &self.pub_key
-    }
-
-    /// Receive a message on the connection.
-    pub async fn recv(&self) -> Option<Vec<u8>> {
-        self.msg_recv.lock().await.recv().await
     }
 
     /// Send a message on the connection.

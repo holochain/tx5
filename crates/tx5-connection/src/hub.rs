@@ -1,38 +1,45 @@
 pub use super::*;
 
-type HubMap = HashMap<PubKey, Weak<Tx5Connection>>;
+type HubMap = HashMap<PubKey, (Weak<Conn>, tokio::sync::mpsc::Sender<ConnCmd>)>;
 
 async fn hub_map_assert(
     pub_key: PubKey,
     map: &mut HubMap,
     client: &Arc<tx5_signal::SignalConnection>,
-) -> Result<(bool, Arc<Tx5Connection>)> {
+) -> Result<(
+    Option<ConnRecv>,
+    Arc<Conn>,
+    tokio::sync::mpsc::Sender<ConnCmd>,
+)> {
     let mut found_during_prune = None;
 
     map.retain(|_, c| {
-        if let Some(c) = c.upgrade() {
-            found_during_prune = Some(c.clone());
+        if let Some(f) = c.0.upgrade() {
+            if f.pub_key() == &pub_key {
+                found_during_prune = Some((f, c.1.clone()));
+            }
             true
         } else {
             false
         }
     });
 
-    if let Some(found) = found_during_prune {
-        return Ok((false, found));
+    if let Some((conn, cmd_send)) = found_during_prune {
+        return Ok((None, conn, cmd_send));
     }
 
     client.assert(&pub_key).await?;
 
     // we're connected to the peer, create a connection
 
-    let conn = Tx5Connection::priv_new(pub_key.clone(), Arc::downgrade(client));
+    let (conn, recv, cmd_send) =
+        Conn::priv_new(pub_key.clone(), Arc::downgrade(client));
 
     let weak_conn = Arc::downgrade(&conn);
 
-    map.insert(pub_key, weak_conn);
+    map.insert(pub_key, (weak_conn, cmd_send.clone()));
 
-    Ok((true, conn))
+    Ok((Some(recv), conn, cmd_send))
 }
 
 enum HubCmd {
@@ -42,20 +49,30 @@ enum HubCmd {
     },
     Connect {
         pub_key: PubKey,
-        resp: tokio::sync::oneshot::Sender<Result<Arc<Tx5Connection>>>,
+        resp:
+            tokio::sync::oneshot::Sender<Result<(Option<ConnRecv>, Arc<Conn>)>>,
     },
+    Close,
+}
+
+/// A stream of incoming p2p connections.
+pub struct HubRecv(tokio::sync::mpsc::Receiver<(Arc<Conn>, ConnRecv)>);
+
+impl HubRecv {
+    /// Receive an incoming p2p connection.
+    pub async fn accept(&mut self) -> Option<(Arc<Conn>, ConnRecv)> {
+        self.0.recv().await
+    }
 }
 
 /// A signal server connection from which we can establish tx5 connections.
-pub struct Tx5ConnectionHub {
+pub struct Hub {
     client: Arc<tx5_signal::SignalConnection>,
     cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
-    conn_recv:
-        tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Arc<Tx5Connection>>>,
     task_list: Vec<tokio::task::JoinHandle<()>>,
 }
 
-impl Drop for Tx5ConnectionHub {
+impl Drop for Hub {
     fn drop(&mut self) {
         for task in self.task_list.iter() {
             task.abort();
@@ -63,11 +80,16 @@ impl Drop for Tx5ConnectionHub {
     }
 }
 
-impl Tx5ConnectionHub {
-    /// Create a new Tx5ConnectionHub based off a connected tx5 signal client.
+impl Hub {
+    /// Create a new Hub based off a connected tx5 signal client.
     /// Note, if this is not a "listener" client,
     /// you do not need to ever call accept.
-    pub fn new(client: tx5_signal::SignalConnection) -> Self {
+    pub async fn new(
+        url: &str,
+        config: Arc<tx5_signal::SignalConfig>,
+    ) -> Result<(Self, HubRecv)> {
+        let (client, mut recv) =
+            tx5_signal::SignalConnection::connect(url, config).await?;
         let client = Arc::new(client);
 
         let mut task_list = Vec::new();
@@ -75,21 +97,18 @@ impl Tx5ConnectionHub {
         let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
 
         let cmd_send2 = cmd_send.clone();
-        let weak_client = Arc::downgrade(&client);
         task_list.push(tokio::task::spawn(async move {
-            while let Some(client) = weak_client.upgrade() {
-                if let Some((pub_key, msg)) = client.recv_message().await {
-                    if cmd_send2
-                        .send(HubCmd::CliRecv { pub_key, msg })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                } else {
+            while let Some((pub_key, msg)) = recv.recv_message().await {
+                if cmd_send2
+                    .send(HubCmd::CliRecv { pub_key, msg })
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
+
+            let _ = cmd_send2.send(HubCmd::Close).await;
         }));
 
         let (conn_send, conn_recv) = tokio::sync::mpsc::channel(32);
@@ -100,18 +119,23 @@ impl Tx5ConnectionHub {
                 match cmd {
                     HubCmd::CliRecv { pub_key, msg } => {
                         if let Some(client) = weak_client.upgrade() {
-                            let (did_create, conn) = match hub_map_assert(
+                            let (recv, conn, cmd_send) = match hub_map_assert(
                                 pub_key, &mut map, &client,
                             )
                             .await
                             {
-                                Err(_) => continue,
-                                Ok(conn) => conn,
+                                Err(err) => {
+                                    tracing::debug!(
+                                        ?err,
+                                        "failed to accept incoming connection"
+                                    );
+                                    continue;
+                                }
+                                Ok(r) => r,
                             };
-                            let _ =
-                                conn.cmd_send.send(ConnCmd::SigRecv(msg)).await;
-                            if did_create {
-                                let _ = conn_send.send(conn).await;
+                            let _ = cmd_send.send(ConnCmd::SigRecv(msg)).await;
+                            if let Some(recv) = recv {
+                                let _ = conn_send.send((conn, recv)).await;
                             }
                         } else {
                             break;
@@ -122,22 +146,29 @@ impl Tx5ConnectionHub {
                             let _ = resp.send(
                                 hub_map_assert(pub_key, &mut map, &client)
                                     .await
-                                    .map(|(_, conn)| conn),
+                                    .map(|(recv, conn, _)| (recv, conn)),
                             );
                         } else {
                             break;
                         }
                     }
+                    HubCmd::Close => break,
                 }
+            }
+
+            if let Some(client) = weak_client.upgrade() {
+                client.close().await;
             }
         }));
 
-        Self {
-            client,
-            cmd_send,
-            conn_recv: tokio::sync::Mutex::new(conn_recv),
-            task_list,
-        }
+        Ok((
+            Self {
+                client,
+                cmd_send,
+                task_list,
+            },
+            HubRecv(conn_recv),
+        ))
     }
 
     /// Get the pub_key used by this hub.
@@ -146,19 +177,20 @@ impl Tx5ConnectionHub {
     }
 
     /// Establish a connection to a remote peer.
-    /// Note, if there is already an open connection, this Arc will point
-    /// to that same connection instance.
-    pub async fn connect(&self, pub_key: PubKey) -> Result<Arc<Tx5Connection>> {
+    pub async fn connect(
+        &self,
+        pub_key: PubKey,
+    ) -> Result<(Arc<Conn>, ConnRecv)> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.cmd_send
             .send(HubCmd::Connect { pub_key, resp: s })
             .await
             .map_err(|_| Error::other("closed"))?;
-        r.await.map_err(|_| Error::other("closed"))?
-    }
-
-    /// Accept an incoming tx5 connection.
-    pub async fn accept(&self) -> Option<Arc<Tx5Connection>> {
-        self.conn_recv.lock().await.recv().await
+        let (recv, conn) = r.await.map_err(|_| Error::other("closed"))??;
+        if let Some(recv) = recv {
+            Ok((conn, recv))
+        } else {
+            Err(Error::other("already connected"))
+        }
     }
 }

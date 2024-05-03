@@ -4,27 +4,35 @@ pub(crate) enum ConnCmd {
     SigRecv(tx5_signal::SignalMessage),
 }
 
+/// Receive messages from a tx5 connection.
+pub struct ConnRecv(tokio::sync::mpsc::Receiver<Vec<u8>>);
+
+impl ConnRecv {
+    /// Receive up to 16KiB of message data.
+    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+        self.0.recv().await
+    }
+}
+
 /// A tx5 connection.
-pub struct Tx5Connection {
+pub struct Conn {
     ready: Arc<tokio::sync::Semaphore>,
     pub_key: PubKey,
     client: Weak<tx5_signal::SignalConnection>,
-    pub(crate) cmd_send: tokio::sync::mpsc::Sender<ConnCmd>,
-    msg_recv: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Vec<u8>>>,
     conn_task: tokio::task::JoinHandle<()>,
 }
 
-impl Drop for Tx5Connection {
+impl Drop for Conn {
     fn drop(&mut self) {
         self.conn_task.abort();
     }
 }
 
-impl Tx5Connection {
+impl Conn {
     pub(crate) fn priv_new(
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
-    ) -> Arc<Self> {
+    ) -> (Arc<Self>, ConnRecv, tokio::sync::mpsc::Sender<ConnCmd>) {
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
 
@@ -117,14 +125,16 @@ impl Tx5Connection {
             }
         });
 
-        Arc::new(Self {
-            ready,
-            pub_key,
-            client,
+        (
+            Arc::new(Self {
+                ready,
+                pub_key,
+                client,
+                conn_task,
+            }),
+            ConnRecv(msg_recv),
             cmd_send,
-            msg_recv: tokio::sync::Mutex::new(msg_recv),
-            conn_task,
-        })
+        )
     }
 
     /// Wait until this connection is ready to send / receive data.
@@ -145,10 +155,5 @@ impl Tx5Connection {
         } else {
             Err(Error::other("closed"))
         }
-    }
-
-    /// Receive up to 16KiB of message data.
-    pub async fn recv(&self) -> Option<Vec<u8>> {
-        self.msg_recv.lock().await.recv().await
     }
 }

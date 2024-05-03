@@ -7,7 +7,7 @@
 //! This is a thin wrapper around an SBD e2e crypto client.
 
 use std::io::{Error, Result};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 pub use sbd_e2e_crypto_client::PubKey;
 

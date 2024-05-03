@@ -39,25 +39,26 @@ pub enum EndpointEvent {
 impl std::fmt::Debug for EndpointEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ListeningAddressOpen { local_url } => {
-                f.debug_struct("ListeningAddressOpen").field("peer_url", local_url).finish()
-            }
-            Self::ListeningAddressClosed { local_url } => {
-                f.debug_struct("ListeningAddressClosed")
-                    .field("peer_url", local_url)
-                    .finish()
-            }
-            Self::Connected { peer_url } => {
-                f.debug_struct("Connected").field("peer_url", peer_url).finish()
-            }
-            Self::Disconnected { peer_url } => {
-                f.debug_struct("Disconnected")
-                    .field("peer_url", peer_url)
-                    .finish()
-            }
-            Self::Message { peer_url, .. } => {
-                f.debug_struct("Message").field("peer_url", peer_url).finish()
-            }
+            Self::ListeningAddressOpen { local_url } => f
+                .debug_struct("ListeningAddressOpen")
+                .field("peer_url", local_url)
+                .finish(),
+            Self::ListeningAddressClosed { local_url } => f
+                .debug_struct("ListeningAddressClosed")
+                .field("peer_url", local_url)
+                .finish(),
+            Self::Connected { peer_url } => f
+                .debug_struct("Connected")
+                .field("peer_url", peer_url)
+                .finish(),
+            Self::Disconnected { peer_url } => f
+                .debug_struct("Disconnected")
+                .field("peer_url", peer_url)
+                .finish(),
+            Self::Message { peer_url, .. } => f
+                .debug_struct("Message")
+                .field("peer_url", peer_url)
+                .finish(),
         }
     }
 }
@@ -73,7 +74,21 @@ pub(crate) struct EpInner {
 
 impl EpInner {
     pub fn drop_sig(&mut self, sig: Arc<Sig>) {
-        self.sig_map.retain(|_, s| !Arc::ptr_eq(s, &sig))
+        let sig_url = sig.sig_url.clone();
+        let listener = sig.listener;
+
+        let should_remove = match self.sig_map.get(&sig_url) {
+            Some(s) => Arc::ptr_eq(s, &sig),
+            None => false,
+        };
+
+        if should_remove {
+            self.sig_map.remove(&sig_url);
+
+            if listener {
+                self.assert_sig(sig_url, listener);
+            }
+        }
     }
 
     pub fn assert_sig(&mut self, sig_url: SigUrl, listener: bool) -> Arc<Sig> {
@@ -95,7 +110,7 @@ impl EpInner {
         self.peer_map.retain(|_, p| !Arc::ptr_eq(p, &peer))
     }
 
-    pub fn assert_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
+    pub fn connect_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
         if let Some(peer) = self.peer_map.get(&peer_url) {
             return peer.clone();
         }
@@ -114,10 +129,11 @@ impl EpInner {
             .clone()
     }
 
-    pub fn insert_peer(
+    pub fn accept_peer(
         &mut self,
         peer_url: PeerUrl,
-        peer: Arc<tx5_connection::Tx5Connection>,
+        conn: Arc<tx5_connection::Conn>,
+        conn_recv: tx5_connection::ConnRecv,
     ) {
         self.peer_map.entry(peer_url.clone()).or_insert_with(|| {
             Peer::new_accept(
@@ -125,7 +141,8 @@ impl EpInner {
                 self.recv_limit.clone(),
                 self.this.clone(),
                 peer_url,
-                peer,
+                conn,
+                conn_recv,
                 self.evt_send.clone(),
             )
         });
@@ -184,7 +201,7 @@ impl Endpoint {
     /// the data is handed off to our networking backend.
     pub async fn send(&self, peer_url: PeerUrl, data: Vec<u8>) -> Result<()> {
         tokio::time::timeout(self.config.timeout, async {
-            let peer = self.inner.lock().unwrap().assert_peer(peer_url);
+            let peer = self.inner.lock().unwrap().connect_peer(peer_url);
             peer.ready().await;
             peer.send(data).await
         })

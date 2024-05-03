@@ -4,11 +4,13 @@ use tx5_connection::tx5_signal::*;
 use tx5_connection::*;
 
 enum MaybeReady {
-    Ready(Arc<Tx5ConnectionHub>),
+    Ready(Arc<Hub>),
     Wait(Arc<tokio::sync::Semaphore>),
 }
 
 pub(crate) struct Sig {
+    pub(crate) listener: bool,
+    pub(crate) sig_url: SigUrl,
     ready: Arc<Mutex<MaybeReady>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -35,13 +37,18 @@ impl Sig {
                 ep,
                 this.clone(),
                 config,
-                sig_url,
+                sig_url.clone(),
                 listener,
                 evt_send,
                 ready.clone(),
             ));
 
-            Self { ready, task }
+            Self {
+                listener,
+                sig_url,
+                ready,
+                task,
+            }
         })
     }
 
@@ -54,7 +61,10 @@ impl Sig {
         let _ = w.acquire().await;
     }
 
-    pub async fn connect(&self, pub_key: PubKey) -> Result<Arc<Tx5Connection>> {
+    pub async fn connect(
+        &self,
+        pub_key: PubKey,
+    ) -> Result<(Arc<Conn>, ConnRecv)> {
         let hub = match &*self.ready.lock().unwrap() {
             MaybeReady::Ready(h) => h.clone(),
             _ => return Err(Error::other("not ready")),
@@ -67,7 +77,9 @@ async fn connect_loop(
     config: Arc<Config>,
     sig_url: SigUrl,
     listener: bool,
-) -> Tx5ConnectionHub {
+) -> (Hub, HubRecv) {
+    tracing::trace!(?config, ?sig_url, ?listener, "signal try connect");
+
     let mut wait = config.backoff_start;
 
     let signal_config = Arc::new(SignalConfig {
@@ -77,10 +89,17 @@ async fn connect_loop(
     });
 
     loop {
-        if let Ok(sig) =
-            SignalConnection::connect(&sig_url, signal_config.clone()).await
+        match tokio::time::timeout(
+            config.timeout,
+            Hub::new(&sig_url, signal_config.clone()),
+        )
+        .await
+        .map_err(Error::other)
         {
-            return Tx5ConnectionHub::new(sig);
+            Ok(Ok(r)) => return r,
+            Err(err) | Ok(Err(err)) => {
+                tracing::debug!(?err, "signal connect error")
+            }
         }
 
         wait *= 2;
@@ -120,12 +139,12 @@ async fn task(
         sig: this,
     };
 
-    let hub = connect_loop(config.clone(), sig_url.clone(), listener).await;
+    let (hub, mut hub_recv) =
+        connect_loop(config.clone(), sig_url.clone(), listener).await;
 
     let local_url = sig_url.to_peer(hub.pub_key().clone());
 
     let hub = Arc::new(hub);
-    let weak_hub = Arc::downgrade(&hub);
 
     {
         let mut lock = ready.lock().unwrap();
@@ -143,21 +162,25 @@ async fn task(
         })
         .await;
 
-    while let Some(hub) = weak_hub.upgrade() {
-        if let Some(conn) = hub.accept().await {
-            if let Some(ep) = ep.upgrade() {
-                let peer_url = sig_url.to_peer(conn.pub_key().clone());
-                ep.lock().unwrap().insert_peer(peer_url, conn);
-            }
-        } else {
-            break;
+    tracing::info!(?local_url, "signal connected");
+
+    while let Some((conn, conn_recv)) = hub_recv.accept().await {
+        if let Some(ep) = ep.upgrade() {
+            let peer_url = sig_url.to_peer(conn.pub_key().clone());
+            ep.lock().unwrap().accept_peer(peer_url, conn, conn_recv);
         }
     }
+
+    tracing::trace!(?local_url, "signal closing");
 
     // wait at the end to account for a delay before the next try
     tokio::time::sleep(config.backoff_start).await;
 
     let _ = evt_send
-        .send(EndpointEvent::ListeningAddressClosed { local_url })
+        .send(EndpointEvent::ListeningAddressClosed {
+            local_url: local_url.clone(),
+        })
         .await;
+
+    tracing::debug!(?local_url, "signal closed");
 }

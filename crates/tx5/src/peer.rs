@@ -3,7 +3,7 @@ use crate::*;
 use tx5_connection::*;
 
 enum MaybeReady {
-    Ready(Arc<Tx5ConnFramed>),
+    Ready(Arc<FramedConn>),
     Wait(Arc<tokio::sync::Semaphore>),
 }
 
@@ -49,7 +49,8 @@ impl Peer {
         recv_limit: Arc<tokio::sync::Semaphore>,
         ep: Weak<Mutex<EpInner>>,
         peer_url: PeerUrl,
-        conn: Arc<Tx5Connection>,
+        conn: Arc<Conn>,
+        conn_recv: ConnRecv,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| {
@@ -61,7 +62,7 @@ impl Peer {
                 recv_limit,
                 ep,
                 this.clone(),
-                conn,
+                Some((conn, conn_recv)),
                 peer_url,
                 evt_send,
                 ready.clone(),
@@ -98,36 +99,31 @@ async fn connect(
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ready: Arc<Mutex<MaybeReady>>,
 ) {
-    let conn = connect_loop(config.clone(), ep.clone(), peer_url.clone()).await;
+    tracing::trace!(?peer_url, "peer try connect");
+
+    let conn = if let Some(ep) = ep.upgrade() {
+        match tokio::time::timeout(config.timeout, async {
+            let sig = ep.lock().unwrap().assert_sig(peer_url.to_sig(), false);
+            sig.ready().await;
+            sig.connect(peer_url.pub_key().clone()).await
+        })
+        .await
+        .map_err(Error::other)
+        {
+            Ok(Ok(conn)) => Some(conn),
+            Err(err) | Ok(Err(err)) => {
+                tracing::debug!(?err, "peer connect error");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     task(
         config, recv_limit, ep, this, conn, peer_url, evt_send, ready,
     )
     .await;
-}
-
-async fn connect_loop(
-    config: Arc<Config>,
-    ep: Weak<Mutex<EpInner>>,
-    peer_url: PeerUrl,
-) -> Arc<Tx5Connection> {
-    let mut wait = config.backoff_start;
-
-    loop {
-        if let Some(ep) = ep.upgrade() {
-            let sig = ep.lock().unwrap().assert_sig(peer_url.to_sig(), false);
-            sig.ready().await;
-            if let Ok(conn) = sig.connect(peer_url.pub_key().clone()).await {
-                return conn;
-            }
-        }
-
-        wait *= 2;
-        if wait > config.backoff_max {
-            wait = config.backoff_max;
-        }
-        tokio::time::sleep(wait).await;
-    }
 }
 
 struct DropPeer {
@@ -151,28 +147,32 @@ async fn task(
     recv_limit: Arc<tokio::sync::Semaphore>,
     ep: Weak<Mutex<EpInner>>,
     this: Weak<Peer>,
-    conn: Arc<Tx5Connection>,
+    conn: Option<(Arc<Conn>, ConnRecv)>,
     peer_url: PeerUrl,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ready: Arc<Mutex<MaybeReady>>,
 ) {
     let _drop = DropPeer { ep, peer: this };
 
-    conn.ready().await;
-
-    let conn = match Tx5ConnFramed::new(conn, recv_limit).await {
-        Ok(conn) => Arc::new(conn),
-        Err(_) => return,
+    let (conn, conn_recv) = match conn {
+        None => return,
+        Some(conn) => conn,
     };
 
-    let weak_conn = Arc::downgrade(&conn);
+    conn.ready().await;
+
+    let (conn, mut conn_recv) =
+        match FramedConn::new(conn, conn_recv, recv_limit).await {
+            Ok(conn) => conn,
+            Err(_) => return,
+        };
 
     {
         let mut lock = ready.lock().unwrap();
         if let MaybeReady::Wait(w) = &*lock {
             w.close();
         }
-        *lock = MaybeReady::Ready(conn);
+        *lock = MaybeReady::Ready(Arc::new(conn));
     }
 
     drop(ready);
@@ -183,23 +183,25 @@ async fn task(
         })
         .await;
 
-    while let Some(conn) = weak_conn.upgrade() {
-        if let Some(msg) = conn.recv().await {
-            let _ = evt_send
-                .send(EndpointEvent::Message {
-                    peer_url: peer_url.clone(),
-                    message: msg,
-                })
-                .await;
-        } else {
-            break;
-        }
+    tracing::info!(?peer_url, "peer connected");
+
+    while let Some(msg) = conn_recv.recv().await {
+        let _ = evt_send
+            .send(EndpointEvent::Message {
+                peer_url: peer_url.clone(),
+                message: msg,
+            })
+            .await;
     }
 
     // wait at the end to account for a delay before the next try
     tokio::time::sleep(config.backoff_start).await;
 
     let _ = evt_send
-        .send(EndpointEvent::Disconnected { peer_url })
+        .send(EndpointEvent::Disconnected {
+            peer_url: peer_url.clone(),
+        })
         .await;
+
+    tracing::debug!(?peer_url, "peer closed");
 }

@@ -146,4 +146,11 @@ impl SignalConnection {
         self.client.send(pub_key, &msg).await?;
         Ok(())
     }
+
+    /// Keepalive.
+    pub async fn send_keepalive(&self, pub_key: &PubKey) -> Result<()> {
+        let msg = SignalMessage::keepalive();
+        self.client.send(pub_key, &msg).await?;
+        Ok(())
+    }
 }

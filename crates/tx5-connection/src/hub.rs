@@ -28,6 +28,7 @@ async fn hub_map_assert(
     pub_key: PubKey,
     map: &mut HubMap,
     client: &Arc<tx5_signal::SignalConnection>,
+    config: &Arc<tx5_signal::SignalConfig>,
 ) -> Result<(
     Option<ConnRecv>,
     Arc<Conn>,
@@ -56,7 +57,7 @@ async fn hub_map_assert(
     // we're connected to the peer, create a connection
 
     let (conn, recv, cmd_send) =
-        Conn::priv_new(pub_key.clone(), Arc::downgrade(client));
+        Conn::priv_new(pub_key.clone(), Arc::downgrade(client), config.clone());
 
     let weak_conn = Arc::downgrade(&conn);
 
@@ -112,7 +113,7 @@ impl Hub {
         config: Arc<tx5_signal::SignalConfig>,
     ) -> Result<(Self, HubRecv)> {
         let (client, mut recv) =
-            tx5_signal::SignalConnection::connect(url, config).await?;
+            tx5_signal::SignalConnection::connect(url, config.clone()).await?;
         let client = Arc::new(client);
 
         tracing::debug!(%url, pub_key = ?client.pub_key(), "hub connected");
@@ -147,7 +148,7 @@ impl Hub {
                     HubCmd::CliRecv { pub_key, msg } => {
                         if let Some(client) = weak_client.upgrade() {
                             let (recv, conn, cmd_send) = match hub_map_assert(
-                                pub_key, &mut map, &client,
+                                pub_key, &mut map, &client, &config,
                             )
                             .await
                             {
@@ -171,9 +172,11 @@ impl Hub {
                     HubCmd::Connect { pub_key, resp } => {
                         if let Some(client) = weak_client.upgrade() {
                             let _ = resp.send(
-                                hub_map_assert(pub_key, &mut map, &client)
-                                    .await
-                                    .map(|(recv, conn, _)| (recv, conn)),
+                                hub_map_assert(
+                                    pub_key, &mut map, &client, &config,
+                                )
+                                .await
+                                .map(|(recv, conn, _)| (recv, conn)),
                             );
                         } else {
                             break;

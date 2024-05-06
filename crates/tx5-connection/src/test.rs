@@ -34,6 +34,7 @@ impl TestSrv {
                 Arc::new(tx5_signal::SignalConfig {
                     listener: true,
                     allow_plain_text: true,
+                    max_idle: std::time::Duration::from_secs(1),
                     ..Default::default()
                 }),
             )
@@ -45,6 +46,51 @@ impl TestSrv {
 
         panic!()
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_timeout() {
+    init_tracing();
+
+    let srv = TestSrv::new().await;
+
+    let (hub1, _hubr1) = srv.hub().await;
+    let pk1 = hub1.pub_key().clone();
+
+    let (hub2, mut hubr2) = srv.hub().await;
+    let pk2 = hub2.pub_key().clone();
+
+    println!("connect");
+    let (c1, mut r1) = hub1.connect(pk2).await.unwrap();
+    c1.test_kill_keepalive_task();
+    println!("accept");
+    let (c2, mut r2) = hubr2.accept().await.unwrap();
+    c2.test_kill_keepalive_task();
+
+    assert_eq!(&pk1, c2.pub_key());
+
+    println!("await ready");
+    tokio::join!(c1.ready(), c2.ready());
+    println!("ready");
+
+    c1.send(b"hello".to_vec()).await.unwrap();
+    assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());
+
+    c2.send(b"world".to_vec()).await.unwrap();
+    assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+
+    match tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::join!(r1.recv(), r2.recv())
+    })
+    .await
+    {
+        Err(_) => panic!("recv failed to time out"),
+        Ok((None, None)) => (), // correct, they both exited
+        _ => panic!("unexpected success"),
+    }
+
+    assert!(c1.send(b"foo".to_vec()).await.is_err());
+    assert!(c2.send(b"bar".to_vec()).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]

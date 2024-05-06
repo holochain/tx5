@@ -85,6 +85,7 @@ async fn connect_loop(
     let signal_config = Arc::new(SignalConfig {
         listener,
         allow_plain_text: config.signal_allow_plain_text,
+        max_idle: config.timeout,
         ..Default::default()
     });
 

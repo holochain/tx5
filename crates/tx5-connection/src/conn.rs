@@ -22,18 +22,26 @@ pub struct Conn {
     pub_key: PubKey,
     client: Weak<tx5_signal::SignalConnection>,
     conn_task: tokio::task::JoinHandle<()>,
+    keepalive_task: tokio::task::JoinHandle<()>,
 }
 
 impl Drop for Conn {
     fn drop(&mut self) {
         self.conn_task.abort();
+        self.keepalive_task.abort();
     }
 }
 
 impl Conn {
+    #[cfg(test)]
+    pub(crate) fn test_kill_keepalive_task(&self) {
+        self.keepalive_task.abort();
+    }
+
     pub(crate) fn priv_new(
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
+        config: Arc<tx5_signal::SignalConfig>,
     ) -> (Arc<Self>, ConnRecv, Arc<tokio::sync::mpsc::Sender<ConnCmd>>) {
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
@@ -41,6 +49,23 @@ impl Conn {
         let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
         let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
         let cmd_send = Arc::new(cmd_send);
+
+        let keepalive_dur = config.max_idle / 2;
+        let client2 = client.clone();
+        let pub_key2 = pub_key.clone();
+        let keepalive_task = tokio::task::spawn(async move {
+            loop {
+                tokio::time::sleep(keepalive_dur).await;
+
+                if let Some(client) = client2.upgrade() {
+                    if client.send_keepalive(&pub_key2).await.is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
 
         let ready2 = ready.clone();
         let client2 = client.clone();
@@ -51,56 +76,51 @@ impl Conn {
                 None => return,
             };
 
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                async {
-                    let nonce = client.send_handshake_req(&pub_key2).await?;
+            match tokio::time::timeout(config.max_idle, async {
+                let nonce = client.send_handshake_req(&pub_key2).await?;
 
-                    let mut got_peer_res = false;
-                    let mut sent_our_res = false;
+                let mut got_peer_res = false;
+                let mut sent_our_res = false;
 
-                    while let Some(cmd) = cmd_recv.recv().await {
-                        match cmd {
-                            ConnCmd::SigRecv(sig) => {
-                                use tx5_signal::SignalMessage::*;
-                                match sig {
-                                    HandshakeReq(oth_nonce) => {
-                                        client
-                                            .send_handshake_res(
-                                                &pub_key2, oth_nonce,
-                                            )
-                                            .await?;
-                                        sent_our_res = true;
-                                    }
-                                    HandshakeRes(res_nonce) => {
-                                        if res_nonce != nonce {
-                                            return Err(Error::other(
-                                                "nonce mismatch",
-                                            ));
-                                        }
-                                        got_peer_res = true;
-                                    }
-                                    _ => {
+                while let Some(cmd) = cmd_recv.recv().await {
+                    match cmd {
+                        ConnCmd::SigRecv(sig) => {
+                            use tx5_signal::SignalMessage::*;
+                            match sig {
+                                HandshakeReq(oth_nonce) => {
+                                    client
+                                        .send_handshake_res(
+                                            &pub_key2, oth_nonce,
+                                        )
+                                        .await?;
+                                    sent_our_res = true;
+                                }
+                                HandshakeRes(res_nonce) => {
+                                    if res_nonce != nonce {
                                         return Err(Error::other(
-                                            "invalid message during handshake",
+                                            "nonce mismatch",
                                         ));
                                     }
+                                    got_peer_res = true;
+                                }
+                                _ => {
+                                    return Err(Error::other(
+                                        "invalid message during handshake",
+                                    ));
                                 }
                             }
-                            ConnCmd::Close => {
-                                return Err(Error::other(
-                                    "close during handshake",
-                                ))
-                            }
                         }
-                        if got_peer_res && sent_our_res {
-                            break;
+                        ConnCmd::Close => {
+                            return Err(Error::other("close during handshake"))
                         }
                     }
+                    if got_peer_res && sent_our_res {
+                        break;
+                    }
+                }
 
-                    Result::Ok(())
-                },
-            )
+                Result::Ok(())
+            })
             .await
             {
                 Err(_) | Ok(Err(_)) => {
@@ -115,12 +135,16 @@ impl Conn {
             // closing the semaphore causes all the acquire awaits to end
             ready2.close();
 
-            while let Some(cmd) = cmd_recv.recv().await {
+            while let Ok(Some(cmd)) =
+                tokio::time::timeout(config.max_idle, cmd_recv.recv()).await
+            {
                 match cmd {
                     ConnCmd::SigRecv(sig) => {
                         use tx5_signal::SignalMessage::*;
                         #[allow(clippy::single_match)] // placeholder
                         match sig {
+                            // invalid
+                            HandshakeReq(_) | HandshakeRes(_) => break,
                             Message(msg) => {
                                 if msg_send.send(msg).await.is_err() {
                                     break;
@@ -132,6 +156,13 @@ impl Conn {
                     ConnCmd::Close => break,
                 }
             }
+
+            // explicitly close the peer
+            if let Some(client) = client2.upgrade() {
+                client.close_peer(&pub_key2).await;
+            };
+
+            // the receiver side is closed because msg_send is dropped.
         });
 
         (
@@ -140,6 +171,7 @@ impl Conn {
                 pub_key,
                 client,
                 conn_task,
+                keepalive_task,
             }),
             ConnRecv(msg_recv),
             cmd_send,

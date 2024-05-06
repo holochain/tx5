@@ -7,6 +7,7 @@ const F_OFFR: &[u8] = b"offr";
 const F_ANSW: &[u8] = b"answ";
 const F_ICEM: &[u8] = b"icem";
 const F_FMSG: &[u8] = b"fmsg";
+const F_KEEP: &[u8] = b"keep";
 
 /// Parsed signal message.
 pub enum SignalMessage {
@@ -31,6 +32,9 @@ pub enum SignalMessage {
     /// Pre-webrtc and webrtc failure fallback communication message.
     Message(Vec<u8>),
 
+    /// Keepalive
+    Keepalive,
+
     /// Message type not understood by this client.
     Unknown,
 }
@@ -45,6 +49,7 @@ impl std::fmt::Debug for SignalMessage {
             Self::Answer(_) => f.write_str("Answer"),
             Self::Ice(_) => f.write_str("Ice"),
             Self::Message(_) => f.write_str("Message"),
+            Self::Keepalive => f.write_str("Keepalive"),
             Self::Unknown => f.write_str("Unknown"),
         }
     }
@@ -109,6 +114,11 @@ impl SignalMessage {
         Ok(msg)
     }
 
+    /// Keepalive.
+    pub(crate) fn keepalive() -> Vec<u8> {
+        F_KEEP.to_vec()
+    }
+
     /// Parse a raw received buffer into a signal message.
     pub(crate) fn parse(mut b: Vec<u8>) -> Result<Self> {
         if b.len() < 4 {
@@ -148,6 +158,7 @@ impl SignalMessage {
                 let _ = b.drain(..4);
                 Ok(SignalMessage::Message(b))
             }
+            F_KEEP => Ok(SignalMessage::Keepalive),
             _ => Ok(SignalMessage::Unknown),
         }
     }

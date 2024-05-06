@@ -248,9 +248,15 @@ async fn ep_sig_down() {
 
     ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
 
-    let (from, msg) = ep2.recv().await.unwrap();
-    assert_eq!(ep1.peer_url(), from);
-    assert_eq!(&b"hello"[..], &msg);
+    loop {
+        let (from, msg) = ep2.recv().await.unwrap();
+        if &msg[..3] == b"<<<" {
+            continue;
+        }
+        assert_eq!(ep1.peer_url(), from);
+        assert_eq!(&b"hello"[..], &msg);
+        break;
+    }
 
     eprintln!("-- Done --");
 }
@@ -518,6 +524,7 @@ async fn ep_preflight_happy() {
 async fn ep_close_connection() {
     let config = Arc::new(Config {
         signal_allow_plain_text: true,
+        timeout: std::time::Duration::from_secs(2),
         ..Default::default()
     });
     let test = Test::new().await;
@@ -534,7 +541,7 @@ async fn ep_close_connection() {
     ep1.close(&ep2.peer_url());
 
     let (url, message) = ep2_recv.recv().await.unwrap();
-    assert_eq!(ep2.peer_url(), url);
+    assert_eq!(ep1.peer_url(), url);
     assert_eq!(&b"<<<test-disconnect>>>"[..], &message);
 }
 

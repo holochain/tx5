@@ -99,13 +99,15 @@ async fn connect(
     tracing::trace!(?peer_url, "peer try connect");
 
     let conn = if let Some(ep) = ep.upgrade() {
-        match tokio::time::timeout(config.timeout, async {
+        let connect_fut = async {
             let sig = ep.lock().unwrap().assert_sig(peer_url.to_sig(), false);
             sig.ready().await;
             sig.connect(peer_url.pub_key().clone()).await
-        })
-        .await
-        .map_err(Error::other)
+        };
+
+        match tokio::time::timeout(config.timeout, connect_fut)
+            .await
+            .map_err(Error::other)
         {
             Ok(Ok(conn)) => Some(conn),
             Err(err) | Ok(Err(err)) => {

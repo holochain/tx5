@@ -76,7 +76,7 @@ impl Conn {
                 None => return,
             };
 
-            match tokio::time::timeout(config.max_idle, async {
+            let handshake_fut = async {
                 let nonce = client.send_handshake_req(&pub_key2).await?;
 
                 let mut got_peer_res = false;
@@ -120,9 +120,9 @@ impl Conn {
                 }
 
                 Result::Ok(())
-            })
-            .await
-            {
+            };
+
+            match tokio::time::timeout(config.max_idle, handshake_fut).await {
                 Err(_) | Ok(Err(_)) => {
                     client.close_peer(&pub_key2).await;
                     return;

@@ -73,6 +73,6 @@ webpki-roots = { version = "0.23.0" }
 webrtc = { version = "0.10.1" }
 zip = { version = "0.6.4", default-features = false, features = [ "deflate" ] }
 
-[patch.crates-io]
-sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
-sbd-server = { path = "../sbd/rust/sbd-server" }
+#[patch.crates-io]
+#sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
+#sbd-server = { path = "../sbd/rust/sbd-server" }

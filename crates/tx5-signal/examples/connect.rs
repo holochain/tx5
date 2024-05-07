@@ -15,13 +15,12 @@ fn init_tracing() {
 async fn main() {
     init_tracing();
 
-    /*
     let sig_url = std::env::args().collect::<Vec<_>>();
     let sig_url = sig_url.get(1).expect("expect sig_url");
-    let sig_url = url::Url::parse(sig_url).expect("expect sig_url to be a url");
 
     tracing::info!(%sig_url);
 
+    /*
     let (cli, _rcv) = tx5_signal::Cli::builder()
         .with_url(sig_url)
         .build()

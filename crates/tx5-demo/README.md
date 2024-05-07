@@ -28,8 +28,4 @@
 - [ tx5-signal ](https://github.com/holochain/tx5/tree/main/crates/tx5-signal) - [ ![crates.io](https://img.shields.io/crates/v/tx5-signal) ](https://crates.io/crates/tx5-signal) - Holochain webrtc signal client.
 - [ tx5-demo ](https://github.com/holochain/tx5/tree/main/crates/tx5-demo) - [ ![crates.io](https://img.shields.io/crates/v/tx5-demo) ](https://crates.io/crates/tx5-demo) - Demo showing off tx5 p2p connectivity.
 
-<!-- cargo-rdme start -->
-
-tx5-demo
-
-<!-- cargo-rdme end -->
+<!-- cargo-rdme -->

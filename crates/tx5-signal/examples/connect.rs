@@ -20,16 +20,17 @@ async fn main() {
 
     tracing::info!(%sig_url);
 
-    /*
-    let (cli, _rcv) = tx5_signal::Cli::builder()
-        .with_url(sig_url)
-        .build()
-        .await
-        .expect("expect can build tx5_signal::Cli");
+    let config = tx5_signal::SignalConfig {
+        allow_plain_text: true,
+        ..Default::default()
+    };
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&cli.ice_servers()).expect("expect json")
-    );
-    */
+    let (con, _recv) = tx5_signal::SignalConnection::connect(
+        &sig_url,
+        std::sync::Arc::new(config),
+    )
+    .await
+    .unwrap();
+
+    println!("Connected at: {sig_url}/{:?}", con.pub_key());
 }

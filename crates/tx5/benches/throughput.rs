@@ -1,66 +1,94 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use std::io::{Error, Result};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tx5::*;
-use tx5_core::EventRecv;
 
 const DATA: &[u8] = &[0xdb; 4096];
 
 struct Test {
-    _sig_srv_hnd: tx5_signal_srv::SrvHnd,
+    _server: sbd_server::SbdServer,
     cli_url1: PeerUrl,
-    ep1: Ep3,
-    ep_rcv1: EventRecv<Ep3Event>,
+    ep1: Endpoint,
+    ep_rcv1: EndpointRecv,
     cli_url2: PeerUrl,
-    ep2: Ep3,
-    ep_rcv2: EventRecv<Ep3Event>,
+    ep2: Endpoint,
+    ep_rcv2: EndpointRecv,
 }
 
 impl Test {
     pub async fn new() -> Self {
-        let mut srv_config = tx5_signal_srv::Config::default();
-        srv_config.port = 0;
-        srv_config.demo = true;
+        let bind = vec![format!("127.0.0.1:0"), format!("[::1]:0")];
 
-        let (_sig_srv_hnd, addr_list, _) =
-            tx5_signal_srv::exec_tx5_signal_srv(srv_config)
-                .await
-                .unwrap();
+        let config = Arc::new(sbd_server::Config {
+            bind,
+            disable_rate_limiting: true,
+            ..Default::default()
+        });
 
-        let sig_port = addr_list.get(0).unwrap().port();
+        let server = sbd_server::SbdServer::new(config).await.unwrap();
 
-        let sig_url =
-            Tx5Url::new(format!("ws://localhost:{sig_port}")).unwrap();
+        let sig_url = SigUrl::parse(&format!(
+            "ws://{}",
+            server.bind_addrs().get(0).unwrap()
+        ))
+        .unwrap();
 
-        let config = Arc::new(Config3::default());
+        let config = Arc::new(Config {
+            signal_allow_plain_text: true,
+            ..Default::default()
+        });
 
-        let (ep1, mut ep_rcv1) = Ep3::new(config.clone()).await;
-        let cli_url1 = ep1.listen(sig_url.clone()).await.unwrap();
-        let (ep2, mut ep_rcv2) = Ep3::new(config).await;
-        let cli_url2 = ep2.listen(sig_url).await.unwrap();
+        let (ep1, mut ep_rcv1) = Endpoint::new(config.clone());
+        ep1.listen(sig_url.clone());
+        let (ep2, mut ep_rcv2) = Endpoint::new(config);
+        ep2.listen(sig_url);
 
-        ep1.send(cli_url2.clone(), b"hello").await.unwrap();
+        let (cli_url1, cli_url2) = tokio::join!(
+            async {
+                loop {
+                    if let Some(EndpointEvent::ListeningAddressOpen {
+                        local_url,
+                    }) = ep_rcv1.recv().await
+                    {
+                        break local_url;
+                    }
+                }
+            },
+            async {
+                loop {
+                    if let Some(EndpointEvent::ListeningAddressOpen {
+                        local_url,
+                    }) = ep_rcv2.recv().await
+                    {
+                        break local_url;
+                    }
+                }
+            },
+        );
+
+        ep1.send(cli_url2.clone(), b"hello".to_vec()).await.unwrap();
         match ep_rcv2.recv().await {
-            Some(Ep3Event::Connected { .. }) => (),
+            Some(EndpointEvent::Connected { .. }) => (),
             oth => panic!("unexpected: {oth:?}"),
         }
         match ep_rcv2.recv().await {
-            Some(Ep3Event::Message { .. }) => (),
+            Some(EndpointEvent::Message { .. }) => (),
             oth => panic!("unexpected: {oth:?}"),
         }
 
-        ep2.send(cli_url1.clone(), b"world").await.unwrap();
+        ep2.send(cli_url1.clone(), b"world".to_vec()).await.unwrap();
         match ep_rcv1.recv().await {
-            Some(Ep3Event::Connected { .. }) => (),
+            Some(EndpointEvent::Connected { .. }) => (),
             oth => panic!("unexpected: {oth:?}"),
         }
         match ep_rcv1.recv().await {
-            Some(Ep3Event::Message { .. }) => (),
+            Some(EndpointEvent::Message { .. }) => (),
             oth => panic!("unexpected: {oth:?}"),
         }
 
         Self {
-            _sig_srv_hnd,
+            _server: server,
             cli_url1,
             ep1,
             ep_rcv1,
@@ -72,18 +100,18 @@ impl Test {
 
     pub async fn test(&mut self) {
         let Test {
-            _sig_srv_hnd,
             cli_url1,
             ep1,
             ep_rcv1,
             cli_url2,
             ep2,
             ep_rcv2,
+            ..
         } = self;
 
         let _ = tokio::try_join!(
-            ep1.send(cli_url2.clone(), DATA,),
-            ep2.send(cli_url1.clone(), DATA,),
+            ep1.send(cli_url2.clone(), DATA.to_vec()),
+            ep2.send(cli_url1.clone(), DATA.to_vec()),
             async { txerr(ep_rcv1.recv().await) },
             async { txerr(ep_rcv2.recv().await) },
         )
@@ -91,10 +119,9 @@ impl Test {
     }
 }
 
-fn txerr(v: Option<Ep3Event>) -> Result<()> {
+fn txerr(v: Option<EndpointEvent>) -> Result<()> {
     match v {
-        None => Err(Error::id("end")),
-        Some(Ep3Event::Error(err)) => Err(err.into()),
+        None => Err(Error::other("end")),
         _ => Ok(()),
     }
 }

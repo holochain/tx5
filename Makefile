@@ -1,6 +1,6 @@
 # tx5 Makefile
 
-.PHONY: all publish-all publish bump test static docs tools tool_rust tool_fmt tool_readme
+.PHONY: all publish-all publish bump test unit static lint dep fmt docs
 
 SHELL = /usr/bin/env sh -eu
 
@@ -73,20 +73,28 @@ bump:
 	fi
 	sed -i 's/^\(tx5[^=]*= { \|\)version = "[^"]*"/\1version = "$(ver)"/g' $$(find . -name Cargo.toml)
 
-test: static tools
+test: static unit
+
+unit:
 	cargo build --all-targets
 	RUST_BACKTRACE=1 RUST_LOG=error cargo test -- --nocapture
 
-static: docs tools
-	@#uhhh... better way to do this? depend on cargo-tree?
-	@if [ $$(grep 'name = "sodoken"' Cargo.lock | wc -l) != "1" ]; then echo "ERROR: multiple sodokens"; exit 127; fi
-	cargo fmt -- --check
-	cargo clippy -- -Dwarnings
-	(cd crates/tx5-go-pion-sys; go fmt)
-	(cd crates/tx5-go-pion-turn; go fmt)
+static: dep fmt lint docs
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
-docs: tools
+lint:
+	cargo clippy -- -Dwarnings
+
+dep:
+	@#uhhh... better way to do this? depend on cargo-tree?
+	@if [ $$(grep 'name = "sodoken"' Cargo.lock | wc -l) != "1" ]; then echo "ERROR: multiple sodokens"; exit 127; fi
+
+fmt:
+	cargo fmt -- --check
+	(cd crates/tx5-go-pion-sys; go fmt)
+	(cd crates/tx5-go-pion-turn; go fmt)
+
+docs:
 	cp -f crates/tx5-core/src/README.tpl README.md
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-core/README.md
 	cargo rdme --force -w tx5-core
@@ -106,46 +114,3 @@ docs: tools
 	cargo rdme --force -w tx5
 	cp -f crates/tx5-core/src/README.tpl crates/tx5-demo/README.md
 	cargo rdme --force -w tx5-demo
-
-tools: tool_rust tool_fmt tool_clippy tool_readme
-
-tool_rust:
-	@if ! rustup --version >/dev/null 2>&1; then \
-		echo "# Makefile # rustup not found, hopefully we're on stable"; \
-	fi;
-
-tool_fmt: tool_rust
-	@if ! (cargo fmt --version); \
-	then \
-		if rustup --version >/dev/null 2>&1; then \
-			echo "# Makefile # installing rustfmt with rustup"; \
-			rustup component add rustfmt; \
-		else \
-			echo "# Makefile # rustup not found, cannot install rustfmt"; \
-			exit 1; \
-		fi; \
-	else \
-		echo "# Makefile # rustfmt ok"; \
-	fi;
-
-tool_clippy: tool_rust
-	@if ! (cargo clippy --version); \
-	then \
-		if rustup --version >/dev/null 2>&1; then \
-			echo "# Makefile # installing clippy with rustup"; \
-			rustup component add clippy; \
-		else \
-			echo "# Makefile # rustup not found, cannot install clippy"; \
-			exit 1; \
-		fi; \
-	else \
-		echo "# Makefile # clippy ok"; \
-	fi;
-
-tool_readme: tool_rust
-	@if ! (cargo rdme --version); \
-	then \
-		cargo install cargo-rdme --version 1.4.0 --locked; \
-	else \
-		echo "# Makefile # readme ok"; \
-	fi;

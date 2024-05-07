@@ -61,6 +61,15 @@ impl Sig {
         let _ = w.acquire().await;
     }
 
+    pub fn get_peer_url(&self) -> Option<PeerUrl> {
+        match &*self.ready.lock().unwrap() {
+            MaybeReady::Wait(_) => None,
+            MaybeReady::Ready(hub) => {
+                Some(self.sig_url.to_peer(hub.pub_key().clone()))
+            }
+        }
+    }
+
     pub async fn connect(
         &self,
         pub_key: PubKey,

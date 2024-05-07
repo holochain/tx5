@@ -63,6 +63,8 @@ pub(crate) use peer::*;
 mod ep;
 pub use ep::*;
 
+pub mod stats;
+
 #[cfg(test)]
 mod test;
 

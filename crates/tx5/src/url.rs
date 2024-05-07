@@ -46,7 +46,7 @@ fn parse_url<R: AsRef<str>>(r: R) -> Result<(String, Option<PubKey>)> {
 }
 
 /// A signal server url.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SigUrl(Arc<String>);
 
 impl std::ops::Deref for SigUrl {
@@ -94,6 +94,28 @@ impl SigUrl {
 /// A peer connection url.
 #[derive(Clone)]
 pub struct PeerUrl(Arc<(String, PubKey)>);
+
+impl serde::Serialize for PeerUrl {
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0 .0.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PeerUrl {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let url: &'de str = serde::Deserialize::deserialize(deserializer)?;
+        PeerUrl::parse(url).map_err(serde::de::Error::custom)
+    }
+}
 
 impl std::ops::Deref for PeerUrl {
     type Target = str;

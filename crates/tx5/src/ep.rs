@@ -63,6 +63,16 @@ impl std::fmt::Debug for EndpointEvent {
     }
 }
 
+/// Receiver for endpoint events.
+pub struct EndpointRecv(tokio::sync::mpsc::Receiver<EndpointEvent>);
+
+impl EndpointRecv {
+    /// Receive an endpoint event.
+    pub async fn recv(&mut self) -> Option<EndpointEvent> {
+        self.0.recv().await
+    }
+}
+
 pub(crate) struct EpInner {
     this: Weak<Mutex<EpInner>>,
     config: Arc<Config>,
@@ -157,37 +167,33 @@ impl EpInner {
 pub struct Endpoint {
     config: Arc<Config>,
     inner: Arc<Mutex<EpInner>>,
-    evt_recv: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<EndpointEvent>>,
 }
 
 impl Endpoint {
     /// Construct a new tx5 endpoint.
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>) -> (Self, EndpointRecv) {
         let recv_limit = Arc::new(tokio::sync::Semaphore::new(
             config.incoming_message_bytes_max as usize,
         ));
 
         let (evt_send, evt_recv) = tokio::sync::mpsc::channel(32);
 
-        Self {
-            config: config.clone(),
-            inner: Arc::new_cyclic(|this| {
-                Mutex::new(EpInner {
-                    this: this.clone(),
-                    config,
-                    recv_limit,
-                    evt_send,
-                    sig_map: HashMap::default(),
-                    peer_map: HashMap::default(),
-                })
-            }),
-            evt_recv: tokio::sync::Mutex::new(evt_recv),
-        }
-    }
-
-    /// Receive an event from this tx5 endpoint.
-    pub async fn recv(&self) -> Option<EndpointEvent> {
-        self.evt_recv.lock().await.recv().await
+        (
+            Self {
+                config: config.clone(),
+                inner: Arc::new_cyclic(|this| {
+                    Mutex::new(EpInner {
+                        this: this.clone(),
+                        config,
+                        recv_limit,
+                        evt_send,
+                        sig_map: HashMap::default(),
+                        peer_map: HashMap::default(),
+                    })
+                }),
+            },
+            EndpointRecv(evt_recv),
+        )
     }
 
     /// Connect to a signal server as a listener, allowing incoming connections.
@@ -240,6 +246,43 @@ impl Endpoint {
 
         for task in all {
             let _ = task.await;
+        }
+    }
+
+    /// Get a list of listening addresses (PeerUrls) at which this endpoint
+    /// is currently reachable.
+    pub fn get_listening_addresses(&self) -> Vec<PeerUrl> {
+        let all_sigs = self
+            .inner
+            .lock()
+            .unwrap()
+            .sig_map
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        all_sigs
+            .into_iter()
+            .filter_map(|sig| {
+                if !sig.listener {
+                    return None;
+                }
+                sig.get_peer_url()
+            })
+            .collect()
+    }
+
+    /// Get stats.
+    pub fn get_stats(&self) -> stats::Stats {
+        #[cfg(feature = "backend-go-pion")]
+        let backend = stats::StatsBackend::BackendGoPion;
+        #[cfg(feature = "backend-webrtc-rs")]
+        let backend = stats::StatsBackend::BackendWebrtcRs;
+
+        stats::Stats {
+            backend,
+            peer_url_list: self.get_listening_addresses(),
+            connection_list: Vec::new(),
         }
     }
 }

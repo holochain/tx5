@@ -1,7 +1,7 @@
 use crate::*;
 
 struct TestEp {
-    ep: Arc<Endpoint>,
+    ep: Endpoint,
     task: tokio::task::JoinHandle<()>,
     recv: Option<tokio::sync::mpsc::UnboundedReceiver<(PeerUrl, Vec<u8>)>>,
     peer_url: Arc<Mutex<PeerUrl>>,
@@ -22,8 +22,7 @@ impl Drop for TestEp {
 }
 
 impl TestEp {
-    pub async fn new(ep: Endpoint) -> Self {
-        let ep = Arc::new(ep);
+    pub async fn new(ep: Endpoint, mut ep_recv: EndpointRecv) -> Self {
         let (send, recv) = tokio::sync::mpsc::unbounded_channel();
 
         let peer_url = Arc::new(Mutex::new(
@@ -35,38 +34,30 @@ impl TestEp {
         let (s, r) = tokio::sync::oneshot::channel();
         let mut s = Some(s);
 
-        let weak = Arc::downgrade(&ep);
         let peer_url2 = peer_url.clone();
         let task = tokio::task::spawn(async move {
-            while let Some(ep) = weak.upgrade() {
-                if let Some(evt) = ep.recv().await {
-                    match evt {
-                        EndpointEvent::ListeningAddressOpen { local_url } => {
-                            *peer_url2.lock().unwrap() = local_url;
-                            if let Some(s) = s.take() {
-                                let _ = s.send(());
-                            }
+            while let Some(evt) = ep_recv.recv().await {
+                match evt {
+                    EndpointEvent::ListeningAddressOpen { local_url } => {
+                        *peer_url2.lock().unwrap() = local_url;
+                        if let Some(s) = s.take() {
+                            let _ = s.send(());
                         }
-                        EndpointEvent::Disconnected { peer_url } => {
-                            if send
-                                .send((
-                                    peer_url,
-                                    b"<<<test-disconnect>>>".to_vec(),
-                                ))
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        EndpointEvent::Message { peer_url, message } => {
-                            if send.send((peer_url, message)).is_err() {
-                                break;
-                            }
-                        }
-                        _ => (),
                     }
-                } else {
-                    break;
+                    EndpointEvent::Disconnected { peer_url } => {
+                        if send
+                            .send((peer_url, b"<<<test-disconnect>>>".to_vec()))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    EndpointEvent::Message { peer_url, message } => {
+                        if send.send((peer_url, message)).is_err() {
+                            break;
+                        }
+                    }
+                    _ => (),
                 }
             }
         });
@@ -131,10 +122,10 @@ impl Test {
     pub async fn ep(&self, config: Arc<Config>) -> TestEp {
         let sig_url = self.sig_url.clone().unwrap();
 
-        let ep = Endpoint::new(config);
+        let (ep, ep_recv) = Endpoint::new(config);
         ep.listen(sig_url);
 
-        TestEp::new(ep).await
+        TestEp::new(ep, ep_recv).await
     }
 
     pub fn drop_sig(&mut self) {

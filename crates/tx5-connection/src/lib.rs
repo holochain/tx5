@@ -30,6 +30,9 @@
 ))]
 compile_error!("Must specify exactly 1 webrtc backend");
 
+#[cfg(feature = "backend-go-pion")]
+pub use tx5_go_pion::Tx5InitConfig;
+
 use std::collections::HashMap;
 use std::io::{Error, Result};
 use std::sync::{Arc, Weak};

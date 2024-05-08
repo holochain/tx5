@@ -22,6 +22,9 @@
 //! make sure the backend doesn't change out from under you, set
 //! no-default-features and explicitly enable the backend of your choice.
 
+#[cfg(feature = "backend-go-pion")]
+pub use tx5_connection::Tx5InitConfig;
+
 use std::collections::HashMap;
 use std::io::{Error, Result};
 use std::sync::{Arc, Mutex, Weak};

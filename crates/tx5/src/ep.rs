@@ -169,6 +169,14 @@ pub struct Endpoint {
     inner: Arc<Mutex<EpInner>>,
 }
 
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 impl Endpoint {
     /// Construct a new tx5 endpoint.
     pub fn new(config: Arc<Config>) -> (Self, EndpointRecv) {

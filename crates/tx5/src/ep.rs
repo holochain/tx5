@@ -96,12 +96,17 @@ impl EpInner {
             self.sig_map.remove(&sig_url);
 
             if listener {
-                self.assert_sig(sig_url, listener);
+                self.assert_sig(sig_url, listener, None);
             }
         }
     }
 
-    pub fn assert_sig(&mut self, sig_url: SigUrl, listener: bool) -> Arc<Sig> {
+    pub fn assert_sig(
+        &mut self,
+        sig_url: SigUrl,
+        listener: bool,
+        resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
+    ) -> Arc<Sig> {
         self.sig_map
             .entry(sig_url.clone())
             .or_insert_with(|| {
@@ -111,6 +116,7 @@ impl EpInner {
                     sig_url,
                     listener,
                     self.evt_send.clone(),
+                    resp_url,
                 )
             })
             .clone()
@@ -206,8 +212,17 @@ impl Endpoint {
 
     /// Connect to a signal server as a listener, allowing incoming connections.
     /// You probably only want to call this once.
-    pub fn listen(&self, sig_url: SigUrl) {
-        let _ = self.inner.lock().unwrap().assert_sig(sig_url, true);
+    pub async fn listen(&self, sig_url: SigUrl) -> Option<PeerUrl> {
+        let (s, r) = tokio::sync::oneshot::channel();
+        let _ = self
+            .inner
+            .lock()
+            .unwrap()
+            .assert_sig(sig_url, true, Some(s));
+        match r.await {
+            Ok(p) => Some(p),
+            _ => None,
+        }
     }
 
     /// Request that the peer connection identified by the given `peer_url`

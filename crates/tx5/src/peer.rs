@@ -100,7 +100,10 @@ async fn connect(
 
     let conn = if let Some(ep) = ep.upgrade() {
         let connect_fut = async {
-            let sig = ep.lock().unwrap().assert_sig(peer_url.to_sig(), false);
+            let sig =
+                ep.lock()
+                    .unwrap()
+                    .assert_sig(peer_url.to_sig(), false, None);
             sig.ready().await;
             sig.connect(peer_url.pub_key().clone()).await
         };

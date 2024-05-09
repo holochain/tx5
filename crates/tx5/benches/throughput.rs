@@ -40,9 +40,9 @@ impl Test {
         });
 
         let (ep1, mut ep_rcv1) = Endpoint::new(config.clone());
-        ep1.listen(sig_url.clone());
+        ep1.listen(sig_url.clone()).await;
         let (ep2, mut ep_rcv2) = Endpoint::new(config);
-        ep2.listen(sig_url);
+        ep2.listen(sig_url).await;
 
         let (cli_url1, cli_url2) = tokio::join!(
             async {

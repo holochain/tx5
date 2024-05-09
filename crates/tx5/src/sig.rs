@@ -28,6 +28,7 @@ impl Sig {
         sig_url: SigUrl,
         listener: bool,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
+        resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| {
             let wait = Arc::new(tokio::sync::Semaphore::new(0));
@@ -41,6 +42,7 @@ impl Sig {
                 listener,
                 evt_send,
                 ready.clone(),
+                resp_url,
             ));
 
             Self {
@@ -86,6 +88,7 @@ async fn connect_loop(
     config: Arc<Config>,
     sig_url: SigUrl,
     listener: bool,
+    mut resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
 ) -> (Hub, HubRecv) {
     tracing::trace!(?config, ?sig_url, ?listener, "signal try connect");
 
@@ -106,8 +109,16 @@ async fn connect_loop(
         .await
         .map_err(Error::other)
         {
-            Ok(Ok(r)) => return r,
+            Ok(Ok(r)) => {
+                if let Some(resp_url) = resp_url.take() {
+                    let _ =
+                        resp_url.send(sig_url.to_peer(r.0.pub_key().clone()));
+                }
+                return r;
+            }
             Err(err) | Ok(Err(err)) => {
+                // drop the response so we can proceed without a peer_url
+                let _ = resp_url.take();
                 tracing::debug!(?err, "signal connect error")
             }
         }
@@ -135,6 +146,7 @@ impl Drop for DropSig {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn task(
     ep: Weak<Mutex<EpInner>>,
     this: Weak<Sig>,
@@ -143,6 +155,7 @@ async fn task(
     listener: bool,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ready: Arc<Mutex<MaybeReady>>,
+    resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
 ) {
     let _drop = DropSig {
         ep: ep.clone(),
@@ -150,7 +163,7 @@ async fn task(
     };
 
     let (hub, mut hub_recv) =
-        connect_loop(config.clone(), sig_url.clone(), listener).await;
+        connect_loop(config.clone(), sig_url.clone(), listener, resp_url).await;
 
     let local_url = sig_url.to_peer(hub.pub_key().clone());
 

@@ -339,7 +339,7 @@ async fn main_err() -> Result<()> {
 
     d!(info, "LISTEN", "{sig_url}");
 
-    ep.listen(sig_url.clone());
+    ep.listen(sig_url.clone()).await;
 
     let this_addr = loop {
         if let Some(evt) = evt.recv().await {

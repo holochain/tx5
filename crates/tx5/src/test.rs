@@ -123,7 +123,7 @@ impl Test {
         let sig_url = self.sig_url.clone().unwrap();
 
         let (ep, ep_recv) = Endpoint::new(config);
-        ep.listen(sig_url);
+        ep.listen(sig_url).await;
 
         TestEp::new(ep, ep_recv).await
     }

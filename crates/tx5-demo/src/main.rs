@@ -1,14 +1,15 @@
-#![deny(warnings)]
 #![deny(unsafe_code)]
 #![allow(clippy::needless_range_loop)]
 //! tx5-demo
 
-const DASH_TX5: &[u8] = include_bytes!("influxive-dashboards/tx5.json");
+//const DASH_TX5: &[u8] = include_bytes!("influxive-dashboards/tx5.json");
+
+use std::io::{Error, Result};
 
 use clap::Parser;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tx5::{Config3, Ep3, Ep3Event, Result, Tx5Url};
+use tx5::{Config, Endpoint, EndpointEvent};
 
 #[derive(Debug, Parser)]
 #[clap(name = "tx5-demo", version, about = "Holochain Tx5 WebRTC Demo Cli")]
@@ -48,24 +49,27 @@ enum Message {
 
 impl Message {
     pub fn encode(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(&self).map_err(tx5::Error::err)
+        serde_json::to_vec(&self).map_err(Error::other)
     }
 
     pub fn decode(data: &[u8]) -> Result<Self> {
         Ok(serde_json::from_slice(data)?)
     }
 
-    pub fn hello(known_peers: &HashMap<Tx5Url, PeerInfo>) -> Self {
+    pub fn hello(known_peers: &HashMap<tx5::PeerUrl, PeerInfo>) -> Self {
         Message::Hello {
             known_peers: known_peers.keys().map(|u| u.to_string()).collect(),
         }
     }
 
     pub fn big() -> Self {
+        use base64::Engine;
         use rand::Rng;
+
         let mut big = vec![0; (1024 * 1024 * 15 * 3) / 4]; // 15 MiB but base64
         rand::thread_rng().fill(&mut big[..]);
-        let big = base64::encode(&big);
+
+        let big = base64::engine::general_purpose::STANDARD.encode(&big);
         Message::Big(big)
     }
 }
@@ -138,26 +142,26 @@ impl PeerInfo {
 }
 
 struct Node {
-    this_url: Tx5Url,
-    known_peers: HashMap<Tx5Url, PeerInfo>,
+    this_url: tx5::PeerUrl,
+    known_peers: HashMap<tx5::PeerUrl, PeerInfo>,
 }
 
 impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut dbg = f.debug_struct("Node");
-        dbg.field("this_id", &self.this_url.id().unwrap());
+        dbg.field("this_id", &self.this_url.pub_key());
         for (url, i) in self.known_peers.iter() {
-            dbg.field(&format!("{:?}", url.id().unwrap()), i);
+            dbg.field(&format!("{:?}", url.pub_key()), i);
         }
         dbg.finish()
     }
 }
 
 impl Node {
-    pub fn new(this_url: Tx5Url, peer_urls: Vec<String>) -> Self {
+    pub fn new(this_url: tx5::PeerUrl, peer_urls: Vec<String>) -> Self {
         let known_peers = peer_urls
             .into_iter()
-            .map(|u| (Tx5Url::new(u).unwrap(), PeerInfo::new()))
+            .map(|u| (tx5::PeerUrl::parse(u).unwrap(), PeerInfo::new()))
             .collect::<HashMap<_, _>>();
         Self {
             this_url,
@@ -165,7 +169,7 @@ impl Node {
         }
     }
 
-    pub fn add_known_peer(&mut self, url: Tx5Url) {
+    pub fn add_known_peer(&mut self, url: tx5::PeerUrl) {
         if let std::collections::hash_map::Entry::Vacant(e) =
             self.known_peers.entry(url.clone())
         {
@@ -174,15 +178,20 @@ impl Node {
         }
     }
 
-    pub fn send(&self, ep: &Arc<Ep3>, rem_url: &Tx5Url, data: Vec<u8>) {
+    pub fn send(
+        &self,
+        ep: &Arc<Endpoint>,
+        rem_url: &tx5::PeerUrl,
+        data: Vec<u8>,
+    ) {
         let ep = ep.clone();
         let rem_url = rem_url.clone();
         tokio::task::spawn(async move {
             let len = data.len();
 
-            let id = rem_url.id().unwrap();
+            let id = rem_url.pub_key();
 
-            if let Err(err) = ep.send(rem_url, &data).await {
+            if let Err(err) = ep.send(rem_url.clone(), data).await {
                 d!(
                     error,
                     "SEND_ERROR",
@@ -194,7 +203,7 @@ impl Node {
         });
     }
 
-    pub fn broadcast_hello(&self, ep: &Arc<Ep3>) -> Result<()> {
+    pub fn broadcast_hello(&self, ep: &Arc<Endpoint>) -> Result<()> {
         let hello = Message::hello(&self.known_peers).encode()?;
         for url in self.known_peers.keys() {
             if url == &self.this_url {
@@ -205,14 +214,14 @@ impl Node {
         Ok(())
     }
 
-    pub fn recv_hello(&mut self, url: Tx5Url) -> Result<()> {
+    pub fn recv_hello(&mut self, url: tx5::PeerUrl) -> Result<()> {
         self.known_peers.get_mut(&url).unwrap().last_seen =
             std::time::Instant::now();
-        d!(info, "RECV_HELLO", "{:?}", url.id().unwrap());
+        d!(info, "RECV_HELLO", "{:?}", url.pub_key());
         Ok(())
     }
 
-    pub fn five_sec(&mut self, ep: &Arc<Ep3>) -> Result<()> {
+    pub fn five_sec(&mut self, ep: &Arc<Endpoint>) -> Result<()> {
         {
             let this = self.known_peers.get_mut(&self.this_url).unwrap();
             this.last_seen = std::time::Instant::now();
@@ -237,7 +246,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn thirty_sec(&mut self, ep: &Arc<Ep3>) -> Result<()> {
+    pub fn thirty_sec(&mut self, ep: &Arc<Endpoint>) -> Result<()> {
         let mut v = Vec::new();
 
         for peer in self.known_peers.keys() {
@@ -266,6 +275,8 @@ async fn main_err() -> Result<()> {
         peer_urls,
     } = Args::parse();
 
+    let mut _app_guard = None;
+
     if let Some(trace_file) = trace_file {
         let _ = std::fs::remove_file(&trace_file);
 
@@ -278,10 +289,12 @@ async fn main_err() -> Result<()> {
                 .file_name()
                 .expect("failed to get filename from trace_file"),
         );
-        let (app, _app_guard) =
+        let (app, g) =
             tracing_appender::non_blocking::NonBlockingBuilder::default()
                 .lossy(false)
                 .finish(app);
+
+        _app_guard = Some(g);
 
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(
@@ -297,6 +310,7 @@ async fn main_err() -> Result<()> {
             .init();
     }
 
+    /*
     let tmp = tempfile::tempdir()?;
 
     let (i, meter_provider) =
@@ -313,12 +327,30 @@ async fn main_err() -> Result<()> {
     }
     opentelemetry_api::global::set_meter_provider(meter_provider);
     d!(info, "METRICS", "{}", i.get_host());
+    */
 
-    let sig_url = Tx5Url::new(sig_url)?;
+    let sig_url = tx5::SigUrl::parse(sig_url)?;
 
-    let (ep, mut evt) = tx5::Ep3::new(Arc::new(Config3::default())).await;
+    let (ep, mut evt) = tx5::Endpoint::new(Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    }));
     let ep = Arc::new(ep);
-    let this_addr = ep.listen(sig_url.clone()).await?;
+
+    d!(info, "LISTEN", "{sig_url}");
+
+    ep.listen(sig_url.clone()).await;
+
+    let this_addr = loop {
+        if let Some(evt) = evt.recv().await {
+            d!(info, "PRE_EVENT", "{evt:?}");
+            if let EndpointEvent::ListeningAddressOpen { local_url } = evt {
+                break local_url;
+            }
+        } else {
+            unreachable!();
+        }
+    };
 
     let mut node = Node::new(this_addr.clone(), peer_urls);
 
@@ -337,7 +369,7 @@ async fn main_err() -> Result<()> {
     enum Cmd {
         FiveSec,
         ThirtySec,
-        EpEvt(Ep3Event),
+        EpEvt(EndpointEvent),
     }
 
     let (cmd_s, mut cmd_r) = tokio::sync::mpsc::unbounded_channel();
@@ -383,19 +415,21 @@ async fn main_err() -> Result<()> {
                 node.five_sec(&ep)?;
                 d!(info, "FIVE_SEC", "{node:?}");
                 tracing::info!(
-                    "{}",
-                    serde_json::to_string(&ep.get_stats().await).unwrap()
+                    stats = %serde_json::to_string(&ep.get_stats()).unwrap()
                 );
             }
             Cmd::ThirtySec => node.thirty_sec(&ep)?,
-            Cmd::EpEvt(Ep3Event::Error(err)) => panic!("{err:?}"),
-            Cmd::EpEvt(Ep3Event::Connected { peer_url }) => {
+            Cmd::EpEvt(EndpointEvent::ListeningAddressOpen { .. })
+            | Cmd::EpEvt(EndpointEvent::ListeningAddressClosed { .. }) => {
+                panic!("demo can't handle re-homing")
+            }
+            Cmd::EpEvt(EndpointEvent::Connected { peer_url }) => {
                 node.add_known_peer(peer_url);
             }
-            Cmd::EpEvt(Ep3Event::Disconnected { peer_url }) => {
-                d!(info, "DISCONNECTED", "{:?}", peer_url.id().unwrap());
+            Cmd::EpEvt(EndpointEvent::Disconnected { peer_url }) => {
+                d!(info, "DISCONNECTED", "{:?}", peer_url.pub_key());
             }
-            Cmd::EpEvt(Ep3Event::Message {
+            Cmd::EpEvt(EndpointEvent::Message {
                 peer_url, message, ..
             }) => {
                 node.add_known_peer(peer_url.clone());
@@ -403,7 +437,9 @@ async fn main_err() -> Result<()> {
                     Err(err) => d!(error, "RECV_ERROR", "{err:?}"),
                     Ok(Message::Hello { known_peers: kp }) => {
                         for peer in kp {
-                            node.add_known_peer(Tx5Url::new(peer).unwrap());
+                            node.add_known_peer(
+                                tx5::PeerUrl::parse(peer).unwrap(),
+                            );
                         }
                         node.recv_hello(peer_url)?;
                     }
@@ -413,7 +449,7 @@ async fn main_err() -> Result<()> {
                             "RECV_BIG",
                             "len:{} {:?}",
                             d.as_bytes().len(),
-                            peer_url.id().unwrap()
+                            peer_url.pub_key(),
                         );
                     }
                 }
@@ -431,7 +467,7 @@ impl AddrFile {
         Ok(Self(tokio::fs::File::create(path).await?))
     }
 
-    pub async fn write(&mut self, this_addr: &Tx5Url) -> Result<()> {
+    pub async fn write(&mut self, this_addr: &tx5::PeerUrl) -> Result<()> {
         use tokio::io::AsyncSeekExt;
         use tokio::io::AsyncWriteExt;
 
@@ -439,7 +475,9 @@ impl AddrFile {
         self.0.set_len(0).await?;
 
         self.0
-            .write_all(<Tx5Url as AsRef<str>>::as_ref(this_addr).as_bytes())
+            .write_all(
+                <tx5::PeerUrl as AsRef<str>>::as_ref(this_addr).as_bytes(),
+            )
             .await?;
         self.0.write_all(b"\n").await?;
         self.0.sync_all().await?;

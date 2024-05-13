@@ -59,7 +59,7 @@ async fn tx5_init() -> std::result::Result<(), String> {
 
 use deps::*;
 
-pub use tx5_core::{Error, ErrorExt, Id, Result};
+pub use tx5_core::{Error, ErrorExt, Result};
 
 mod evt;
 pub use evt::*;

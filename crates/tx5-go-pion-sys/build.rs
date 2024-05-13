@@ -274,10 +274,10 @@ fn go_build() {
                 std::fs::read(lib_path).expect("failed to read generated lib");
             let mut hasher = sha2::Sha256::new();
             hasher.update(data);
-            let hash = base64::encode_config(
-                hasher.finalize(),
-                base64::URL_SAFE_NO_PAD,
-            );
+
+            use base64::Engine;
+            let hash = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(hasher.finalize());
 
             let mut lib_hash = out_dir;
             lib_hash.push("lib_hash.rs");

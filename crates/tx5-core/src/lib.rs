@@ -17,34 +17,11 @@ pub mod deps {
 mod error;
 pub use error::*;
 
-mod id;
-pub use id::*;
-
-mod uniq;
-pub use uniq::*;
-
-mod url;
-pub use crate::url::*;
-
 mod evt;
 pub use evt::*;
 
 #[cfg(feature = "file_check")]
 pub mod file_check;
-
-pub mod wire;
-
-/// Websocket configuration constants.
-pub mod ws {
-    /// Outgoing message queue size.
-    pub const MAX_SEND_QUEUE: usize = 32;
-
-    /// Max incoming and outgoing message size.
-    pub const MAX_MESSAGE_SIZE: usize = 2048;
-
-    /// Max incoming and outgoing frame size.
-    pub const MAX_FRAME_SIZE: usize = 2048;
-}
 
 /// Pinned, boxed, future type alias.
 pub type BoxFut<'lt, T> =

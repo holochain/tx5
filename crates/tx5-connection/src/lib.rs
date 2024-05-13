@@ -1,9 +1,11 @@
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 #![doc = tx5_core::__doc_header!()]
-//! # tx5
+//! # tx5-connection
 //!
-//! Tx5 - The main holochain tx5 webrtc networking crate.
+//! Holochain webrtc connection.
+//! Starts by sending messages over the sbd signal server, if we can
+//! upgrade to a proper webrtc p2p connection, we do so.
 //!
 //! # WebRTC Backend Features
 //!
@@ -22,56 +24,32 @@
 //! make sure the backend doesn't change out from under you, set
 //! no-default-features and explicitly enable the backend of your choice.
 
+#[cfg(any(
+    not(any(feature = "backend-go-pion", feature = "backend-webrtc-rs")),
+    all(feature = "backend-go-pion", feature = "backend-webrtc-rs"),
+))]
+compile_error!("Must specify exactly 1 webrtc backend");
+
 #[cfg(feature = "backend-go-pion")]
-pub use tx5_connection::Tx5InitConfig;
+pub use tx5_go_pion::Tx5InitConfig;
 
 use std::collections::HashMap;
 use std::io::{Error, Result};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
-pub use tx5_connection::tx5_signal::PubKey;
+pub use tx5_signal;
+use tx5_signal::PubKey;
 
-mod url;
-pub use url::*;
+mod hub;
+pub use hub::*;
 
-/// Dynamic future type.
-pub type BoxFuture<'lt, T> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'lt + Send>>;
+mod conn;
+pub use conn::*;
 
-/// Callback in charge of sending preflight data if any.
-pub type PreflightSendCb = Arc<
-    dyn Fn(&PeerUrl) -> BoxFuture<'static, Result<Vec<u8>>>
-        + 'static
-        + Send
-        + Sync,
->;
+mod proto;
 
-/// Callback in charge of validating preflight data if any.
-pub type PreflightCheckCb = Arc<
-    dyn Fn(&PeerUrl, Vec<u8>) -> BoxFuture<'static, Result<()>>
-        + 'static
-        + Send
-        + Sync,
->;
-
-mod config;
-pub use config::*;
-
-mod sig;
-pub(crate) use sig::*;
-
-mod peer;
-pub(crate) use peer::*;
-
-mod ep;
-pub use ep::*;
-
-pub mod stats;
+mod framed;
+pub use framed::*;
 
 #[cfg(test)]
 mod test;
-
-//pub use tx5_core::Tx5InitConfig;
-
-// #[cfg(test)]
-// mod test_behavior;

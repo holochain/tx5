@@ -35,9 +35,11 @@ jobs:
         run: |
           rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update
           rustup default ${{ matrix.toolchain }}
+          rustup component add rustfmt --toolchain ${{ matrix.toolchain }}
+          rustup component add clippy --toolchain ${{ matrix.toolchain }}
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
       - name: Make Static
-        run: make static
+        run: cargo install cargo-rdme && make static

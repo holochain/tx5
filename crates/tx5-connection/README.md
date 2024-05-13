@@ -19,43 +19,38 @@
 
 ### Tx5 Support Crates
 
+- [ tx5-connection ](https://github.com/holochain/tx5/tree/main/crates/tx5-connection) - [ ![crates.io](https://img.shields.io/crates/v/tx5-connection) ](https://crates.io/crates/tx5-connection) - Holochain webrtc connection.
 - [ tx5-core ](https://github.com/holochain/tx5/tree/main/crates/tx5-core) - [ ![crates.io](https://img.shields.io/crates/v/tx5-core) ](https://crates.io/crates/tx5-core) - Core types used in other tx5 crates.
 - [ tx5-online ](https://github.com/holochain/tx5/tree/main/crates/tx5-online) - [ ![crates.io](https://img.shields.io/crates/v/tx5-online) ](https://crates.io/crates/tx5-online) - Network online connectivity status events.
 - [ tx5-go-pion-turn ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion-turn) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion-turn) ](https://crates.io/crates/tx5-go-pion-turn) - Rust process wrapper around tx5-go-pion-turn executable.
 - [ tx5-go-pion-sys ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion-sys) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion-sys) ](https://crates.io/crates/tx5-go-pion-sys) - Low level rust bindings to the go pion webrtc library.
 - [ tx5-go-pion ](https://github.com/holochain/tx5/tree/main/crates/tx5-go-pion) - [ ![crates.io](https://img.shields.io/crates/v/tx5-go-pion) ](https://crates.io/crates/tx5-go-pion) - Higher level rust bindings to the go pion webrtc library.
 - [ tx5-signal ](https://github.com/holochain/tx5/tree/main/crates/tx5-signal) - [ ![crates.io](https://img.shields.io/crates/v/tx5-signal) ](https://crates.io/crates/tx5-signal) - Holochain webrtc signal client.
-- [ tx5-signal-srv ](https://github.com/holochain/tx5/tree/main/crates/tx5-signal-srv) - [ ![crates.io](https://img.shields.io/crates/v/tx5-signal-srv) ](https://crates.io/crates/tx5-signal-srv) - Holochain webrtc signal server.
 - [ tx5-demo ](https://github.com/holochain/tx5/tree/main/crates/tx5-demo) - [ ![crates.io](https://img.shields.io/crates/v/tx5-demo) ](https://crates.io/crates/tx5-demo) - Demo showing off tx5 p2p connectivity.
 
 <!-- cargo-rdme start -->
 
-#### tx5-signal-srv
+#### tx5-connection
 
-Holochain webrtc signal server.
+Holochain webrtc connection.
+Starts by sending messages over the sbd signal server, if we can
+upgrade to a proper webrtc p2p connection, we do so.
+
+#### WebRTC Backend Features
+
+Tx5 can be backed currently by 1 of 2 backend webrtc libraries.
+
+- <b><i>`*`DEFAULT`*`</i></b> `backend-go-pion` - The pion webrtc library
+  writen in go (golang).
+  - [https://github.com/pion/webrtc](https://github.com/pion/webrtc)
+- `backend-webrtc-rs` - The rust webrtc library.
+  - [https://github.com/webrtc-rs/webrtc](https://github.com/webrtc-rs/webrtc)
+
+The go pion library is currently the default as it is more mature
+and well tested, but comes with some overhead of calling into a different
+memory/runtime. When the rust library is stable enough for holochain's
+needs, we will switch the default. To switch now, or if you want to
+make sure the backend doesn't change out from under you, set
+no-default-features and explicitly enable the backend of your choice.
 
 <!-- cargo-rdme end -->
-
-### The `tx5-signal-srv` executable
-`tx5-signal-srv --help`
-```text
-Holochain Webrtc Signal Server
-
-Usage: tx5-signal-srv [OPTIONS]
-
-Options:
-  -i, --init
-          Initialize a new tx5-signal-srv.json configuration file (as specified
-          by --config). Will abort if it already exists
-      --run-with-init-if-needed
-          Run the signal server, generating a config file if one does not
-          already exist. Exclusive with "init" option
-  -c, --config <CONFIG>
-          Configuration file to use for running the tx5-signal-srv. Defaults to
-          `$user_config_dir_path$/tx5-signal-srv.json`
-  -h, --help
-          Print help
-  -V, --version
-          Print version
-
-```

@@ -2,11 +2,11 @@
 members = [
   "crates/tx5",
   "crates/tx5-core",
+  "crates/tx5-connection",
   "crates/tx5-online",
   "crates/tx5-go-pion-sys",
   "crates/tx5-go-pion",
   "crates/tx5-signal",
-  "crates/tx5-signal-srv",
   "crates/tx5-demo",
   "crates/tx5-go-pion-turn",
 ]
@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.dependencies]
 app_dirs2 = "2.5.5"
 backtrace = "0.3.69"
-base64 = "0.13.0"
+base64 = "0.22.1"
 better-panic = "0.3.0"
 bit_field = "0.10.2"
 bytes = "1.4.0"
@@ -45,11 +45,13 @@ ring = "0.16.20"
 rustls = { version = "0.20.0", features = [ "dangerous_configuration" ] }
 rustls-native-certs = "0.6.2"
 rustls-pemfile = "1.0.2"
+sbd-e2e-crypto-client = "0.0.3-alpha"
+sbd-server = "0.0.3-alpha"
 serde = { version = "1.0.160", features = [ "derive", "rc" ] }
 serde_json = { version = "1.0.96", features = [ "preserve_order" ] }
 sha2 = "0.10.6"
 socket2 = { version = "0.5.2", features = [ "all" ] }
-sodoken = "=0.0.11"
+sodoken = "=0.0.901-alpha"
 tempfile = "3.8.0"
 tokio = { version = "1.35.1" }
 tokio-rustls = "0.23.4"
@@ -58,15 +60,19 @@ tracing = "0.1.37"
 tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.16", features = [ "env-filter" ] }
 trust-dns-resolver = "0.22.0"
+tx5-connection = { version = "0.0.9-alpha", default-features = false, path = "crates/tx5-connection" }
 tx5-core = { version = "0.0.9-alpha", default-features = false, path = "crates/tx5-core" }
 tx5-go-pion-turn = { version = "0.0.9-alpha", path = "crates/tx5-go-pion-turn" }
 tx5-go-pion-sys = { version = "0.0.9-alpha", path = "crates/tx5-go-pion-sys" }
 tx5-go-pion = { version = "0.0.9-alpha", path = "crates/tx5-go-pion" }
-tx5-signal-srv = { version = "0.0.9-alpha", path = "crates/tx5-signal-srv" }
 tx5-signal = { version = "0.0.9-alpha", path = "crates/tx5-signal" }
 tx5 = { version = "0.0.9-alpha", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
 warp = { version = "0.3.4", features = [ "websocket" ] }
 webpki-roots = { version = "0.23.0" }
-webrtc = { version = "0.7.1" }
+webrtc = { version = "0.10.1" }
 zip = { version = "0.6.4", default-features = false, features = [ "deflate" ] }
+
+#[patch.crates-io]
+#sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
+#sbd-server = { path = "../sbd/rust/sbd-server" }

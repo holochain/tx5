@@ -16,7 +16,7 @@ const EXE_BYTES: &[u8] =
 
 include!(concat!(env!("OUT_DIR"), "/exe_hash.rs"));
 
-pub use tx5_core::{Error, ErrorExt, Id, Result};
+pub use tx5_core::{Error, ErrorExt, Result};
 
 use once_cell::sync::Lazy;
 

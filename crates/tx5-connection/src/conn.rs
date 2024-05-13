@@ -2,8 +2,8 @@ use super::*;
 
 pub(crate) enum ConnCmd {
     SigRecv(tx5_signal::SignalMessage),
-    #[allow(dead_code)]
-    Close,
+    SendMessage(Vec<u8>),
+    WebrtcReady,
 }
 
 /// Receive messages from a tx5 connection.
@@ -20,9 +20,12 @@ impl ConnRecv {
 pub struct Conn {
     ready: Arc<tokio::sync::Semaphore>,
     pub_key: PubKey,
-    client: Weak<tx5_signal::SignalConnection>,
+    cmd_send: Weak<tokio::sync::mpsc::Sender<ConnCmd>>,
     conn_task: tokio::task::JoinHandle<()>,
     keepalive_task: tokio::task::JoinHandle<()>,
+
+    #[cfg(test)]
+    webrtc_ready: Arc<tokio::sync::Semaphore>,
 }
 
 impl Drop for Conn {
@@ -46,6 +49,9 @@ impl Conn {
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
 
+        #[cfg(test)]
+        let webrtc_ready = Arc::new(tokio::sync::Semaphore::new(0));
+
         let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
         let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
         let cmd_send = Arc::new(cmd_send);
@@ -67,9 +73,13 @@ impl Conn {
             }
         });
 
+        #[cfg(test)]
+        let webrtc_ready2 = webrtc_ready.clone();
+
         let ready2 = ready.clone();
         let client2 = client.clone();
         let pub_key2 = pub_key.clone();
+        let cmd_send3 = Arc::downgrade(&cmd_send);
         let conn_task = tokio::task::spawn(async move {
             let client = match client2.upgrade() {
                 Some(client) => client,
@@ -103,15 +113,17 @@ impl Conn {
                                     }
                                     got_peer_res = true;
                                 }
-                                _ => {
-                                    return Err(Error::other(
-                                        "invalid message during handshake",
-                                    ));
-                                }
+                                // Ignore all other message types...
+                                // they may be from previous sessions
+                                _ => (),
                             }
                         }
-                        ConnCmd::Close => {
-                            return Err(Error::other("close during handshake"))
+                        ConnCmd::SendMessage(_) => {
+                            return Err(Error::other("send before ready"));
+                        }
+                        ConnCmd::WebrtcReady => {
+                            #[cfg(test)]
+                            webrtc_ready2.close();
                         }
                     }
                     if got_peer_res && sent_our_res {
@@ -135,13 +147,89 @@ impl Conn {
             // closing the semaphore causes all the acquire awaits to end
             ready2.close();
 
+            let (webrtc, mut webrtc_recv) = webrtc::Webrtc::new(
+                // TODO - we need the *this* pub_key to determine politeness
+                false,
+                // TODO - pass stun server config here
+                b"{}".to_vec(),
+                // TODO - make this configurable
+                4096,
+            );
+
+            let client3 = client2.clone();
+            let pub_key3 = pub_key2.clone();
+            let msg_send2 = msg_send.clone();
+            let _webrtc_task = AbortTask(tokio::task::spawn(async move {
+                use webrtc::WebrtcEvt::*;
+                while let Some(evt) = webrtc_recv.recv().await {
+                    match evt {
+                        GeneratedOffer(offer) => {
+                            if let Some(client) = client3.upgrade() {
+                                if client
+                                    .send_offer(&pub_key3, offer)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        GeneratedAnswer(answer) => {
+                            if let Some(client) = client3.upgrade() {
+                                if client
+                                    .send_answer(&pub_key3, answer)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        GeneratedIce(ice) => {
+                            if let Some(client) = client3.upgrade() {
+                                if client
+                                    .send_ice(&pub_key3, ice)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        Message(msg) => {
+                            if msg_send2.send(msg).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ready => {
+                            if let Some(cmd_send) = cmd_send3.upgrade() {
+                                if cmd_send
+                                    .send(ConnCmd::WebrtcReady)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }));
+
             while let Ok(Some(cmd)) =
                 tokio::time::timeout(config.max_idle, cmd_recv.recv()).await
             {
                 match cmd {
                     ConnCmd::SigRecv(sig) => {
                         use tx5_signal::SignalMessage::*;
-                        #[allow(clippy::single_match)] // placeholder
                         match sig {
                             // invalid
                             HandshakeReq(_) | HandshakeRes(_) => break,
@@ -150,10 +238,44 @@ impl Conn {
                                     break;
                                 }
                             }
+                            Offer(offer) => {
+                                if webrtc.in_offer(offer).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Answer(answer) => {
+                                if webrtc.in_answer(answer).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Ice(ice) => {
+                                if webrtc.in_ice(ice).await.is_err() {
+                                    break;
+                                }
+                            }
+                            OfferReq => {
+                                todo!();
+                            }
                             _ => (),
                         }
                     }
-                    ConnCmd::Close => break,
+                    ConnCmd::SendMessage(msg) => {
+                        if let Some(client) = client2.upgrade() {
+                            if client
+                                .send_message(&pub_key2, msg)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    ConnCmd::WebrtcReady => {
+                        #[cfg(test)]
+                        webrtc_ready2.close();
+                    }
                 }
             }
 
@@ -169,9 +291,12 @@ impl Conn {
             Arc::new(Self {
                 ready,
                 pub_key,
-                client,
+                cmd_send: Arc::downgrade(&cmd_send),
                 conn_task,
                 keepalive_task,
+
+                #[cfg(test)]
+                webrtc_ready,
             }),
             ConnRecv(msg_recv),
             cmd_send,
@@ -184,6 +309,12 @@ impl Conn {
         let _ = self.ready.acquire().await;
     }
 
+    /// Wait until this connection is connected via webrtc.
+    #[cfg(test)]
+    pub async fn webrtc_ready(&self) {
+        let _ = self.webrtc_ready.acquire().await;
+    }
+
     /// The pub key of the remote peer this is connected to.
     pub fn pub_key(&self) -> &PubKey {
         &self.pub_key
@@ -191,8 +322,11 @@ impl Conn {
 
     /// Send up to 16KiB of message data.
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
-        if let Some(client) = self.client.upgrade() {
-            client.send_message(&self.pub_key, msg).await
+        if let Some(cmd_send) = self.cmd_send.upgrade() {
+            cmd_send
+                .send(ConnCmd::SendMessage(msg))
+                .await
+                .map_err(|_| Error::other("closed"))
         } else {
             Err(Error::other("closed"))
         }

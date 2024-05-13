@@ -64,7 +64,7 @@ async fn sanity() {
     let cli2_pk = cli2.pub_key().clone();
     tracing::info!(?cli2_pk);
 
-    cli1.send_offer(&cli2_pk, serde_json::json!({ "type": "offer" }))
+    cli1.send_offer(&cli2_pk, b"{\"type\":\"offer\"}".to_vec())
         .await
         .unwrap();
 
@@ -72,7 +72,7 @@ async fn sanity() {
     tracing::info!(?msg);
     assert!(matches!(msg, SignalMessage::Offer { .. }));
 
-    cli2.send_answer(&cli1_pk, serde_json::json!({ "type": "answer" }))
+    cli2.send_answer(&cli1_pk, b"{\"type\":\"answer\"}".to_vec())
         .await
         .unwrap();
 
@@ -80,7 +80,7 @@ async fn sanity() {
     tracing::info!(?msg);
     assert!(matches!(msg, SignalMessage::Answer { .. }));
 
-    cli1.send_ice(&cli2_pk, serde_json::json!({ "type": "ice" }))
+    cli1.send_ice(&cli2_pk, b"{\"type\":\"ice\"}".to_vec())
         .await
         .unwrap();
 

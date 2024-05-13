@@ -2960,7 +2960,6 @@ dependencies = [
  "rand",
  "sbd-e2e-crypto-client",
  "sbd-server",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

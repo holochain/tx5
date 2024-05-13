@@ -21,13 +21,13 @@ pub enum SignalMessage {
     OfferReq,
 
     /// As an impolite node, send a webrtc offer.
-    Offer(serde_json::Value),
+    Offer(Vec<u8>),
 
     /// As a polite node, send a webrtc answer.
-    Answer(serde_json::Value),
+    Answer(Vec<u8>),
 
     /// Webrtc connectivity message.
-    Ice(serde_json::Value),
+    Ice(Vec<u8>),
 
     /// Pre-webrtc and webrtc failure fallback communication message.
     Message(Vec<u8>),
@@ -85,22 +85,19 @@ impl SignalMessage {
     }
 
     /// As an impolite node, send a webrtc offer.
-    pub(crate) fn offer(offer: serde_json::Value) -> Result<Vec<u8>> {
-        let mut offer = serde_json::to_string(&offer)?.into_bytes();
+    pub(crate) fn offer(mut offer: Vec<u8>) -> Result<Vec<u8>> {
         offer.splice(0..0, F_OFFR.iter().cloned());
         Ok(offer)
     }
 
     /// As a polite node, send a webrtc answer.
-    pub(crate) fn answer(answer: serde_json::Value) -> Result<Vec<u8>> {
-        let mut answer = serde_json::to_string(&answer)?.into_bytes();
+    pub(crate) fn answer(mut answer: Vec<u8>) -> Result<Vec<u8>> {
         answer.splice(0..0, F_ANSW.iter().cloned());
         Ok(answer)
     }
 
     /// Webrtc connectivity message.
-    pub(crate) fn ice(ice: serde_json::Value) -> Result<Vec<u8>> {
-        let mut ice = serde_json::to_string(&ice)?.into_bytes();
+    pub(crate) fn ice(mut ice: Vec<u8>) -> Result<Vec<u8>> {
         ice.splice(0..0, F_ICEM.iter().cloned());
         Ok(ice)
     }
@@ -143,16 +140,16 @@ impl SignalMessage {
             }
             F_OREQ => Ok(SignalMessage::OfferReq),
             F_OFFR => {
-                let offer = serde_json::from_slice(&b[4..])?;
-                Ok(SignalMessage::Offer(offer))
+                let _ = b.drain(..4);
+                Ok(SignalMessage::Offer(b))
             }
             F_ANSW => {
-                let answer = serde_json::from_slice(&b[4..])?;
-                Ok(SignalMessage::Answer(answer))
+                let _ = b.drain(..4);
+                Ok(SignalMessage::Answer(b))
             }
             F_ICEM => {
-                let ice = serde_json::from_slice(&b[4..])?;
-                Ok(SignalMessage::Ice(ice))
+                let _ = b.drain(..4);
+                Ok(SignalMessage::Ice(b))
             }
             F_FMSG => {
                 let _ = b.drain(..4);

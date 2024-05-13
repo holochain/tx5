@@ -40,6 +40,16 @@ use std::sync::{Arc, Weak};
 pub use tx5_signal;
 use tx5_signal::PubKey;
 
+struct AbortTask<R>(tokio::task::JoinHandle<R>);
+
+impl<R> Drop for AbortTask<R> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+mod webrtc;
+
 mod hub;
 pub use hub::*;
 

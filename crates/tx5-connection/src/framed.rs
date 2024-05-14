@@ -168,6 +168,15 @@ impl FramedConn {
         }
     }
 
+    /// Get connection statistics.
+    pub fn get_stats(&self) -> ConnStats {
+        if let Some(conn) = self.weak_conn.upgrade() {
+            conn.get_stats()
+        } else {
+            ConnStats::default()
+        }
+    }
+
     /// Send a message on the connection.
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
         let conn = self.conn.lock().await;

@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::Ordering;
 
 pub(crate) enum ConnCmd {
     SigRecv(tx5_signal::SignalMessage),
@@ -25,6 +26,10 @@ pub struct Conn {
     conn_task: tokio::task::JoinHandle<()>,
     keepalive_task: tokio::task::JoinHandle<()>,
     webrtc_ready: Arc<tokio::sync::Semaphore>,
+    send_msg_count: Arc<std::sync::atomic::AtomicU64>,
+    send_byte_count: Arc<std::sync::atomic::AtomicU64>,
+    recv_msg_count: Arc<std::sync::atomic::AtomicU64>,
+    recv_byte_count: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Drop for Conn {
@@ -46,6 +51,11 @@ impl Conn {
         client: Weak<tx5_signal::SignalConnection>,
         config: Arc<tx5_signal::SignalConfig>,
     ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
+        let send_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let send_byte_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let recv_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let recv_byte_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
         let webrtc_ready = Arc::new(tokio::sync::Semaphore::new(0));
@@ -70,6 +80,10 @@ impl Conn {
             }
         });
 
+        let send_msg_count2 = send_msg_count.clone();
+        let send_byte_count2 = send_byte_count.clone();
+        let recv_msg_count2 = recv_msg_count.clone();
+        let recv_byte_count2 = recv_byte_count.clone();
         let webrtc_ready2 = webrtc_ready.clone();
         let ready2 = ready.clone();
         let client2 = client.clone();
@@ -156,10 +170,7 @@ impl Conn {
 
             let client3 = client2.clone();
             let pub_key3 = pub_key2.clone();
-            let mut msg_send2 = msg_send.clone();
             let _webrtc_task = AbortTask(tokio::task::spawn(async move {
-                msg_send2.set_close_on_drop(true);
-
                 use webrtc::WebrtcEvt::*;
                 while let Some(evt) = webrtc_recv.recv().await {
                     match evt {
@@ -239,8 +250,20 @@ impl Conn {
                             // invalid
                             HandshakeReq(_) | HandshakeRes(_) => break,
                             Message(msg) => {
-                                if msg_send.send(msg).await.is_err() {
+                                if recv_over_webrtc {
+                                    // invalid signal message
+                                    // after webrtc ready received
                                     break;
+                                } else {
+                                    recv_msg_count2
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    recv_byte_count2.fetch_add(
+                                        msg.len() as u64,
+                                        Ordering::Relaxed,
+                                    );
+                                    if msg_send.send(msg).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
                             Offer(offer) => {
@@ -261,6 +284,8 @@ impl Conn {
                             WebrtcReady => {
                                 recv_over_webrtc = true;
                                 for msg in webrtc_message_buffer.drain(..) {
+                                    // don't bump send metrics here,
+                                    // we bumped them on receive
                                     if msg_send.send(msg).await.is_err() {
                                         break;
                                     }
@@ -270,6 +295,9 @@ impl Conn {
                         }
                     }
                     ConnCmd::SendMessage(msg) => {
+                        send_msg_count2.fetch_add(1, Ordering::Relaxed);
+                        send_byte_count2
+                            .fetch_add(msg.len() as u64, Ordering::Relaxed);
                         if send_over_webrtc {
                             if webrtc.message(msg).await.is_err() {
                                 break;
@@ -287,6 +315,9 @@ impl Conn {
                         }
                     }
                     ConnCmd::WebrtcMessage(msg) => {
+                        recv_msg_count2.fetch_add(1, Ordering::Relaxed);
+                        recv_byte_count2
+                            .fetch_add(msg.len() as u64, Ordering::Relaxed);
                         if recv_over_webrtc {
                             if msg_send.send(msg).await.is_err() {
                                 break;
@@ -334,6 +365,10 @@ impl Conn {
             conn_task,
             keepalive_task,
             webrtc_ready,
+            send_msg_count,
+            send_byte_count,
+            recv_msg_count,
+            recv_byte_count,
         };
 
         (Arc::new(this), ConnRecv(msg_recv), cmd_send)
@@ -366,4 +401,30 @@ impl Conn {
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
         self.cmd_send.send(ConnCmd::SendMessage(msg)).await
     }
+
+    /// Get connection statistics.
+    pub fn get_stats(&self) -> ConnStats {
+        ConnStats {
+            send_msg_count: self.send_msg_count.load(Ordering::Relaxed),
+            send_byte_count: self.send_byte_count.load(Ordering::Relaxed),
+            recv_msg_count: self.recv_msg_count.load(Ordering::Relaxed),
+            recv_byte_count: self.recv_byte_count.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Connection statistics.
+#[derive(Default)]
+pub struct ConnStats {
+    /// message count sent.
+    pub send_msg_count: u64,
+
+    /// byte count sent.
+    pub send_byte_count: u64,
+
+    /// message count received.
+    pub recv_msg_count: u64,
+
+    /// byte count received.
+    pub recv_byte_count: u64,
 }

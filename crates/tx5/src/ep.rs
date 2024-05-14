@@ -308,14 +308,17 @@ impl Endpoint {
             .unwrap()
             .peer_map
             .values()
-            .map(|peer| stats::StatsConnection {
-                pub_key: *peer.pub_key.0,
-                send_message_count: 0,
-                send_bytes: 0,
-                recv_message_count: 0,
-                recv_bytes: 0,
-                opened_at_s: peer.opened_at_s,
-                is_webrtc: peer.is_using_webrtc(),
+            .map(|peer| {
+                let stats = peer.get_stats();
+                stats::StatsConnection {
+                    pub_key: *peer.pub_key.0,
+                    send_message_count: stats.send_msg_count,
+                    send_bytes: stats.send_byte_count,
+                    recv_message_count: stats.recv_msg_count,
+                    recv_bytes: stats.recv_byte_count,
+                    opened_at_s: peer.opened_at_s,
+                    is_webrtc: peer.is_using_webrtc(),
+                }
             })
             .collect();
 

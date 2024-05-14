@@ -103,6 +103,14 @@ impl Peer {
         }
     }
 
+    pub fn get_stats(&self) -> ConnStats {
+        if let MaybeReady::Ready(r) = &*self.ready.lock().unwrap() {
+            r.get_stats()
+        } else {
+            ConnStats::default()
+        }
+    }
+
     pub async fn ready(&self) {
         let w = match &*self.ready.lock().unwrap() {
             MaybeReady::Ready(_) => return,

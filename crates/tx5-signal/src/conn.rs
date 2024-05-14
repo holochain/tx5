@@ -96,13 +96,6 @@ impl SignalConnection {
         Ok(())
     }
 
-    /// Send a webrtc offer request to a peer.
-    pub async fn send_offer_req(&self, pub_key: &PubKey) -> Result<()> {
-        let msg = SignalMessage::offer_req();
-        self.client.send(pub_key, &msg).await?;
-        Ok(())
-    }
-
     /// Send a webrtc offer to a peer.
     pub async fn send_offer(
         &self,
@@ -139,6 +132,13 @@ impl SignalConnection {
         message: Vec<u8>,
     ) -> Result<()> {
         let msg = SignalMessage::message(message)?;
+        self.client.send(pub_key, &msg).await?;
+        Ok(())
+    }
+
+    /// Send webrtc ready message to a peer.
+    pub async fn send_webrtc_ready(&self, pub_key: &PubKey) -> Result<()> {
+        let msg = SignalMessage::webrtc_ready();
         self.client.send(pub_key, &msg).await?;
         Ok(())
     }

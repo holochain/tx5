@@ -24,6 +24,7 @@ impl FramedConnRecv {
 /// the base connection.
 pub struct FramedConn {
     pub_key: PubKey,
+    weak_conn: Weak<Conn>,
     conn: tokio::sync::Mutex<Arc<Conn>>,
     cmd_send: tokio::sync::mpsc::Sender<Cmd>,
     recv_task: tokio::task::JoinHandle<()>,
@@ -143,6 +144,7 @@ impl FramedConn {
         Ok((
             Self {
                 pub_key,
+                weak_conn: Arc::downgrade(&conn),
                 conn: tokio::sync::Mutex::new(conn),
                 cmd_send,
                 recv_task,
@@ -155,6 +157,15 @@ impl FramedConn {
     /// The pub key of the remote peer this is connected to.
     pub fn pub_key(&self) -> &PubKey {
         &self.pub_key
+    }
+
+    /// Returns `true` if we sucessfully connected over webrtc.
+    pub fn is_using_webrtc(&self) -> bool {
+        if let Some(conn) = self.weak_conn.upgrade() {
+            conn.is_using_webrtc()
+        } else {
+            false
+        }
     }
 
     /// Send a message on the connection.

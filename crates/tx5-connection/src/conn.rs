@@ -3,6 +3,7 @@ use super::*;
 pub(crate) enum ConnCmd {
     SigRecv(tx5_signal::SignalMessage),
     SendMessage(Vec<u8>),
+    WebrtcMessage(Vec<u8>),
     WebrtcReady,
 }
 
@@ -23,8 +24,6 @@ pub struct Conn {
     cmd_send: CloseSend<ConnCmd>,
     conn_task: tokio::task::JoinHandle<()>,
     keepalive_task: tokio::task::JoinHandle<()>,
-
-    #[cfg(test)]
     webrtc_ready: Arc<tokio::sync::Semaphore>,
 }
 
@@ -49,8 +48,6 @@ impl Conn {
     ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
-
-        #[cfg(test)]
         let webrtc_ready = Arc::new(tokio::sync::Semaphore::new(0));
 
         let (mut msg_send, msg_recv) = CloseSend::channel();
@@ -73,9 +70,7 @@ impl Conn {
             }
         });
 
-        #[cfg(test)]
         let webrtc_ready2 = webrtc_ready.clone();
-
         let ready2 = ready.clone();
         let client2 = client.clone();
         let pub_key2 = pub_key.clone();
@@ -85,6 +80,8 @@ impl Conn {
                 Some(client) => client,
                 None => return,
             };
+
+            let mut webrtc_message_buffer = Vec::new();
 
             let handshake_fut = async {
                 let nonce = client.send_handshake_req(&pub_key2).await?;
@@ -121,8 +118,10 @@ impl Conn {
                         ConnCmd::SendMessage(_) => {
                             return Err(Error::other("send before ready"));
                         }
+                        ConnCmd::WebrtcMessage(msg) => {
+                            webrtc_message_buffer.push(msg);
+                        }
                         ConnCmd::WebrtcReady => {
-                            #[cfg(test)]
                             webrtc_ready2.close();
                         }
                     }
@@ -204,7 +203,11 @@ impl Conn {
                             }
                         }
                         Message(msg) => {
-                            if msg_send2.send(msg).await.is_err() {
+                            if cmd_send3
+                                .send(ConnCmd::WebrtcMessage(msg))
+                                .await
+                                .is_err()
+                            {
                                 break;
                             }
                         }
@@ -223,6 +226,7 @@ impl Conn {
 
             msg_send.set_close_on_drop(true);
 
+            let mut recv_over_webrtc = false;
             let mut send_over_webrtc = false;
 
             while let Ok(Some(cmd)) =
@@ -254,8 +258,13 @@ impl Conn {
                                     break;
                                 }
                             }
-                            OfferReq => {
-                                todo!();
+                            WebrtcReady => {
+                                recv_over_webrtc = true;
+                                for msg in webrtc_message_buffer.drain(..) {
+                                    if msg_send.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
                             }
                             _ => (),
                         }
@@ -277,10 +286,32 @@ impl Conn {
                             break;
                         }
                     }
+                    ConnCmd::WebrtcMessage(msg) => {
+                        if recv_over_webrtc {
+                            if msg_send.send(msg).await.is_err() {
+                                break;
+                            }
+                        } else {
+                            webrtc_message_buffer.push(msg);
+                            if webrtc_message_buffer.len() > 32 {
+                                // prevent memory fillup
+                                break;
+                            }
+                        }
+                    }
                     ConnCmd::WebrtcReady => {
+                        if let Some(client) = client2.upgrade() {
+                            if client
+                                .send_webrtc_ready(&pub_key2)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
                         send_over_webrtc = true;
-
-                        #[cfg(test)]
                         webrtc_ready2.close();
                     }
                 }
@@ -302,8 +333,6 @@ impl Conn {
             cmd_send: cmd_send2,
             conn_task,
             keepalive_task,
-
-            #[cfg(test)]
             webrtc_ready,
         };
 
@@ -317,9 +346,15 @@ impl Conn {
     }
 
     /// Wait until this connection is connected via webrtc.
-    #[cfg(test)]
+    /// Note, this will never resolve if we never successfully
+    /// connect over webrtc.
     pub async fn webrtc_ready(&self) {
         let _ = self.webrtc_ready.acquire().await;
+    }
+
+    /// Returns `true` if we sucessfully connected over webrtc.
+    pub fn is_using_webrtc(&self) -> bool {
+        self.webrtc_ready.is_closed()
     }
 
     /// The pub key of the remote peer this is connected to.

@@ -76,6 +76,7 @@ impl EndpointRecv {
 pub(crate) struct EpInner {
     this: Weak<Mutex<EpInner>>,
     config: Arc<Config>,
+    webrtc_config: Vec<u8>,
     recv_limit: Arc<tokio::sync::Semaphore>,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     sig_map: HashMap<SigUrl, Arc<Sig>>,
@@ -113,6 +114,7 @@ impl EpInner {
                 Sig::new(
                     self.this.clone(),
                     self.config.clone(),
+                    self.webrtc_config.clone(),
                     sig_url,
                     listener,
                     self.evt_send.clone(),
@@ -199,6 +201,7 @@ impl Endpoint {
                     Mutex::new(EpInner {
                         this: this.clone(),
                         config,
+                        webrtc_config: b"{}".to_vec(),
                         recv_limit,
                         evt_send,
                         sig_map: HashMap::default(),

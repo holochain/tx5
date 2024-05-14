@@ -24,6 +24,7 @@ impl HubMap {
 }
 
 async fn hub_map_assert(
+    webrtc_config: &Arc<Mutex<Vec<u8>>>,
     is_polite: bool,
     pub_key: PubKey,
     map: &mut HubMap,
@@ -53,6 +54,7 @@ async fn hub_map_assert(
     // we're connected to the peer, create a connection
 
     let (conn, recv, cmd_send) = Conn::priv_new(
+        webrtc_config.lock().unwrap().clone(),
         is_polite,
         pub_key.clone(),
         Arc::downgrade(client),
@@ -94,6 +96,7 @@ impl HubRecv {
 
 /// A signal server connection from which we can establish tx5 connections.
 pub struct Hub {
+    webrtc_config: Arc<Mutex<Vec<u8>>>,
     client: Arc<tx5_signal::SignalConnection>,
     cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
     task_list: Vec<tokio::task::JoinHandle<()>>,
@@ -112,9 +115,12 @@ impl Hub {
     /// Note, if this is not a "listener" client,
     /// you do not need to ever call accept.
     pub async fn new(
+        webrtc_config: Vec<u8>,
         url: &str,
         config: Arc<tx5_signal::SignalConfig>,
     ) -> Result<(Self, HubRecv)> {
+        let webrtc_config = Arc::new(Mutex::new(webrtc_config));
+
         let (client, mut recv) =
             tx5_signal::SignalConnection::connect(url, config.clone()).await?;
         let client = Arc::new(client);
@@ -140,6 +146,7 @@ impl Hub {
             let _ = cmd_send2.send(HubCmd::Close).await;
         }));
 
+        let webrtc_config2 = webrtc_config.clone();
         let (conn_send, conn_recv) = tokio::sync::mpsc::channel(32);
         let weak_client = Arc::downgrade(&client);
         let url = url.to_string();
@@ -156,7 +163,12 @@ impl Hub {
                             }
                             let is_polite = pub_key > this_pub_key;
                             let (recv, conn, cmd_send) = match hub_map_assert(
-                                is_polite, pub_key, &mut map, &client, &config,
+                                &webrtc_config2,
+                                is_polite,
+                                pub_key,
+                                &mut map,
+                                &client,
+                                &config,
                             )
                             .await
                             {
@@ -188,7 +200,11 @@ impl Hub {
                         if let Some(client) = weak_client.upgrade() {
                             let _ = resp.send(
                                 hub_map_assert(
-                                    is_polite, pub_key, &mut map, &client,
+                                    &webrtc_config2,
+                                    is_polite,
+                                    pub_key,
+                                    &mut map,
+                                    &client,
                                     &config,
                                 )
                                 .await
@@ -211,6 +227,7 @@ impl Hub {
 
         Ok((
             Self {
+                webrtc_config,
                 client,
                 cmd_send,
                 task_list,
@@ -240,5 +257,10 @@ impl Hub {
         } else {
             Err(Error::other("already connected"))
         }
+    }
+
+    /// Set a new webrtc config.
+    pub fn set_webrtc_config(&self, webrtc_config: Vec<u8>) {
+        *self.webrtc_config.lock().unwrap() = webrtc_config;
     }
 }

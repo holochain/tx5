@@ -46,6 +46,7 @@ impl Conn {
     }
 
     pub(crate) fn priv_new(
+        webrtc_config: Vec<u8>,
         is_polite: bool,
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
@@ -162,9 +163,8 @@ impl Conn {
 
             let (webrtc, mut webrtc_recv) = webrtc::Webrtc::new(
                 is_polite,
-                // TODO - pass stun server config here
-                b"{}".to_vec(),
-                // TODO - make this configurable
+                webrtc_config,
+                // MAYBE - make this configurable
                 4096,
             );
 

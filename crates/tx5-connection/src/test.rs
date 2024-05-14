@@ -30,6 +30,7 @@ impl TestSrv {
     pub async fn hub(&self) -> (Hub, HubRecv) {
         for addr in self.server.bind_addrs() {
             if let Ok(r) = Hub::new(
+                b"{}".to_vec(),
                 &format!("ws://{addr}"),
                 Arc::new(tx5_signal::SignalConfig {
                     listener: true,

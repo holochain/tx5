@@ -25,6 +25,7 @@ impl Sig {
     pub fn new(
         ep: Weak<Mutex<EpInner>>,
         config: Arc<Config>,
+        webrtc_config: Vec<u8>,
         sig_url: SigUrl,
         listener: bool,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
@@ -38,6 +39,7 @@ impl Sig {
                 ep,
                 this.clone(),
                 config,
+                webrtc_config,
                 sig_url.clone(),
                 listener,
                 evt_send,
@@ -86,6 +88,7 @@ impl Sig {
 
 async fn connect_loop(
     config: Arc<Config>,
+    webrtc_config: Vec<u8>,
     sig_url: SigUrl,
     listener: bool,
     mut resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
@@ -104,7 +107,7 @@ async fn connect_loop(
     loop {
         match tokio::time::timeout(
             config.timeout,
-            Hub::new(&sig_url, signal_config.clone()),
+            Hub::new(webrtc_config.clone(), &sig_url, signal_config.clone()),
         )
         .await
         .map_err(Error::other)
@@ -151,6 +154,7 @@ async fn task(
     ep: Weak<Mutex<EpInner>>,
     this: Weak<Sig>,
     config: Arc<Config>,
+    webrtc_config: Vec<u8>,
     sig_url: SigUrl,
     listener: bool,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
@@ -162,8 +166,14 @@ async fn task(
         sig: this,
     };
 
-    let (hub, mut hub_recv) =
-        connect_loop(config.clone(), sig_url.clone(), listener, resp_url).await;
+    let (hub, mut hub_recv) = connect_loop(
+        config.clone(),
+        webrtc_config,
+        sig_url.clone(),
+        listener,
+        resp_url,
+    )
+    .await;
 
     let local_url = sig_url.to_peer(hub.pub_key().clone());
 

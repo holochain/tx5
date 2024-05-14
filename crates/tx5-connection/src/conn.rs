@@ -20,7 +20,7 @@ impl ConnRecv {
 pub struct Conn {
     ready: Arc<tokio::sync::Semaphore>,
     pub_key: PubKey,
-    cmd_send: Weak<tokio::sync::mpsc::Sender<ConnCmd>>,
+    cmd_send: CloseSend<ConnCmd>,
     conn_task: tokio::task::JoinHandle<()>,
     keepalive_task: tokio::task::JoinHandle<()>,
 
@@ -42,19 +42,19 @@ impl Conn {
     }
 
     pub(crate) fn priv_new(
+        is_polite: bool,
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
         config: Arc<tx5_signal::SignalConfig>,
-    ) -> (Arc<Self>, ConnRecv, Arc<tokio::sync::mpsc::Sender<ConnCmd>>) {
+    ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
 
         #[cfg(test)]
         let webrtc_ready = Arc::new(tokio::sync::Semaphore::new(0));
 
-        let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
-        let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
-        let cmd_send = Arc::new(cmd_send);
+        let (mut msg_send, msg_recv) = CloseSend::channel();
+        let (cmd_send, mut cmd_recv) = CloseSend::channel();
 
         let keepalive_dur = config.max_idle / 2;
         let client2 = client.clone();
@@ -79,7 +79,7 @@ impl Conn {
         let ready2 = ready.clone();
         let client2 = client.clone();
         let pub_key2 = pub_key.clone();
-        let cmd_send3 = Arc::downgrade(&cmd_send);
+        let cmd_send3 = cmd_send.clone();
         let conn_task = tokio::task::spawn(async move {
             let client = match client2.upgrade() {
                 Some(client) => client,
@@ -148,8 +148,7 @@ impl Conn {
             ready2.close();
 
             let (webrtc, mut webrtc_recv) = webrtc::Webrtc::new(
-                // TODO - we need the *this* pub_key to determine politeness
-                false,
+                is_polite,
                 // TODO - pass stun server config here
                 b"{}".to_vec(),
                 // TODO - make this configurable
@@ -158,8 +157,10 @@ impl Conn {
 
             let client3 = client2.clone();
             let pub_key3 = pub_key2.clone();
-            let msg_send2 = msg_send.clone();
+            let mut msg_send2 = msg_send.clone();
             let _webrtc_task = AbortTask(tokio::task::spawn(async move {
+                msg_send2.set_close_on_drop(true);
+
                 use webrtc::WebrtcEvt::*;
                 while let Some(evt) = webrtc_recv.recv().await {
                     match evt {
@@ -208,21 +209,21 @@ impl Conn {
                             }
                         }
                         Ready => {
-                            if let Some(cmd_send) = cmd_send3.upgrade() {
-                                if cmd_send
-                                    .send(ConnCmd::WebrtcReady)
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            } else {
+                            if cmd_send3
+                                .send(ConnCmd::WebrtcReady)
+                                .await
+                                .is_err()
+                            {
                                 break;
                             }
                         }
                     }
                 }
             }));
+
+            msg_send.set_close_on_drop(true);
+
+            let mut send_over_webrtc = false;
 
             while let Ok(Some(cmd)) =
                 tokio::time::timeout(config.max_idle, cmd_recv.recv()).await
@@ -260,7 +261,11 @@ impl Conn {
                         }
                     }
                     ConnCmd::SendMessage(msg) => {
-                        if let Some(client) = client2.upgrade() {
+                        if send_over_webrtc {
+                            if webrtc.message(msg).await.is_err() {
+                                break;
+                            }
+                        } else if let Some(client) = client2.upgrade() {
                             if client
                                 .send_message(&pub_key2, msg)
                                 .await
@@ -273,6 +278,8 @@ impl Conn {
                         }
                     }
                     ConnCmd::WebrtcReady => {
+                        send_over_webrtc = true;
+
                         #[cfg(test)]
                         webrtc_ready2.close();
                     }
@@ -287,20 +294,20 @@ impl Conn {
             // the receiver side is closed because msg_send is dropped.
         });
 
-        (
-            Arc::new(Self {
-                ready,
-                pub_key,
-                cmd_send: Arc::downgrade(&cmd_send),
-                conn_task,
-                keepalive_task,
+        let mut cmd_send2 = cmd_send.clone();
+        cmd_send2.set_close_on_drop(true);
+        let this = Self {
+            ready,
+            pub_key,
+            cmd_send: cmd_send2,
+            conn_task,
+            keepalive_task,
 
-                #[cfg(test)]
-                webrtc_ready,
-            }),
-            ConnRecv(msg_recv),
-            cmd_send,
-        )
+            #[cfg(test)]
+            webrtc_ready,
+        };
+
+        (Arc::new(this), ConnRecv(msg_recv), cmd_send)
     }
 
     /// Wait until this connection is ready to send / receive data.
@@ -322,13 +329,6 @@ impl Conn {
 
     /// Send up to 16KiB of message data.
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
-        if let Some(cmd_send) = self.cmd_send.upgrade() {
-            cmd_send
-                .send(ConnCmd::SendMessage(msg))
-                .await
-                .map_err(|_| Error::other("closed"))
-        } else {
-            Err(Error::other("closed"))
-        }
+        self.cmd_send.send(ConnCmd::SendMessage(msg)).await
     }
 }

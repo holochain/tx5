@@ -33,6 +33,10 @@ pub type BoxFut<'lt, T> =
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(crate = "deps::serde", rename_all = "camelCase")]
 pub struct Tx5InitConfig {
+    /// If true, tracing logs from the backend webrtc library will be included.
+    /// Defaults to `false`.
+    pub tracing_enabled: bool,
+
     /// The minimum ephemeral udp port to bind. Defaults to `1`.
     pub ephemeral_udp_port_min: u16,
 
@@ -43,6 +47,7 @@ pub struct Tx5InitConfig {
 impl Default for Tx5InitConfig {
     fn default() -> Self {
         Self {
+            tracing_enabled: false,
             ephemeral_udp_port_min: 1,
             ephemeral_udp_port_max: 65535,
         }

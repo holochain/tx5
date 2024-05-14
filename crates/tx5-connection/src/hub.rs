@@ -1,7 +1,6 @@
 pub use super::*;
 
-type HubMapT =
-    HashMap<PubKey, (Weak<Conn>, Arc<tokio::sync::mpsc::Sender<ConnCmd>>)>;
+type HubMapT = HashMap<PubKey, (Weak<Conn>, CloseSend<ConnCmd>)>;
 struct HubMap(HubMapT);
 
 impl std::ops::Deref for HubMap {
@@ -25,15 +24,12 @@ impl HubMap {
 }
 
 async fn hub_map_assert(
+    is_polite: bool,
     pub_key: PubKey,
     map: &mut HubMap,
     client: &Arc<tx5_signal::SignalConnection>,
     config: &Arc<tx5_signal::SignalConfig>,
-) -> Result<(
-    Option<ConnRecv>,
-    Arc<Conn>,
-    Arc<tokio::sync::mpsc::Sender<ConnCmd>>,
-)> {
+) -> Result<(Option<ConnRecv>, Arc<Conn>, CloseSend<ConnCmd>)> {
     let mut found_during_prune = None;
 
     map.retain(|_, c| {
@@ -56,12 +52,19 @@ async fn hub_map_assert(
 
     // we're connected to the peer, create a connection
 
-    let (conn, recv, cmd_send) =
-        Conn::priv_new(pub_key.clone(), Arc::downgrade(client), config.clone());
+    let (conn, recv, cmd_send) = Conn::priv_new(
+        is_polite,
+        pub_key.clone(),
+        Arc::downgrade(client),
+        config.clone(),
+    );
 
     let weak_conn = Arc::downgrade(&conn);
 
-    map.insert(pub_key, (weak_conn, cmd_send.clone()));
+    let mut store_cmd_send = cmd_send.clone();
+    store_cmd_send.set_close_on_drop(true);
+
+    map.insert(pub_key, (weak_conn, store_cmd_send));
 
     Ok((Some(recv), conn, cmd_send))
 }
@@ -140,15 +143,20 @@ impl Hub {
         let (conn_send, conn_recv) = tokio::sync::mpsc::channel(32);
         let weak_client = Arc::downgrade(&client);
         let url = url.to_string();
-        let pub_key = client.pub_key().clone();
+        let this_pub_key = client.pub_key().clone();
         task_list.push(tokio::task::spawn(async move {
             let mut map = HubMap::new();
             while let Some(cmd) = cmd_recv.recv().await {
                 match cmd {
                     HubCmd::CliRecv { pub_key, msg } => {
                         if let Some(client) = weak_client.upgrade() {
+                            if pub_key == this_pub_key {
+                                // ignore self messages
+                                continue;
+                            }
+                            let is_polite = pub_key > this_pub_key;
                             let (recv, conn, cmd_send) = match hub_map_assert(
-                                pub_key, &mut map, &client, &config,
+                                is_polite, pub_key, &mut map, &client, &config,
                             )
                             .await
                             {
@@ -170,10 +178,18 @@ impl Hub {
                         }
                     }
                     HubCmd::Connect { pub_key, resp } => {
+                        if pub_key == this_pub_key {
+                            let _ = resp.send(Err(Error::other(
+                                "cannot connect to self",
+                            )));
+                            continue;
+                        }
+                        let is_polite = pub_key > this_pub_key;
                         if let Some(client) = weak_client.upgrade() {
                             let _ = resp.send(
                                 hub_map_assert(
-                                    pub_key, &mut map, &client, &config,
+                                    is_polite, pub_key, &mut map, &client,
+                                    &config,
                                 )
                                 .await
                                 .map(|(recv, conn, _)| (recv, conn)),
@@ -190,7 +206,7 @@ impl Hub {
                 client.close().await;
             }
 
-            tracing::debug!(%url, ?pub_key, "hub close");
+            tracing::debug!(%url, ?this_pub_key, "hub close");
         }));
 
         Ok((

@@ -169,6 +169,68 @@ impl Test {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn webrtc_transition_ordering() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
+    let test = Test::new().await;
+
+    let ep1 = test.ep(config.clone()).await;
+
+    let mut ep2 = test.ep(config).await;
+    let a2 = ep2.peer_url();
+    let mut r2 = ep2.take_recv().unwrap();
+
+    let ts1 = tokio::task::spawn(async move {
+        let mut msg_id = 1_u32;
+        loop {
+            ep1.send(a2.clone(), msg_id.to_be_bytes().to_vec())
+                .await
+                .unwrap();
+            msg_id += 1;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+
+    let tr2 = tokio::task::spawn(tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        async move {
+            // at least the first message should be passed before webrtc
+            // can connect
+            let mut got_non_webrtc = false;
+
+            let mut want_msg_id = 1_u32;
+            loop {
+                let (_, msg) = r2.recv().await.unwrap();
+                if u32::from_be_bytes([msg[0], msg[1], msg[2], msg[3]])
+                    != want_msg_id
+                {
+                    panic!("out of order message");
+                }
+                println!("got {want_msg_id}");
+                want_msg_id += 1;
+
+                let is_webrtc =
+                    ep2.get_stats().connection_list.get(0).unwrap().is_webrtc;
+                println!("is_webrtc {is_webrtc}");
+                if is_webrtc {
+                    if !got_non_webrtc {
+                        panic!("failed to receive any pre-webrtc messages");
+                    }
+                    ts1.abort();
+                    break;
+                } else {
+                    got_non_webrtc = true;
+                }
+            }
+        },
+    ));
+
+    tr2.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ep_sanity() {
     let config = Arc::new(Config {
         signal_allow_plain_text: true,
@@ -185,9 +247,10 @@ async fn ep_sanity() {
     assert_eq!(ep1.peer_url(), from);
     assert_eq!(&b"hello"[..], &msg);
 
-    //let stats = ep1.get_stats().await;
-
-    //println!("STATS: {}", serde_json::to_string_pretty(&stats).unwrap());
+    let ep1_stats = ep1.get_stats();
+    println!("ep1 STATS: {ep1_stats:#?}");
+    let ep2_stats = ep2.get_stats();
+    println!("ep2 STATS: {ep2_stats:#?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

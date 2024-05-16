@@ -13,7 +13,7 @@ pub enum StatsBackend {
 }
 
 /// Data for an individual connection.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct StatsConnection {
@@ -37,6 +37,23 @@ pub struct StatsConnection {
 
     /// True if this connection has successfully upgraded to webrtc.
     pub is_webrtc: bool,
+}
+
+impl std::fmt::Debug for StatsConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use base64::Engine;
+        let k = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(self.pub_key);
+        f.debug_struct("StatsConnection")
+            .field("pub_key", &k)
+            .field("send_message_count", &self.send_message_count)
+            .field("send_bytes", &self.send_bytes)
+            .field("recv_message_count", &self.recv_message_count)
+            .field("recv_bytes", &self.recv_bytes)
+            .field("opened_at_s", &self.opened_at_s)
+            .field("is_webrtc", &self.is_webrtc)
+            .finish()
+    }
 }
 
 /// Stats type.

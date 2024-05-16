@@ -100,23 +100,27 @@ func CallPeerConAlloc(
 	handle := UintPtrT(cgo.NewHandle(peerCon))
 	peerCon.handle = handle
 
-	EmitTrace(
-		LvlDebug,
-		fmt.Sprintf(
-			"PeerConnection(%v).PeerConAlloc()",
-			handle,
-		),
-	)
-
-	con.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+	/*
 		EmitTrace(
-			LvlTrace,
+			LvlDebug,
 			fmt.Sprintf(
-				"PeerConnection(%v).OnICECandidate(%v)",
+				"PeerConnection(%v).PeerConAlloc()",
 				handle,
-				candidate,
 			),
 		)
+	*/
+
+	con.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		/*
+			EmitTrace(
+				LvlTrace,
+				fmt.Sprintf(
+					"PeerConnection(%v).OnICECandidate(%v)",
+					handle,
+					candidate,
+				),
+			)
+		*/
 
 		if candidate == nil {
 			return
@@ -151,14 +155,16 @@ func CallPeerConAlloc(
 	con.OnDataChannel(func(ch *webrtc.DataChannel) {
 		dataChan := NewDataChan(ch)
 
-		EmitTrace(
-			LvlTrace,
-			fmt.Sprintf(
-				"PeerConnection(%v).OnDataChannel(%v)",
-				handle,
-				dataChan.handle,
-			),
-		)
+		/*
+			EmitTrace(
+				LvlTrace,
+				fmt.Sprintf(
+					"PeerConnection(%v).OnDataChannel(%v)",
+					handle,
+					dataChan.handle,
+				),
+			)
+		*/
 
 		EmitEvent(
 			TyPeerConOnDataChannel,

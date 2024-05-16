@@ -185,6 +185,7 @@ func EmitEvent(
 }
 
 type Tx5InitConfig struct {
+	TracingEnabled      *bool   `json:"tracingEnabled,omitempty"`
 	EphemeralUdpPortMin *uint16 `json:"ephemeralUdpPortMin,omitempty"`
 	EphemeralUdpPortMax *uint16 `json:"ephemeralUdpPortMax,omitempty"`
 }
@@ -210,8 +211,14 @@ func CallTx5Init(
 		panic(errStr)
 	}
 
-	setting_engine := webrtc.SettingEngine{
-		LoggerFactory: customLoggerFactory{},
+	var setting_engine webrtc.SettingEngine
+
+	if tmpConfig.TracingEnabled != nil && *tmpConfig.TracingEnabled {
+		setting_engine = webrtc.SettingEngine{
+			LoggerFactory: customLoggerFactory{},
+		}
+	} else {
+		setting_engine = webrtc.SettingEngine{}
 	}
 
 	var port_min uint16 = 1

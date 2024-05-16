@@ -96,18 +96,11 @@ impl SignalConnection {
         Ok(())
     }
 
-    /// Send a webrtc offer request to a peer.
-    pub async fn send_offer_req(&self, pub_key: &PubKey) -> Result<()> {
-        let msg = SignalMessage::offer_req();
-        self.client.send(pub_key, &msg).await?;
-        Ok(())
-    }
-
     /// Send a webrtc offer to a peer.
     pub async fn send_offer(
         &self,
         pub_key: &PubKey,
-        offer: serde_json::Value,
+        offer: Vec<u8>,
     ) -> Result<()> {
         let msg = SignalMessage::offer(offer)?;
         self.client.send(pub_key, &msg).await?;
@@ -118,7 +111,7 @@ impl SignalConnection {
     pub async fn send_answer(
         &self,
         pub_key: &PubKey,
-        answer: serde_json::Value,
+        answer: Vec<u8>,
     ) -> Result<()> {
         let msg = SignalMessage::answer(answer)?;
         self.client.send(pub_key, &msg).await?;
@@ -126,11 +119,7 @@ impl SignalConnection {
     }
 
     /// Send a webrtc ice message to a peer.
-    pub async fn send_ice(
-        &self,
-        pub_key: &PubKey,
-        ice: serde_json::Value,
-    ) -> Result<()> {
+    pub async fn send_ice(&self, pub_key: &PubKey, ice: Vec<u8>) -> Result<()> {
         let msg = SignalMessage::ice(ice)?;
         self.client.send(pub_key, &msg).await?;
         Ok(())
@@ -143,6 +132,13 @@ impl SignalConnection {
         message: Vec<u8>,
     ) -> Result<()> {
         let msg = SignalMessage::message(message)?;
+        self.client.send(pub_key, &msg).await?;
+        Ok(())
+    }
+
+    /// Send webrtc ready message to a peer.
+    pub async fn send_webrtc_ready(&self, pub_key: &PubKey) -> Result<()> {
+        let msg = SignalMessage::webrtc_ready();
         self.client.send(pub_key, &msg).await?;
         Ok(())
     }

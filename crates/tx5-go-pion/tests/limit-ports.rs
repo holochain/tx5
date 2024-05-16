@@ -3,6 +3,7 @@ async fn limit_ports() {
     tx5_core::Tx5InitConfig {
         ephemeral_udp_port_min: 40000,
         ephemeral_udp_port_max: 40000,
+        ..Default::default()
     }
     .set_as_global_default()
     .unwrap();

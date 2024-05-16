@@ -30,6 +30,7 @@ impl TestSrv {
     pub async fn hub(&self) -> (Hub, HubRecv) {
         for addr in self.server.bind_addrs() {
             if let Ok(r) = Hub::new(
+                b"{}".to_vec(),
                 &format!("ws://{addr}"),
                 Arc::new(tx5_signal::SignalConfig {
                     listener: true,
@@ -115,6 +116,47 @@ async fn sanity() {
     println!("await ready");
     tokio::join!(c1.ready(), c2.ready());
     println!("ready");
+
+    c1.send(b"hello".to_vec()).await.unwrap();
+    assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());
+
+    c2.send(b"world".to_vec()).await.unwrap();
+    assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn webrtc_sanity() {
+    /*
+    let _ = Tx5InitConfig {
+        tracing_enabled: true,
+        ..Default::default()
+    }.set_as_global_default();
+    */
+
+    init_tracing();
+
+    let srv = TestSrv::new().await;
+
+    let (hub1, _hubr1) = srv.hub().await;
+    let pk1 = hub1.pub_key().clone();
+
+    let (hub2, mut hubr2) = srv.hub().await;
+    let pk2 = hub2.pub_key().clone();
+
+    println!("connect");
+    let (c1, mut r1) = hub1.connect(pk2).await.unwrap();
+    println!("accept");
+    let (c2, mut r2) = hubr2.accept().await.unwrap();
+
+    assert_eq!(&pk1, c2.pub_key());
+
+    println!("await ready");
+    tokio::join!(c1.ready(), c2.ready());
+    println!("ready");
+
+    println!("await webrtc ready");
+    tokio::join!(c1.webrtc_ready(), c2.webrtc_ready());
+    println!("webrtc ready");
 
     c1.send(b"hello".to_vec()).await.unwrap();
     assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());

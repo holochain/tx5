@@ -2,11 +2,11 @@ use crate::*;
 
 const F_HREQ: &[u8] = b"hreq";
 const F_HRES: &[u8] = b"hres";
-const F_OREQ: &[u8] = b"oreq";
 const F_OFFR: &[u8] = b"offr";
 const F_ANSW: &[u8] = b"answ";
 const F_ICEM: &[u8] = b"icem";
 const F_FMSG: &[u8] = b"fmsg";
+const F_RTCG: &[u8] = b"rtcg";
 const F_KEEP: &[u8] = b"keep";
 
 /// Parsed signal message.
@@ -17,20 +17,20 @@ pub enum SignalMessage {
     /// Complete a handshake with a peer.
     HandshakeRes([u8; 32]),
 
-    /// As a polite node, request a webrtc offer from an impolite node.
-    OfferReq,
-
     /// As an impolite node, send a webrtc offer.
-    Offer(serde_json::Value),
+    Offer(Vec<u8>),
 
     /// As a polite node, send a webrtc answer.
-    Answer(serde_json::Value),
+    Answer(Vec<u8>),
 
     /// Webrtc connectivity message.
-    Ice(serde_json::Value),
+    Ice(Vec<u8>),
 
     /// Pre-webrtc and webrtc failure fallback communication message.
     Message(Vec<u8>),
+
+    /// Notification that further messages will be passed via webrtc.
+    WebrtcReady,
 
     /// Keepalive
     Keepalive,
@@ -44,11 +44,11 @@ impl std::fmt::Debug for SignalMessage {
         match self {
             Self::HandshakeReq(_) => f.write_str("HandshakeReq"),
             Self::HandshakeRes(_) => f.write_str("HandshakeRes"),
-            Self::OfferReq => f.write_str("OfferReq"),
             Self::Offer(_) => f.write_str("Offer"),
             Self::Answer(_) => f.write_str("Answer"),
             Self::Ice(_) => f.write_str("Ice"),
             Self::Message(_) => f.write_str("Message"),
+            Self::WebrtcReady => f.write_str("WebrtcReady"),
             Self::Keepalive => f.write_str("Keepalive"),
             Self::Unknown => f.write_str("Unknown"),
         }
@@ -79,28 +79,20 @@ impl SignalMessage {
         out
     }
 
-    /// As a polite node, request a webrtc offer from an impolite node.
-    pub(crate) fn offer_req() -> Vec<u8> {
-        F_OREQ.to_vec()
-    }
-
     /// As an impolite node, send a webrtc offer.
-    pub(crate) fn offer(offer: serde_json::Value) -> Result<Vec<u8>> {
-        let mut offer = serde_json::to_string(&offer)?.into_bytes();
+    pub(crate) fn offer(mut offer: Vec<u8>) -> Result<Vec<u8>> {
         offer.splice(0..0, F_OFFR.iter().cloned());
         Ok(offer)
     }
 
     /// As a polite node, send a webrtc answer.
-    pub(crate) fn answer(answer: serde_json::Value) -> Result<Vec<u8>> {
-        let mut answer = serde_json::to_string(&answer)?.into_bytes();
+    pub(crate) fn answer(mut answer: Vec<u8>) -> Result<Vec<u8>> {
         answer.splice(0..0, F_ANSW.iter().cloned());
         Ok(answer)
     }
 
     /// Webrtc connectivity message.
-    pub(crate) fn ice(ice: serde_json::Value) -> Result<Vec<u8>> {
-        let mut ice = serde_json::to_string(&ice)?.into_bytes();
+    pub(crate) fn ice(mut ice: Vec<u8>) -> Result<Vec<u8>> {
         ice.splice(0..0, F_ICEM.iter().cloned());
         Ok(ice)
     }
@@ -112,6 +104,11 @@ impl SignalMessage {
         }
         msg.splice(0..0, F_FMSG.iter().cloned());
         Ok(msg)
+    }
+
+    /// Notification that further messages will be passed via webrtc.
+    pub(crate) fn webrtc_ready() -> Vec<u8> {
+        F_RTCG.to_vec()
     }
 
     /// Keepalive.
@@ -141,23 +138,23 @@ impl SignalMessage {
                 nonce.copy_from_slice(&b[4..]);
                 Ok(SignalMessage::HandshakeRes(nonce))
             }
-            F_OREQ => Ok(SignalMessage::OfferReq),
             F_OFFR => {
-                let offer = serde_json::from_slice(&b[4..])?;
-                Ok(SignalMessage::Offer(offer))
+                let _ = b.drain(..4);
+                Ok(SignalMessage::Offer(b))
             }
             F_ANSW => {
-                let answer = serde_json::from_slice(&b[4..])?;
-                Ok(SignalMessage::Answer(answer))
+                let _ = b.drain(..4);
+                Ok(SignalMessage::Answer(b))
             }
             F_ICEM => {
-                let ice = serde_json::from_slice(&b[4..])?;
-                Ok(SignalMessage::Ice(ice))
+                let _ = b.drain(..4);
+                Ok(SignalMessage::Ice(b))
             }
             F_FMSG => {
                 let _ = b.drain(..4);
                 Ok(SignalMessage::Message(b))
             }
+            F_RTCG => Ok(SignalMessage::WebrtcReady),
             F_KEEP => Ok(SignalMessage::Keepalive),
             _ => Ok(SignalMessage::Unknown),
         }

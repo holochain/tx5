@@ -10,6 +10,15 @@ enum MaybeReady {
 pub(crate) struct Peer {
     ready: Arc<Mutex<MaybeReady>>,
     task: tokio::task::JoinHandle<()>,
+    pub(crate) pub_key: PubKey,
+    pub(crate) opened_at_s: u64,
+}
+
+fn timestamp() -> u64 {
+    std::time::SystemTime::UNIX_EPOCH
+        .elapsed()
+        .expect("failed to get time")
+        .as_secs()
 }
 
 impl Drop for Peer {
@@ -29,6 +38,7 @@ impl Peer {
         Arc::new_cyclic(|_this| {
             let wait = Arc::new(tokio::sync::Semaphore::new(0));
             let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
+            let pub_key = peer_url.pub_key().clone();
 
             let task = tokio::task::spawn(connect(
                 config,
@@ -39,7 +49,14 @@ impl Peer {
                 ready.clone(),
             ));
 
-            Self { ready, task }
+            let opened_at_s = timestamp();
+
+            Self {
+                ready,
+                task,
+                pub_key,
+                opened_at_s,
+            }
         })
     }
 
@@ -55,6 +72,7 @@ impl Peer {
         Arc::new_cyclic(|_this| {
             let wait = Arc::new(tokio::sync::Semaphore::new(0));
             let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
+            let pub_key = peer_url.pub_key().clone();
 
             let task = tokio::task::spawn(task(
                 config,
@@ -66,8 +84,31 @@ impl Peer {
                 ready.clone(),
             ));
 
-            Self { ready, task }
+            let opened_at_s = timestamp();
+
+            Self {
+                ready,
+                task,
+                pub_key,
+                opened_at_s,
+            }
         })
+    }
+
+    pub fn is_using_webrtc(&self) -> bool {
+        if let MaybeReady::Ready(r) = &*self.ready.lock().unwrap() {
+            r.is_using_webrtc()
+        } else {
+            false
+        }
+    }
+
+    pub fn get_stats(&self) -> ConnStats {
+        if let MaybeReady::Ready(r) = &*self.ready.lock().unwrap() {
+            r.get_stats()
+        } else {
+            ConnStats::default()
+        }
     }
 
     pub async fn ready(&self) {

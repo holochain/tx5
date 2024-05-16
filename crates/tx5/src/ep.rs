@@ -76,6 +76,7 @@ impl EndpointRecv {
 pub(crate) struct EpInner {
     this: Weak<Mutex<EpInner>>,
     config: Arc<Config>,
+    webrtc_config: Vec<u8>,
     recv_limit: Arc<tokio::sync::Semaphore>,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     sig_map: HashMap<SigUrl, Arc<Sig>>,
@@ -113,6 +114,7 @@ impl EpInner {
                 Sig::new(
                     self.this.clone(),
                     self.config.clone(),
+                    self.webrtc_config.clone(),
                     sig_url,
                     listener,
                     self.evt_send.clone(),
@@ -199,6 +201,7 @@ impl Endpoint {
                     Mutex::new(EpInner {
                         this: this.clone(),
                         config,
+                        webrtc_config: b"{}".to_vec(),
                         recv_limit,
                         evt_send,
                         sig_map: HashMap::default(),
@@ -302,10 +305,30 @@ impl Endpoint {
         #[cfg(feature = "backend-webrtc-rs")]
         let backend = stats::StatsBackend::BackendWebrtcRs;
 
+        let connection_list = self
+            .inner
+            .lock()
+            .unwrap()
+            .peer_map
+            .values()
+            .map(|peer| {
+                let stats = peer.get_stats();
+                stats::StatsConnection {
+                    pub_key: *peer.pub_key.0,
+                    send_message_count: stats.send_msg_count,
+                    send_bytes: stats.send_byte_count,
+                    recv_message_count: stats.recv_msg_count,
+                    recv_bytes: stats.recv_byte_count,
+                    opened_at_s: peer.opened_at_s,
+                    is_webrtc: peer.is_using_webrtc(),
+                }
+            })
+            .collect();
+
         stats::Stats {
             backend,
             peer_url_list: self.get_listening_addresses(),
-            connection_list: Vec::new(),
+            connection_list,
         }
     }
 }

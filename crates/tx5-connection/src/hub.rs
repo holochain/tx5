@@ -259,7 +259,9 @@ impl Hub {
         }
     }
 
-    /// Set a new webrtc config.
+    /// Alter the webrtc_config at runtime. This will affect all future
+    /// new outgoing connections, and all connections accepted on the
+    /// receiver. It will not affect any connections already established.
     pub fn set_webrtc_config(&self, webrtc_config: Vec<u8>) {
         *self.webrtc_config.lock().unwrap() = webrtc_config;
     }

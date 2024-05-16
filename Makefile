@@ -7,21 +7,18 @@ SHELL = /usr/bin/env sh -eu
 all: test
 
 publish-all:
-	$(MAKE) publish crate=tx5-connection
 	$(MAKE) publish crate=tx5-core
 	$(MAKE) publish crate=tx5-online
 	$(MAKE) publish crate=tx5-go-pion-turn
 	$(MAKE) publish crate=tx5-go-pion-sys
 	$(MAKE) publish crate=tx5-go-pion
 	$(MAKE) publish crate=tx5-signal
+	$(MAKE) publish crate=tx5-connection
 	$(MAKE) publish crate=tx5
 	$(MAKE) publish crate=tx5-demo
 
 publish:
 	@case "$(crate)" in \
-		tx5-connection) \
-			export MANIFEST="./crates/tx5-connection/Cargo.toml"; \
-			;; \
 		tx5-core) \
 			export MANIFEST="./crates/tx5-core/Cargo.toml"; \
 			;; \
@@ -40,6 +37,9 @@ publish:
 		tx5-signal) \
 			export MANIFEST="./crates/tx5-signal/Cargo.toml"; \
 			;; \
+		tx5-connection) \
+			export MANIFEST="./crates/tx5-connection/Cargo.toml"; \
+			;; \
 		tx5) \
 			export MANIFEST="./crates/tx5/Cargo.toml"; \
 			;; \
@@ -47,13 +47,13 @@ publish:
 			export MANIFEST="./crates/tx5-demo/Cargo.toml"; \
 			;; \
 		*) \
-			echo "USAGE: make publish crate=tx5-connection"; \
 			echo "USAGE: make publish crate=tx5-core"; \
 			echo "USAGE: make publish crate=tx5-online"; \
 			echo "USAGE: make publish crate=tx5-go-pion-turn"; \
 			echo "USAGE: make publish crate=tx5-go-pion-sys"; \
 			echo "USAGE: make publish crate=tx5-go-pion"; \
 			echo "USAGE: make publish crate=tx5-signal"; \
+			echo "USAGE: make publish crate=tx5-connection"; \
 			echo "USAGE: make publish crate=tx5"; \
 			echo "USAGE: make publish crate=tx5-demo"; \
 			exit 1; \

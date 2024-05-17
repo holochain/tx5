@@ -198,10 +198,12 @@ impl Endpoint {
             Self {
                 config: config.clone(),
                 inner: Arc::new_cyclic(|this| {
+                    let webrtc_config =
+                        config.initial_webrtc_config.as_bytes().to_vec();
                     Mutex::new(EpInner {
                         this: this.clone(),
                         config,
-                        webrtc_config: b"{}".to_vec(),
+                        webrtc_config,
                         recv_limit,
                         evt_send,
                         sig_map: HashMap::default(),

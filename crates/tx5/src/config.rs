@@ -5,6 +5,9 @@ pub struct Config {
     /// Allow plain text (non-tls) signal server connections.
     pub signal_allow_plain_text: bool,
 
+    /// Initial webrtc peer connection config. Defaults to `{}`.
+    pub initial_webrtc_config: String,
+
     /// Maximum count of open connections. Default 4096.
     pub connection_count_max: u32,
 
@@ -43,6 +46,7 @@ impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config3")
             .field("signal_allow_plain_text", &self.signal_allow_plain_text)
+            .field("initial_webrtc_config", &self.initial_webrtc_config)
             .field("connection_count_max", &self.connection_count_max)
             .field("send_buffer_bytes_max", &self.send_buffer_bytes_max)
             .field("recv_buffer_bytes_max", &self.recv_buffer_bytes_max)
@@ -66,6 +70,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             signal_allow_plain_text: false,
+            initial_webrtc_config: "{}".to_string(),
             connection_count_max: 4096,
             send_buffer_bytes_max: 64 * 1024,
             recv_buffer_bytes_max: 64 * 1024,

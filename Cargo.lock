@@ -2830,6 +2830,7 @@ dependencies = [
  "influxive-otel-atomic-obs",
  "sbd-server",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

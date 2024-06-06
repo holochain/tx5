@@ -136,11 +136,14 @@ async fn connect_loop(
 
 struct DropSig {
     ep: Weak<Mutex<EpInner>>,
+    sig_url: SigUrl,
     sig: Weak<Sig>,
 }
 
 impl Drop for DropSig {
     fn drop(&mut self) {
+        tracing::debug!(?self.sig_url, "signal connection closed");
+
         if let Some(ep_inner) = self.ep.upgrade() {
             if let Some(sig) = self.sig.upgrade() {
                 ep_inner.lock().unwrap().drop_sig(sig);
@@ -163,6 +166,7 @@ async fn task(
 ) {
     let _drop = DropSig {
         ep: ep.clone(),
+        sig_url: sig_url.clone(),
         sig: this,
     };
 

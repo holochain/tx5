@@ -1,5 +1,8 @@
 use crate::*;
 
+/// SigUrl and PeerUrl share a lot of common parsing code.
+/// This internal struct ensures the base urls are "canonical",
+/// always explicitly listing even well-known ports 80 and 443.
 struct UrlCanon {
     pub canon: String,
     pub pub_key: Option<PubKey>,

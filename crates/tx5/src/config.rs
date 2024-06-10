@@ -44,7 +44,7 @@ pub struct Config {
 
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Config3")
+        f.debug_struct("Config")
             .field("signal_allow_plain_text", &self.signal_allow_plain_text)
             .field("initial_webrtc_config", &self.initial_webrtc_config)
             .field("connection_count_max", &self.connection_count_max)

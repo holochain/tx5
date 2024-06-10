@@ -2166,9 +2166,9 @@ dependencies = [
 
 [[package]]
 name = "sbd-client"
-version = "0.0.3-alpha"
+version = "0.0.4-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e55df0af553392262e2d951a8894d5f43d50dc8d0c793c9f8fea9bd0efbb57e"
+checksum = "0085c09324634c08502f332f979b5b6c5a6d26f55333a271abfde1d5e2c8342c"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -2184,9 +2184,9 @@ dependencies = [
 
 [[package]]
 name = "sbd-e2e-crypto-client"
-version = "0.0.3-alpha"
+version = "0.0.4-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7898f19faa60cc5ef9172ea144e03d894591bec0aa2f8374cb02cafd4c2ca33"
+checksum = "3f371aef1df1d87cb916a3bb03858df6bcf56b26f837e3b16d6f5706366854dd"
 dependencies = [
  "sbd-client",
  "sodoken",
@@ -2195,9 +2195,9 @@ dependencies = [
 
 [[package]]
 name = "sbd-server"
-version = "0.0.3-alpha"
+version = "0.0.4-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2998d0c65754022cdc04ea0772fd41a55dee396a36c1be5bb40b8f37dd0840a"
+checksum = "fa7bb03d0e6d48afb63182446c53c103d66a3095dc0bab60e4d94e7b9efd1349"
 dependencies = [
  "anstyle",
  "base64 0.22.1",
@@ -2830,6 +2830,7 @@ dependencies = [
  "influxive-otel-atomic-obs",
  "sbd-server",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

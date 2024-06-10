@@ -1,6 +1,6 @@
 [package]
 name = "tx5-online"
-version = "0.0.11-alpha"
+version = "0.0.12-alpha"
 edition = "2021"
 description = "Holochain WebRTC P2P Communication Ecosystem Online Connectivity Events"
 license = "MIT OR Apache-2.0"

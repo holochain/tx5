@@ -1,6 +1,6 @@
 [package]
 name = "tx5-signal"
-version = "0.0.9-alpha"
+version = "0.0.9-alpha-patch.1"
 description = "holochain webrtc signal client"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/holochain/tx5"

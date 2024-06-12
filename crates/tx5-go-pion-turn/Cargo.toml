@@ -1,6 +1,6 @@
 [package]
 name = "tx5-go-pion-turn"
-version = "0.0.9-alpha"
+version = "0.0.9-alpha-patch.1"
 edition = "2021"
 description = "Rust process wrapper around tx5-go-pion-turn executable"
 license = "MIT OR Apache-2.0"

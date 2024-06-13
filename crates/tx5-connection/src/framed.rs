@@ -64,6 +64,9 @@ impl FramedConn {
             let _ = cmd_send2.send(Cmd::Close).await;
         });
 
+        let pub_key = conn.pub_key().clone();
+
+        let pub_key2 = pub_key.clone();
         let cmd_send2 = cmd_send.clone();
         let weak_conn = Arc::downgrade(&conn);
         let cmd_task = tokio::task::spawn(async move {
@@ -77,6 +80,13 @@ impl FramedConn {
                             Err(_) => break,
                             Ok(Idle) => (),
                             Ok(Message(msg)) => {
+                                tracing::trace!(
+                                    target: "NETAUDIT",
+                                    pub_key = ?pub_key2,
+                                    byte_count = msg.len(),
+                                    m = "tx5-connection",
+                                    a = "recv_framed",
+                                );
                                 if msg_send.send(msg).await.is_err() {
                                     break;
                                 }
@@ -139,8 +149,6 @@ impl FramedConn {
             }
         });
 
-        let pub_key = conn.pub_key().clone();
-
         Ok((
             Self {
                 pub_key,
@@ -179,6 +187,33 @@ impl FramedConn {
 
     /// Send a message on the connection.
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
+        let byte_count = msg.len();
+        match self.send_inner(msg).await {
+            Ok(_) => {
+                tracing::trace!(
+                    target: "NETAUDIT",
+                    pub_key = ?self.pub_key,
+                    byte_count,
+                    m = "tx5-connection",
+                    a = "send_framed_success",
+                );
+                Ok(())
+            }
+            Err(err) => {
+                tracing::debug!(
+                    target: "NETAUDIT",
+                    pub_key = ?self.pub_key,
+                    byte_count,
+                    ?err,
+                    m = "tx5-connection",
+                    a = "send_framed_error",
+                );
+                Err(err)
+            }
+        }
+    }
+
+    async fn send_inner(&self, msg: Vec<u8>) -> Result<()> {
         let conn = self.conn.lock().await;
 
         match crate::proto::proto_encode(&msg)? {

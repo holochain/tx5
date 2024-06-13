@@ -34,6 +34,13 @@ pub struct Conn {
 
 impl Drop for Conn {
     fn drop(&mut self) {
+        tracing::debug!(
+            target: "NETAUDIT",
+            pub_key = ?self.pub_key,
+            m = "tx5-connection",
+            a = "drop",
+        );
+
         self.conn_task.abort();
         self.keepalive_task.abort();
     }
@@ -52,6 +59,15 @@ impl Conn {
         client: Weak<tx5_signal::SignalConnection>,
         config: Arc<tx5_signal::SignalConfig>,
     ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
+        tracing::debug!(
+            target: "NETAUDIT",
+            webrtc_config = String::from_utf8_lossy(&webrtc_config).to_string(),
+            ?pub_key,
+            ?is_polite,
+            m = "tx5-connection",
+            a = "open",
+        );
+
         let send_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let send_byte_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let recv_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -175,6 +191,13 @@ impl Conn {
                 while let Some(evt) = webrtc_recv.recv().await {
                     match evt {
                         GeneratedOffer(offer) => {
+                            tracing::trace!(
+                                target: "NETAUDIT",
+                                pub_key = ?pub_key3,
+                                offer = String::from_utf8_lossy(&offer).to_string(),
+                                m = "tx5-connection",
+                                a = "send_offer",
+                            );
                             if let Some(client) = client3.upgrade() {
                                 if client
                                     .send_offer(&pub_key3, offer)
@@ -188,6 +211,13 @@ impl Conn {
                             }
                         }
                         GeneratedAnswer(answer) => {
+                            tracing::trace!(
+                                target: "NETAUDIT",
+                                pub_key = ?pub_key3,
+                                offer = String::from_utf8_lossy(&answer).to_string(),
+                                m = "tx5-connection",
+                                a = "send_answer",
+                            );
                             if let Some(client) = client3.upgrade() {
                                 if client
                                     .send_answer(&pub_key3, answer)
@@ -201,6 +231,13 @@ impl Conn {
                             }
                         }
                         GeneratedIce(ice) => {
+                            tracing::trace!(
+                                target: "NETAUDIT",
+                                pub_key = ?pub_key3,
+                                offer = String::from_utf8_lossy(&ice).to_string(),
+                                m = "tx5-connection",
+                                a = "send_ice",
+                            );
                             if let Some(client) = client3.upgrade() {
                                 if client
                                     .send_ice(&pub_key3, ice)
@@ -267,22 +304,49 @@ impl Conn {
                                 }
                             }
                             Offer(offer) => {
+                                tracing::trace!(
+                                    target: "NETAUDIT",
+                                    pub_key = ?pub_key2,
+                                    offer = String::from_utf8_lossy(&offer).to_string(),
+                                    m = "tx5-connection",
+                                    a = "recv_offer",
+                                );
                                 if webrtc.in_offer(offer).await.is_err() {
                                     break;
                                 }
                             }
                             Answer(answer) => {
+                                tracing::trace!(
+                                    target: "NETAUDIT",
+                                    pub_key = ?pub_key2,
+                                    offer = String::from_utf8_lossy(&answer).to_string(),
+                                    m = "tx5-connection",
+                                    a = "recv_answer",
+                                );
                                 if webrtc.in_answer(answer).await.is_err() {
                                     break;
                                 }
                             }
                             Ice(ice) => {
+                                tracing::trace!(
+                                    target: "NETAUDIT",
+                                    pub_key = ?pub_key2,
+                                    offer = String::from_utf8_lossy(&ice).to_string(),
+                                    m = "tx5-connection",
+                                    a = "recv_ice",
+                                );
                                 if webrtc.in_ice(ice).await.is_err() {
                                     break;
                                 }
                             }
                             WebrtcReady => {
                                 recv_over_webrtc = true;
+                                tracing::debug!(
+                                    target: "NETAUDIT",
+                                    pub_key = ?pub_key2,
+                                    m = "tx5-connection",
+                                    a = "recv_over_webrtc",
+                                );
                                 for msg in webrtc_message_buffer.drain(..) {
                                     // don't bump send metrics here,
                                     // we bumped them on receive
@@ -343,6 +407,12 @@ impl Conn {
                             break;
                         }
                         send_over_webrtc = true;
+                        tracing::debug!(
+                            target: "NETAUDIT",
+                            pub_key = ?pub_key2,
+                            m = "tx5-connection",
+                            a = "send_over_webrtc",
+                        );
                         webrtc_ready2.close();
                     }
                 }

@@ -30,6 +30,7 @@ pub struct Conn {
     send_byte_count: Arc<std::sync::atomic::AtomicU64>,
     recv_msg_count: Arc<std::sync::atomic::AtomicU64>,
     recv_byte_count: Arc<std::sync::atomic::AtomicU64>,
+    hub_cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
 }
 
 impl Drop for Conn {
@@ -43,6 +44,12 @@ impl Drop for Conn {
 
         self.conn_task.abort();
         self.keepalive_task.abort();
+
+        let hub_cmd_send = self.hub_cmd_send.clone();
+        let pub_key = self.pub_key.clone();
+        tokio::task::spawn(async move {
+            let _ = hub_cmd_send.send(HubCmd::Disconnect(pub_key)).await;
+        });
     }
 }
 
@@ -58,6 +65,7 @@ impl Conn {
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
         config: Arc<tx5_signal::SignalConfig>,
+        hub_cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
     ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
         tracing::debug!(
             target: "NETAUDIT",
@@ -439,6 +447,7 @@ impl Conn {
             send_byte_count,
             recv_msg_count,
             recv_byte_count,
+            hub_cmd_send,
         };
 
         (Arc::new(this), ConnRecv(msg_recv), cmd_send)

@@ -30,6 +30,7 @@ async fn hub_map_assert(
     map: &mut HubMap,
     client: &Arc<tx5_signal::SignalConnection>,
     config: &Arc<tx5_signal::SignalConfig>,
+    hub_cmd_send: &tokio::sync::mpsc::Sender<HubCmd>,
 ) -> Result<(Option<ConnRecv>, Arc<Conn>, CloseSend<ConnCmd>)> {
     let mut found_during_prune = None;
 
@@ -59,6 +60,7 @@ async fn hub_map_assert(
         pub_key.clone(),
         Arc::downgrade(client),
         config.clone(),
+        hub_cmd_send.clone(),
     );
 
     let weak_conn = Arc::downgrade(&conn);
@@ -81,6 +83,7 @@ pub(crate) enum HubCmd {
         resp:
             tokio::sync::oneshot::Sender<Result<(Option<ConnRecv>, Arc<Conn>)>>,
     },
+    Disconnect(PubKey),
     Close,
 }
 
@@ -98,7 +101,7 @@ impl HubRecv {
 pub struct Hub {
     webrtc_config: Arc<Mutex<Vec<u8>>>,
     client: Arc<tx5_signal::SignalConnection>,
-    cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
+    hub_cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
     task_list: Vec<tokio::task::JoinHandle<()>>,
 }
 
@@ -129,12 +132,12 @@ impl Hub {
 
         let mut task_list = Vec::new();
 
-        let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
+        let (hub_cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
 
-        let cmd_send2 = cmd_send.clone();
+        let hub_cmd_send2 = hub_cmd_send.clone();
         task_list.push(tokio::task::spawn(async move {
             while let Some((pub_key, msg)) = recv.recv_message().await {
-                if cmd_send2
+                if hub_cmd_send2
                     .send(HubCmd::CliRecv { pub_key, msg })
                     .await
                     .is_err()
@@ -143,7 +146,7 @@ impl Hub {
                 }
             }
 
-            let _ = cmd_send2.send(HubCmd::Close).await;
+            let _ = hub_cmd_send2.send(HubCmd::Close).await;
         }));
 
         let webrtc_config2 = webrtc_config.clone();
@@ -151,6 +154,7 @@ impl Hub {
         let weak_client = Arc::downgrade(&client);
         let url = url.to_string();
         let this_pub_key = client.pub_key().clone();
+        let hub_cmd_send2 = hub_cmd_send.clone();
         task_list.push(tokio::task::spawn(async move {
             let mut map = HubMap::new();
             while let Some(cmd) = cmd_recv.recv().await {
@@ -169,6 +173,7 @@ impl Hub {
                                 &mut map,
                                 &client,
                                 &config,
+                                &hub_cmd_send2,
                             )
                             .await
                             {
@@ -206,6 +211,7 @@ impl Hub {
                                     &mut map,
                                     &client,
                                     &config,
+                                    &hub_cmd_send2,
                                 )
                                 .await
                                 .map(|(recv, conn, _)| (recv, conn)),
@@ -213,6 +219,14 @@ impl Hub {
                         } else {
                             break;
                         }
+                    }
+                    HubCmd::Disconnect(pub_key) => {
+                        if let Some(client) = weak_client.upgrade() {
+                            let _ = client.close_peer(&pub_key).await;
+                        } else {
+                            break;
+                        }
+                        let _ = map.remove(&pub_key);
                     }
                     HubCmd::Close => break,
                 }
@@ -229,7 +243,7 @@ impl Hub {
             Self {
                 webrtc_config,
                 client,
-                cmd_send,
+                hub_cmd_send,
                 task_list,
             },
             HubRecv(conn_recv),
@@ -247,7 +261,7 @@ impl Hub {
         pub_key: PubKey,
     ) -> Result<(Arc<Conn>, ConnRecv)> {
         let (s, r) = tokio::sync::oneshot::channel();
-        self.cmd_send
+        self.hub_cmd_send
             .send(HubCmd::Connect { pub_key, resp: s })
             .await
             .map_err(|_| Error::other("closed"))?;

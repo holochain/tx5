@@ -93,7 +93,15 @@ async fn connect_loop(
     listener: bool,
     mut resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
 ) -> (Hub, HubRecv) {
-    tracing::trace!(?config, ?sig_url, ?listener, "signal try connect");
+    tracing::debug!(
+        target: "NETAUDIT",
+        ?config,
+        ?sig_url,
+        ?listener,
+        m = "tx5",
+        t = "signal",
+        a = "try_connect",
+    );
 
     let mut wait = config.backoff_start;
 
@@ -122,7 +130,13 @@ async fn connect_loop(
             Err(err) | Ok(Err(err)) => {
                 // drop the response so we can proceed without a peer_url
                 let _ = resp_url.take();
-                tracing::debug!(?err, "signal connect error")
+                tracing::debug!(
+                    target: "NETAUDIT",
+                    ?err,
+                    m = "tx5",
+                    t = "signal",
+                    a = "connect_error",
+                );
             }
         }
 
@@ -137,12 +151,20 @@ async fn connect_loop(
 struct DropSig {
     ep: Weak<Mutex<EpInner>>,
     sig_url: SigUrl,
+    local_url: Option<PeerUrl>,
     sig: Weak<Sig>,
 }
 
 impl Drop for DropSig {
     fn drop(&mut self) {
-        tracing::debug!(?self.sig_url, "signal connection closed");
+        tracing::debug!(
+            target: "NETAUDIT",
+            sig_url = ?self.sig_url,
+            local_url = ?self.local_url,
+            m = "tx5",
+            t = "signal",
+            a = "drop",
+        );
 
         if let Some(ep_inner) = self.ep.upgrade() {
             if let Some(sig) = self.sig.upgrade() {
@@ -164,9 +186,10 @@ async fn task(
     ready: Arc<Mutex<MaybeReady>>,
     resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
 ) {
-    let _drop = DropSig {
+    let mut drop_g = DropSig {
         ep: ep.clone(),
         sig_url: sig_url.clone(),
+        local_url: None,
         sig: this,
     };
 
@@ -180,6 +203,7 @@ async fn task(
     .await;
 
     let local_url = sig_url.to_peer(hub.pub_key().clone());
+    drop_g.local_url = Some(local_url.clone());
 
     let hub = Arc::new(hub);
 
@@ -199,7 +223,13 @@ async fn task(
         })
         .await;
 
-    tracing::info!(?local_url, "signal connected");
+    tracing::debug!(
+        target: "NETAUDIT",
+        ?local_url,
+        m = "tx5",
+        t = "signal",
+        a = "connected",
+    );
 
     while let Some((conn, conn_recv)) = hub_recv.accept().await {
         if let Some(ep) = ep.upgrade() {
@@ -208,7 +238,13 @@ async fn task(
         }
     }
 
-    tracing::trace!(?local_url, "signal closing");
+    tracing::debug!(
+        target: "NETAUDIT",
+        ?local_url,
+        m = "tx5",
+        t = "signal",
+        a = "closing",
+    );
 
     // wait at the end to account for a delay before the next try
     tokio::time::sleep(config.backoff_start).await;
@@ -219,5 +255,11 @@ async fn task(
         })
         .await;
 
-    tracing::debug!(?local_url, "signal closed");
+    tracing::debug!(
+        target: "NETAUDIT",
+        ?local_url,
+        m = "tx5",
+        t = "signal",
+        a = "closed",
+    );
 }

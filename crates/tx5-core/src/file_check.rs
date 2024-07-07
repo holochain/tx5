@@ -1,6 +1,8 @@
 //! A couple crates that depend on tx5-core need to be able to write/verify
 //! files on system. Enable this `file_check` feature to provide that ability.
 
+use app_dirs2::AppDirsError;
+
 use crate::{Error, Result};
 
 /// A handle to a verified system file. Keep this instance in memory as
@@ -17,20 +19,17 @@ impl FileCheck {
     }
 }
 
-fn get_user_cache_dir() -> Option<std::path::PathBuf> {
-    match app_dirs2::app_root(
+fn get_user_cache_dir() -> Result<std::path::PathBuf, AppDirsError> {
+    app_dirs2::app_root(
         app_dirs2::AppDataType::UserCache,
         &app_dirs2::AppInfo {
             name: "host.holo.tx5",
             author: "host.holo.tx5",
         },
-    ) {
-        Ok(dir) => Some(dir),
-        _ => None,
-    }
+    )
 }
 
-/// Write a file if needed, verify the file, and return a handle to that file.
+/// Write a temp file if needed, verify the file, and return a handle to that file.
 pub fn file_check(
     file_data: &[u8],
     file_hash: &str,
@@ -38,8 +37,9 @@ pub fn file_check(
     file_name_ext: &str,
 ) -> Result<FileCheck> {
     let file_name = format!("{file_name_prefix}-{file_hash}{file_name_ext}");
+    let tmp_dir = get_user_cache_dir()?;
 
-    let pref_path = get_user_cache_dir().map(|mut d| {
+    let pref_path = tmp_dir.map(|mut d| {
         d.push(&file_name);
         d
     });
@@ -53,7 +53,7 @@ pub fn file_check(
         }
     }
 
-    let mut tmp = write(file_data)?;
+    let mut tmp = write(tmp_dir, file_data)?;
 
     if let Some(pref_path) = pref_path.as_ref() {
         // NOTE: This is NOT atomic, nor secure, but being able to validate the
@@ -145,11 +145,11 @@ fn validate(path: &std::path::PathBuf, hash: &str) -> Result<std::fs::File> {
     Ok(file)
 }
 
-/// Write a temp file.
-fn write(file_data: &[u8]) -> Result<tempfile::NamedTempFile> {
+/// Write a temp file in the given directory
+fn write(parent_dir: PathBuf, file_data: &[u8]) -> Result<tempfile::NamedTempFile> {
     use std::io::Write;
 
-    let mut tmp = tempfile::NamedTempFile::new()?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent_dir)?;
 
     tmp.as_file_mut().write_all(file_data)?;
     tmp.as_file_mut().flush()?;

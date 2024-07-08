@@ -1,9 +1,8 @@
 //! A couple crates that depend on tx5-core need to be able to write/verify
 //! files on system. Enable this `file_check` feature to provide that ability.
 
-use app_dirs2::AppDirsError;
-
 use crate::{Error, Result};
+use std::path::PathBuf;
 
 /// A handle to a verified system file. Keep this instance in memory as
 /// long as you intend to keep using the validated file.
@@ -19,7 +18,7 @@ impl FileCheck {
     }
 }
 
-fn get_user_cache_dir() -> Result<std::path::PathBuf, AppDirsError> {
+fn get_user_cache_dir() -> Result<std::path::PathBuf> {
     app_dirs2::app_root(
         app_dirs2::AppDataType::UserCache,
         &app_dirs2::AppInfo {
@@ -27,6 +26,7 @@ fn get_user_cache_dir() -> Result<std::path::PathBuf, AppDirsError> {
             author: "host.holo.tx5",
         },
     )
+    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
 }
 
 /// Write a temp file if needed, verify the file, and return a handle to that file.
@@ -39,56 +39,50 @@ pub fn file_check(
     let file_name = format!("{file_name_prefix}-{file_hash}{file_name_ext}");
     let tmp_dir = get_user_cache_dir()?;
 
-    let pref_path = tmp_dir.map(|mut d| {
-        d.push(&file_name);
-        d
-    });
+    let mut pref_path = tmp_dir.clone();
+    pref_path.push(&file_name);
 
-    if let Some(pref_path) = pref_path.as_ref() {
-        if let Ok(file) = validate(pref_path, file_hash) {
-            return Ok(FileCheck {
-                path: pref_path.clone(),
-                _file: Some(file),
-            });
-        }
+    if let Ok(file) = validate(&pref_path, file_hash) {
+        return Ok(FileCheck {
+            path: pref_path.clone(),
+            _file: Some(file),
+        });
     }
 
     let mut tmp = write(tmp_dir, file_data)?;
 
-    if let Some(pref_path) = pref_path.as_ref() {
-        // NOTE: This is NOT atomic, nor secure, but being able to validate the
-        //       file hash post-op mitigates this a bit. And we can let the os
-        //       clean up a dangling tmp file if it failed to unlink.
-        match tmp.persist_noclobber(pref_path) {
-            Ok(mut file) => {
-                set_perms(&mut file)?;
+    // NOTE: This is NOT atomic, nor secure, but being able to validate the
+    //       file hash post-op mitigates this a bit. And we can let the os
+    //       clean up a dangling tmp file if it failed to unlink.
+    match tmp.persist_noclobber(pref_path.clone()) {
+        Ok(mut file) => {
+            set_perms(&mut file)?;
 
-                drop(file);
+            drop(file);
 
-                let file = validate(pref_path, file_hash)?;
-
-                return Ok(FileCheck {
-                    path: pref_path.clone(),
-                    _file: Some(file),
-                });
-            }
-            Err(err) => {
-                let tempfile::PersistError { file, .. } = err;
-                tmp = file;
-            }
-        }
-
-        // before we go on to just using the tmp file,
-        // check to see if a different process wrote correctly
-        if let Ok(file) = validate(pref_path, file_hash) {
-            // we no longer need the tmp file, clean it up
-            let _ = tmp.close();
+            let file = validate(&pref_path, file_hash)?;
 
             return Ok(FileCheck {
                 path: pref_path.clone(),
                 _file: Some(file),
             });
         }
+        Err(err) => {
+            let tempfile::PersistError { file, .. } = err;
+            tmp = file;
+        }
+    }
+
+    // before we go on to just using the tmp file,
+    // check to see if a different process wrote correctly
+    if let Ok(file) = validate(&pref_path, file_hash) {
+        // we no longer need the tmp file, clean it up
+        let _ = tmp.close();
+
+        return Ok(FileCheck {
+            path: pref_path.clone(),
+            _file: Some(file),
+        });
     }
 
     // we're just going to use the tmp file, do what we need to
@@ -146,7 +140,10 @@ fn validate(path: &std::path::PathBuf, hash: &str) -> Result<std::fs::File> {
 }
 
 /// Write a temp file in the given directory
-fn write(parent_dir: PathBuf, file_data: &[u8]) -> Result<tempfile::NamedTempFile> {
+fn write(
+    parent_dir: PathBuf,
+    file_data: &[u8],
+) -> Result<tempfile::NamedTempFile> {
     use std::io::Write;
 
     let mut tmp = tempfile::NamedTempFile::new_in(parent_dir)?;

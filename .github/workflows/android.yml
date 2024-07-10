@@ -81,6 +81,6 @@ jobs:
           arch: ${{ matrix.android-arch }}
           target: google_apis
           force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -writable-system
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: ./android-build-tests.bash && ./android-run-tests.bash

@@ -26,7 +26,7 @@ fn get_user_cache_dir() -> Result<std::path::PathBuf> {
             author: "host.holo.tx5",
         },
     )
-    .map_err(|err| std::io::Error::other(err))
+    .map_err(std::io::Error::other)
 }
 
 /// Write a temp file if needed, verify the file, and return a handle to that file.

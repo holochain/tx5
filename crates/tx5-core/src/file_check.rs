@@ -20,6 +20,9 @@ impl FileCheck {
 
 #[cfg(not(all(test, target_os = "android")))]
 fn get_user_cache_dir() -> Result<std::path::PathBuf> {
+    println!("get_user_cache_dir not android test");
+    tracing::debug!("get_user_cache_dir not android test");
+
     app_dirs2::app_root(
         app_dirs2::AppDataType::UserCache,
         &app_dirs2::AppInfo {
@@ -32,6 +35,9 @@ fn get_user_cache_dir() -> Result<std::path::PathBuf> {
 
 #[cfg(all(test, target_os = "android"))]
 fn get_user_cache_dir() -> Result<std::path::PathBuf> {
+    println!("get_user_cache_dir android test");
+    tracing::debug!("get_user_cache_dir android test");
+
     Ok(PathBuf::from("/data/local/tmp/"))
 }
 

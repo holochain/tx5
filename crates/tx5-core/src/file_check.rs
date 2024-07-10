@@ -18,6 +18,7 @@ impl FileCheck {
     }
 }
 
+#[cfg(not(all(test, target_os = "android")))]
 fn get_user_cache_dir() -> Result<std::path::PathBuf> {
     app_dirs2::app_root(
         app_dirs2::AppDataType::UserCache,
@@ -27,6 +28,11 @@ fn get_user_cache_dir() -> Result<std::path::PathBuf> {
         },
     )
     .map_err(std::io::Error::other)
+}
+
+#[cfg(all(test, target_os = "android"))]
+fn get_user_cache_dir() -> Result<std::path::PathBuf> {
+    Ok(PathBuf::from("/data/local/tmp/"))
 }
 
 /// Write a temp file if needed, verify the file, and return a handle to that file.

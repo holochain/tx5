@@ -48,6 +48,8 @@ pub fn file_check(
     let mut pref_path = tmp_dir.clone();
     pref_path.push(&file_name);
 
+    println!("File check {:?}", pref_path);
+
     if let Ok(file) = validate(&pref_path, file_hash) {
         return Ok(FileCheck {
             path: pref_path.clone(),

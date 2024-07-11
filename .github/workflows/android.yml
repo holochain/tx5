@@ -74,6 +74,7 @@ jobs:
           ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
           ANDROID_NDK_VERSION: ${{ matrix.android-ndk-version }}
           ANDROID_ARCH: ${{ matrix.android-arch }}
+          CARGO_CFG_TARGET_OS: android
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.android-api-level }}

@@ -2,6 +2,8 @@
 
 set -eEuxo pipefail
 
+export TX5_CACHE_DIRECTORY=/data/local/tmp/
+
 trap 'cleanup' ERR EXIT
 cleanup() {
   for i in $(cat output-test-executables); do

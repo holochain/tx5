@@ -18,30 +18,37 @@ impl FileCheck {
     }
 }
 
-#[cfg(not(all(test, target_os = "android")))]
-fn get_user_cache_dir() -> Result<std::path::PathBuf> {
-    println!("get_user_cache_dir not android test");
-    tracing::debug!("get_user_cache_dir not android test");
+/// Get a path to a cache directory where the dependency Pion library can be written
+/// 
+/// Defaults to the UserCache directory returned by app_dirs2, specific to the target platform.
+/// Overridable via the env variable TX5_CACHE_DIRECTORY
+fn get_cache_dir() -> Result<std::path::PathBuf> {
+    match std::env::var("TX5_CACHE_DIRECTORY") {
+        Ok(cache_dir) => {
+            let path = PathBuf::from(cache_dir);
 
-    app_dirs2::app_root(
-        app_dirs2::AppDataType::UserCache,
-        &app_dirs2::AppInfo {
-            name: "host.holo.tx5",
-            author: "host.holo.tx5",
+            if path.is_dir() {
+                Ok(path.to_path_buf())
+            } else {
+                Err(std::io::Error::other("env variable TX5_CACHE_DIRECTORY must be a valid path to a directory"))
+            }
         },
-    )
-    .map_err(std::io::Error::other)
-}
-
-#[cfg(all(test, target_os = "android"))]
-fn get_user_cache_dir() -> Result<std::path::PathBuf> {
-    println!("get_user_cache_dir android test");
-    tracing::debug!("get_user_cache_dir android test");
-
-    Ok(PathBuf::from("/data/local/tmp/"))
+        Err(_) => app_dirs2::app_root(
+            app_dirs2::AppDataType::UserCache,
+            &app_dirs2::AppInfo {
+                name: "host.holo.tx5",
+                author: "host.holo.tx5",
+            },
+        )
+        .map_err(std::io::Error::other)
+    }
 }
 
 /// Write a temp file if needed, verify the file, and return a handle to that file.
+///
+/// This will panic on Android targets if run on a physical device (not an emulator) that is *not* rooted.
+/// To avoid panic on a physical, non-rooted Android device
+/// set the env variable TX5_CACHE_DIRECTORY to app_dirs2 UserCache directory with the correct identifier for your android app
 pub fn file_check(
     file_data: &[u8],
     file_hash: &str,
@@ -52,7 +59,7 @@ pub fn file_check(
     println!("File check file_name={:?}", file_name);
     tracing::debug!("File check file_name={:?}", file_name);
 
-    let tmp_dir = get_user_cache_dir()?;
+    let tmp_dir = get_cache_dir()?;
     println!("File check tmp_dir={:?}", tmp_dir);
     tracing::debug!("File check tmp_dir={:?}", tmp_dir);
 
@@ -240,5 +247,43 @@ mod tests {
             drop(tmp);
             let _ = std::fs::remove_file(&path);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn file_check_env_variable_override() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir_path = tmpdir.path();
+        std::env::set_var("TX5_CACHE_DIRECTORY", tmpdir_path.as_os_str());
+
+        use rand::Rng;
+        let mut data = vec![0; 1024 * 1024 * 10]; // 10 MiB
+        rand::thread_rng().fill(&mut data[..]);
+        let data = Arc::new(data);
+
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&data[..]);
+
+        use base64::Engine;
+        let hash = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(hasher.finalize());
+
+        let data = data.clone();
+        let hash = hash.clone();
+    
+        let res = file_check(
+            data.as_slice(),
+            &hash,
+            "tx5-core-file-check-test",
+            ".data",
+        ).unwrap();
+        
+        assert!(res.path.starts_with(tmpdir_path));
+
+        // cleanup
+        let path = res.path().to_owned();
+        drop(res);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(tmpdir_path);
     }
 }

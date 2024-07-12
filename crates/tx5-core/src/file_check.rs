@@ -19,7 +19,7 @@ impl FileCheck {
 }
 
 /// Get a path to a cache directory where the dependency Pion library can be written
-/// 
+///
 /// Defaults to the UserCache directory returned by app_dirs2, specific to the target platform.
 /// Overridable via the env variable TX5_CACHE_DIRECTORY
 fn get_cache_dir() -> Result<std::path::PathBuf> {
@@ -32,7 +32,7 @@ fn get_cache_dir() -> Result<std::path::PathBuf> {
             } else {
                 Err(std::io::Error::other("env variable TX5_CACHE_DIRECTORY must be a valid path to a directory"))
             }
-        },
+        }
         Err(_) => app_dirs2::app_root(
             app_dirs2::AppDataType::UserCache,
             &app_dirs2::AppInfo {
@@ -40,7 +40,7 @@ fn get_cache_dir() -> Result<std::path::PathBuf> {
                 author: "host.holo.tx5",
             },
         )
-        .map_err(std::io::Error::other)
+        .map_err(std::io::Error::other),
     }
 }
 
@@ -270,14 +270,15 @@ mod tests {
 
         let data = data.clone();
         let hash = hash.clone();
-    
+
         let res = file_check(
             data.as_slice(),
             &hash,
             "tx5-core-file-check-test",
             ".data",
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         assert!(res.path.starts_with(tmpdir_path));
 
         // cleanup

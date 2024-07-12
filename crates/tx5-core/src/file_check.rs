@@ -252,9 +252,10 @@ mod tests {
 
     #[test]
     fn file_check_env_variable_override() {
+        let _ = tempfile::tempdir().unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir_path = tmpdir.into_path();
-        std::env::set_var("TX5_CACHE_DIRECTORY", tmpdir_path.clone().as_os_str());
+        let tmpdir_path = tmpdir.path();
+        std::env::set_var("TX5_CACHE_DIRECTORY", tmpdir_path.as_os_str());
 
         use rand::Rng;
         let mut data = vec![0; 1024 * 1024 * 10]; // 10 MiB
@@ -280,12 +281,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(res.path.starts_with(tmpdir_path.clone()));
+        assert!(res.path.starts_with(tmpdir_path));
 
         // cleanup
         let path = res.path().to_owned();
+        std::env::remove_var("TX5_CACHE_DIRECTORY");
         drop(res);
         let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_dir(tmpdir_path);
     }
 }

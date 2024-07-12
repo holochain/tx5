@@ -44,10 +44,6 @@ fn get_cache_dir() -> Result<std::path::PathBuf> {
 }
 
 /// Write a temp file if needed, verify the file, and return a handle to that file.
-///
-/// This will panic on Android targets if run on a physical device (not an emulator) that is *not* rooted.
-/// To avoid panic on a physical, non-rooted Android device
-/// set the env variable TX5_CACHE_DIRECTORY to app_dirs2 UserCache directory with the correct identifier for your android app
 pub fn file_check(
     file_data: &[u8],
     file_hash: &str,

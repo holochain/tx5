@@ -210,7 +210,7 @@ mod dynamic_lib {
                 "tx5-go-pion-webrtc",
                 ext,
             ) {
-                Err(err) => panic!("filed to write go lib: {err:?}"),
+                Err(err) => panic!("failed to write go lib: {err:?}"),
                 Ok(lib) => lib,
             };
 

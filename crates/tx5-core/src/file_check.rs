@@ -26,8 +26,6 @@ fn get_cache_dir() -> Result<std::path::PathBuf> {
     match std::env::var("TX5_CACHE_DIRECTORY") {
         Ok(cache_dir) => {
             let path = PathBuf::from(cache_dir);
-            println!("get_cache_dir TX5_CACHE_DIRECTORY={:?}", path);
-            tracing::debug!("get_cache_dir TX5_CACHE_DIRECTORY={:?}", path);
             if path.is_dir() {
                 Ok(path)
             } else {
@@ -57,17 +55,10 @@ pub fn file_check(
     file_name_ext: &str,
 ) -> Result<FileCheck> {
     let file_name = format!("{file_name_prefix}-{file_hash}{file_name_ext}");
-    println!("File check file_name={:?}", file_name);
-    tracing::debug!("File check file_name={:?}", file_name);
-
     let tmp_dir = get_cache_dir()?;
-    println!("File check tmp_dir={:?}", tmp_dir);
-    tracing::debug!("File check tmp_dir={:?}", tmp_dir);
 
     let mut pref_path = tmp_dir.clone();
     pref_path.push(&file_name);
-
-    println!("File check {:?}", pref_path);
 
     if let Ok(file) = validate(&pref_path, file_hash) {
         return Ok(FileCheck {

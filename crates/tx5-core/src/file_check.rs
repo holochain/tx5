@@ -26,11 +26,12 @@ fn get_cache_dir() -> Result<std::path::PathBuf> {
     match std::env::var("TX5_CACHE_DIRECTORY") {
         Ok(cache_dir) => {
             let path = PathBuf::from(cache_dir);
-
+            println!("get_cache_dir TX5_CACHE_DIRECTORY={:?}", path);
+            tracing::debug!("get_cache_dir TX5_CACHE_DIRECTORY={:?}", path);
             if path.is_dir() {
-                Ok(path.to_path_buf())
+                Ok(path)
             } else {
-                Err(std::io::Error::other("env variable TX5_CACHE_DIRECTORY must be a valid path to a directory"))
+                Err(std::io::Error::other("env variable TX5_CACHE_DIRECTORY is not a valid path to an existing directory"))
             }
         }
         Err(_) => app_dirs2::app_root(

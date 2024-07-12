@@ -250,8 +250,8 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn file_check_env_variable_override() {
+    #[test]
+    fn file_check_env_variable_override() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir_path = tmpdir.into_path();
         std::env::set_var("TX5_CACHE_DIRECTORY", tmpdir_path.clone().as_os_str());

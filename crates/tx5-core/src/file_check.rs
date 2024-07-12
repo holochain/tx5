@@ -31,7 +31,7 @@ fn get_cache_dir() -> Result<std::path::PathBuf> {
             if path.is_dir() {
                 Ok(path)
             } else {
-                Err(std::io::Error::other("env variable TX5_CACHE_DIRECTORY is not a valid path to an existing directory"))
+                Err(std::io::Error::other("env variable TX5_CACHE_DIRECTORY is set, but it is not a valid path to an existing directory"))
             }
         }
         Err(_) => app_dirs2::app_root(
@@ -253,8 +253,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn file_check_env_variable_override() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir_path = tmpdir.path();
-        std::env::set_var("TX5_CACHE_DIRECTORY", tmpdir_path.as_os_str());
+        let tmpdir_path = tmpdir.into_path();
+        std::env::set_var("TX5_CACHE_DIRECTORY", tmpdir_path.clone().as_os_str());
 
         use rand::Rng;
         let mut data = vec![0; 1024 * 1024 * 10]; // 10 MiB
@@ -280,7 +280,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(res.path.starts_with(tmpdir_path));
+        assert!(res.path.starts_with(tmpdir_path.clone()));
 
         // cleanup
         let path = res.path().to_owned();

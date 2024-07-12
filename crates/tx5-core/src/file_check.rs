@@ -255,6 +255,7 @@ mod tests {
         let _ = tempfile::tempdir().unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir_path = tmpdir.path();
+        let original_tx5_cache_directory = std::env::var("TX5_CACHE_DIRECTORY");
         std::env::set_var("TX5_CACHE_DIRECTORY", tmpdir_path.as_os_str());
 
         use rand::Rng;
@@ -285,7 +286,10 @@ mod tests {
 
         // cleanup
         let path = res.path().to_owned();
-        std::env::remove_var("TX5_CACHE_DIRECTORY");
+        match original_tx5_cache_directory {
+            Ok(dir) => std::env::set_var("TX5_CACHE_DIRECTORY", dir),
+            Err(_) => std::env::remove_var("TX5_CACHE_DIRECTORY"),
+        };
         drop(res);
         let _ = std::fs::remove_file(path);
     }

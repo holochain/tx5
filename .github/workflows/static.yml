@@ -3,14 +3,15 @@ on:
   merge_group:
     branches:
       - main
+      - 'release*'
   push:
     branches:
       - main
-      - release*
+      - 'release*'
   pull_request:
     branches:
       - main
-      - release*
+      - 'release*'
 jobs:
   static-analysis:
     runs-on: ${{ matrix.os }}

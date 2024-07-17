@@ -250,7 +250,7 @@ mod tests {
         let mut hasher = sha2::Sha256::new();
         hasher.update(&data[..]);
 
-        let hash = 
+        let hash =
             base64::encode_config(hasher.finalize(), base64::URL_SAFE_NO_PAD);
 
         let data = data.clone();

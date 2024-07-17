@@ -44,7 +44,24 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: install vcpkg packages
+        if: matrix.os == 'windows-latest'
+        uses: johnwason/vcpkg-action@v6
+        id: vcpkg
+        with:
+          triplet: x64-windows-release
+          token: ${{ github.token }}
+          manifest-dir: ${{ github.workspace }}/.github/manifest
+          github-binarycache: true
+
+      - name: Cargo Build Windows
+        if: matrix.os == 'windows-latest'
+        run: |-
+          $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
+          cargo build --all-targets
+
       - name: Cargo Build
+        if: matrix.os != 'windows-latest'
         run: cargo build --all-targets
 
       - name: Cargo Build - musl
@@ -53,7 +70,17 @@ jobs:
           rustup target add x86_64-unknown-linux-musl
           cargo build --release --manifest-path=crates/tx5-go-pion-sys/Cargo.toml --target=x86_64-unknown-linux-musl
 
+      - name: Cargo Test Windows
+        if: matrix.os == 'windows-latest'
+        env:
+          RUST_LOG: error
+          RUST_BACKTRACE: 1
+        run: |-
+          $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
+          cargo test -- --nocapture
+
       - name: Cargo Test
+        if: matrix.os != 'windows-latest'
         env:
           RUST_LOG: error
           RUST_BACKTRACE: 1

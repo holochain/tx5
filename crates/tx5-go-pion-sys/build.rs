@@ -63,8 +63,8 @@ impl Default for Target {
         }
 
         // allow these cfgs in check
-        println!("cargo::rustc-check-cfg=cfg(link_dynamic)");
-        println!("cargo::rustc-check-cfg=cfg(link_static)");
+        println!("cargo:rustc-check-cfg=cfg(link_dynamic)");
+        println!("cargo:rustc-check-cfg=cfg(link_static)");
 
         match link_type {
             LinkType::Dynamic => println!("cargo:rustc-cfg=link_dynamic"),

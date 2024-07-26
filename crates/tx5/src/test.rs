@@ -38,7 +38,9 @@ impl TestEp {
         let task = tokio::task::spawn(async move {
             while let Some(evt) = ep_recv.recv().await {
                 match evt {
-                    EndpointEvent::ListeningAddressOpen { local_url } => {
+                    EndpointEvent::ListeningAddressOpen {
+                        local_url, ..
+                    } => {
                         *peer_url2.lock().unwrap() = local_url;
                         if let Some(s) = s.take() {
                             let _ = s.send(());

@@ -55,10 +55,13 @@ impl std::fmt::Debug for EndpointEvent {
                 .debug_struct("Disconnected")
                 .field("peer_url", peer_url)
                 .finish(),
-            Self::Message { peer_url, .. } => f
-                .debug_struct("Message")
-                .field("peer_url", peer_url)
-                .finish(),
+            Self::Message { peer_url, message } => {
+                let byte_count = message.len();
+                f.debug_struct("Message")
+                    .field("peer_url", peer_url)
+                    .field("byte_count", &byte_count)
+                    .finish()
+            }
         }
     }
 }

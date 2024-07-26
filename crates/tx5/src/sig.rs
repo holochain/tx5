@@ -217,11 +217,13 @@ async fn task(
 
     drop(ready);
 
-    let _ = evt_send
-        .send(EndpointEvent::ListeningAddressOpen {
-            local_url: local_url.clone(),
-        })
-        .await;
+    if listener {
+        let _ = evt_send
+            .send(EndpointEvent::ListeningAddressOpen {
+                local_url: local_url.clone(),
+            })
+            .await;
+    }
 
     tracing::debug!(
         target: "NETAUDIT",
@@ -249,11 +251,13 @@ async fn task(
     // wait at the end to account for a delay before the next try
     tokio::time::sleep(config.backoff_start).await;
 
-    let _ = evt_send
-        .send(EndpointEvent::ListeningAddressClosed {
-            local_url: local_url.clone(),
-        })
-        .await;
+    if listener {
+        let _ = evt_send
+            .send(EndpointEvent::ListeningAddressClosed {
+                local_url: local_url.clone(),
+            })
+            .await;
+    }
 
     tracing::debug!(
         target: "NETAUDIT",

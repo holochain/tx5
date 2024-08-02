@@ -606,3 +606,21 @@ async fn ep_get_connected() {
     assert_eq!(1, ep2_connected.len());
     assert_eq!(ep2_connected[0], ep1.peer_url());
 }
+
+// Regression test to prevent dead locking a connection when a peer attempts to
+// connect to itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn connect_to_self_does_not_dead_lock() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
+    let test = Test::new().await;
+
+    let ep1 = test.ep(config.clone()).await;
+    let message = b"hello";
+
+    ep1.send(ep1.peer_url(), message.to_vec())
+        .await
+        .unwrap_err();
+}

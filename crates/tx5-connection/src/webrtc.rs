@@ -1,4 +1,4 @@
-use crate::{AbortTask, CloseSend};
+use crate::{AbortTask, CloseRecv, CloseSend};
 use std::io::{Error, Result};
 
 pub enum WebrtcEvt {
@@ -35,7 +35,7 @@ impl Webrtc {
         is_polite: bool,
         config: Vec<u8>,
         send_buffer: usize,
-    ) -> (Self, tokio::sync::mpsc::Receiver<WebrtcEvt>) {
+    ) -> (Self, CloseRecv<WebrtcEvt>) {
         let (mut cmd_send, cmd_recv) = CloseSend::channel();
         let (mut evt_send, evt_recv) = CloseSend::channel();
 
@@ -99,7 +99,7 @@ async fn task(
     send_buffer: usize,
     mut evt_send: CloseSend<WebrtcEvt>,
     cmd_send: CloseSend<Cmd>,
-    mut cmd_recv: tokio::sync::mpsc::Receiver<Cmd>,
+    mut cmd_recv: CloseRecv<Cmd>,
 ) -> Result<()> {
     evt_send.set_close_on_drop(true);
 
@@ -148,9 +148,17 @@ async fn task(
         offer = Some(o);
     }
 
-    while let Some(cmd) = cmd_recv.recv().await {
-        match cmd {
+    loop {
+        let cmd = match cmd_recv.recv().await {
+            None => break,
+            Some(cmd) => cmd,
+        };
+
+        let mut slow_task = "unknown";
+
+        match breakable_timeout!(match cmd {
             Cmd::InOffer(o) => {
+                slow_task = "in-offer";
                 if is_polite && !did_handshake {
                     peer.set_remote_description(o).await?;
                     let mut a = peer.create_answer(b"{}".to_vec()).await?;
@@ -162,6 +170,7 @@ async fn task(
                 }
             }
             Cmd::InAnswer(a) => {
+                slow_task = "in-answer";
                 if !is_polite && !did_handshake {
                     if let Some(o) = offer.take() {
                         peer.set_local_description(o).await?;
@@ -171,12 +180,15 @@ async fn task(
                 }
             }
             Cmd::InIce(i) => {
+                slow_task = "in-ice";
                 let _ = peer.add_ice_candidate(i).await;
             }
             Cmd::GeneratedIce(ice) => {
+                slow_task = "gen-ice";
                 evt_send.send(WebrtcEvt::GeneratedIce(ice)).await?;
             }
             Cmd::DataChan(d, dr) => {
+                slow_task = "data-chan";
                 if data.is_none() {
                     d.set_buffered_amount_low_threshold(send_buffer)?;
                     data = Some(d);
@@ -184,6 +196,7 @@ async fn task(
                 }
             }
             Cmd::SendMessage(msg, resp) => {
+                slow_task = "send-msg";
                 if let Some(d) = &data {
                     let amt = match d.send(msg).await {
                         Ok(amt) => amt,
@@ -200,15 +213,25 @@ async fn task(
                 }
             }
             Cmd::RecvMessage(msg) => {
+                slow_task = "recv-msg";
                 evt_send.send(WebrtcEvt::Message(msg)).await?;
             }
             Cmd::DataChanOpen => {
+                slow_task = "chan-open";
                 evt_send.send(WebrtcEvt::Ready).await?;
             }
             Cmd::BufferedAmountLow => {
+                slow_task = "buf-low";
                 pend_buffer.clear();
             }
-        }
+        }) {
+            Err(_) => {
+                let err = format!("slow app on webrtc loop task: {slow_task}");
+                tracing::warn!("{err}");
+                Err(Error::other(err))
+            }
+            Ok(r) => r,
+        }?;
     }
 
     Ok(())
@@ -220,10 +243,10 @@ fn spawn_data_chan(
         tx5_go_pion::DataChannelEvent,
     >,
 ) -> Option<AbortTask<Result<()>>> {
-    cmd_send.set_close_on_drop(true);
-
     use tx5_go_pion::DataChannelEvent as Evt;
     Some(AbortTask(tokio::task::spawn(async move {
+        cmd_send.set_close_on_drop(true);
+
         // Receiving on the unbounded data channel receiver has a real
         // chance to fill our memory with message data.
         // We give a small chance for the app to catch up, otherwise

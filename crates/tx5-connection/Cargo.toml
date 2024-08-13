@@ -21,6 +21,7 @@ backend-webrtc-rs = [ ]
 
 [dependencies]
 bit_field = { workspace = true }
+futures = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing = { workspace = true }
 tx5-core = { workspace = true }

@@ -1,6 +1,6 @@
 [package]
 name = "tx5"
-version = "0.1.1-beta"
+version = "0.1.2-beta"
 edition = "2021"
 description = "The main holochain tx5 webrtc networking crate"
 license = "MIT OR Apache-2.0"

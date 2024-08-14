@@ -33,6 +33,26 @@ compile_error!("Must specify exactly 1 webrtc backend");
 #[cfg(feature = "backend-go-pion")]
 pub use tx5_go_pion::Tx5InitConfig;
 
+/// Grace time to allow a slow app to catch up before we close a
+/// connection to prevent our memory from filling up with backlogged
+/// message data.
+const SLOW_APP_TO: std::time::Duration = std::time::Duration::from_millis(99);
+
+macro_rules! breakable_timeout {
+    ($($t:tt)*) => {
+        tokio::time::timeout(
+            $crate::SLOW_APP_TO,
+            async {
+                loop {
+                    {$($t)*}
+                    break;
+                }
+                std::io::Result::Ok(())
+            }
+        ).await
+    };
+}
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::{Error, ErrorKind, Result};
@@ -49,8 +69,17 @@ impl<R> Drop for AbortTask<R> {
     }
 }
 
+struct CloseRecv<T: 'static + Send>(futures::channel::mpsc::Receiver<T>);
+
+impl<T: 'static + Send> CloseRecv<T> {
+    pub async fn recv(&mut self) -> Option<T> {
+        use futures::stream::StreamExt;
+        self.0.next().await
+    }
+}
+
 struct CloseSend<T: 'static + Send> {
-    sender: Arc<Mutex<Option<tokio::sync::mpsc::Sender<T>>>>,
+    sender: Arc<Mutex<Option<futures::channel::mpsc::Sender<T>>>>,
     close_on_drop: bool,
 }
 
@@ -66,20 +95,23 @@ impl<T: 'static + Send> Clone for CloseSend<T> {
 impl<T: 'static + Send> Drop for CloseSend<T> {
     fn drop(&mut self) {
         if self.close_on_drop {
-            self.sender.lock().unwrap().take();
+            let s = self.sender.lock().unwrap().take();
+            if let Some(mut s) = s {
+                s.close_channel();
+            }
         }
     }
 }
 
 impl<T: 'static + Send> CloseSend<T> {
-    pub fn channel() -> (Self, tokio::sync::mpsc::Receiver<T>) {
-        let (s, r) = tokio::sync::mpsc::channel(32);
+    pub fn channel() -> (Self, CloseRecv<T>) {
+        let (s, r) = futures::channel::mpsc::channel(32);
         (
             Self {
                 sender: Arc::new(Mutex::new(Some(s))),
                 close_on_drop: false,
             },
-            r,
+            CloseRecv(r),
         )
     }
 
@@ -91,10 +123,11 @@ impl<T: 'static + Send> CloseSend<T> {
         &self,
         t: T,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
+        use futures::sink::SinkExt;
         let s = self.sender.lock().unwrap().clone();
         async move {
             match s {
-                Some(s) => {
+                Some(mut s) => {
                     s.send(t).await.map_err(|_| ErrorKind::BrokenPipe.into())
                 }
                 None => Err(ErrorKind::BrokenPipe.into()),
@@ -106,25 +139,23 @@ impl<T: 'static + Send> CloseSend<T> {
         &self,
         t: T,
     ) -> impl Future<Output = Result<()>> + 'static + Send {
-        // Grace time to allow a slow app to catch up before we close a
-        // connection to prevent our memory from filling up with backlogged
-        // message data.
-        const SLOW_APP_TO: std::time::Duration =
-            std::time::Duration::from_millis(99);
+        use futures::sink::SinkExt;
 
         let s = self.sender.lock().unwrap().clone();
         async move {
             match s {
-                Some(s) => match s.send_timeout(t, SLOW_APP_TO).await {
-                    Err(
-                        tokio::sync::mpsc::error::SendTimeoutError::Timeout(_),
-                    ) => {
-                        tracing::warn!("Closing connection due to slow app");
-                        Err(ErrorKind::TimedOut.into())
+                Some(mut s) => {
+                    match tokio::time::timeout(SLOW_APP_TO, s.send(t)).await {
+                        Err(_) => {
+                            tracing::warn!(
+                                "Closing connection due to slow app"
+                            );
+                            Err(ErrorKind::TimedOut.into())
+                        }
+                        Ok(Err(_)) => Err(ErrorKind::BrokenPipe.into()),
+                        Ok(Ok(_)) => Ok(()),
                     }
-                    Err(_) => Err(ErrorKind::BrokenPipe.into()),
-                    Ok(_) => Ok(()),
-                },
+                }
                 None => Err(ErrorKind::BrokenPipe.into()),
             }
         }

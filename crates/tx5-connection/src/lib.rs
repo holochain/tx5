@@ -33,15 +33,10 @@ compile_error!("Must specify exactly 1 webrtc backend");
 #[cfg(feature = "backend-go-pion")]
 pub use tx5_go_pion::Tx5InitConfig;
 
-/// Grace time to allow a slow app to catch up before we close a
-/// connection to prevent our memory from filling up with backlogged
-/// message data.
-const SLOW_APP_TO: std::time::Duration = std::time::Duration::from_millis(99);
-
 macro_rules! breakable_timeout {
     ($($t:tt)*) => {
         tokio::time::timeout(
-            $crate::SLOW_APP_TO,
+            ::tx5_core::Tx5InitConfig::get().slow_app_timeout,
             async {
                 loop {
                     {$($t)*}
@@ -145,7 +140,12 @@ impl<T: 'static + Send> CloseSend<T> {
         async move {
             match s {
                 Some(mut s) => {
-                    match tokio::time::timeout(SLOW_APP_TO, s.send(t)).await {
+                    match tokio::time::timeout(
+                        tx5_core::Tx5InitConfig::get().slow_app_timeout,
+                        s.send(t),
+                    )
+                    .await
+                    {
                         Err(_) => {
                             tracing::warn!(
                                 "Closing connection due to slow app"

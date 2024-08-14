@@ -42,6 +42,10 @@ pub struct Tx5InitConfig {
 
     /// The maximum ephemeral udp port to bind. Defaults to `65535`.
     pub ephemeral_udp_port_max: u16,
+
+    /// The maximum time allowed for application calls to complete.
+    /// Defaults to 999ms (~1 second).
+    pub slow_app_timeout: std::time::Duration,
 }
 
 impl Default for Tx5InitConfig {
@@ -50,6 +54,7 @@ impl Default for Tx5InitConfig {
             tracing_enabled: false,
             ephemeral_udp_port_min: 1,
             ephemeral_udp_port_max: 65535,
+            slow_app_timeout: std::time::Duration::from_millis(999),
         }
     }
 }

@@ -3,7 +3,7 @@ use crate::*;
 use tx5_connection::*;
 
 enum MaybeReady {
-    Ready(Arc<FramedConn>),
+    Ready(Arc<DynBackCon>),
     Wait(Arc<tokio::sync::Semaphore>),
 }
 
@@ -65,8 +65,7 @@ impl Peer {
         recv_limit: Arc<tokio::sync::Semaphore>,
         ep: Weak<Mutex<EpInner>>,
         peer_url: PeerUrl,
-        conn: Arc<Conn>,
-        conn_recv: ConnRecv,
+        wc: DynBackWaitCon,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|_this| {
@@ -78,7 +77,7 @@ impl Peer {
                 config,
                 recv_limit,
                 ep,
-                Some((conn, conn_recv)),
+                Some(wc),
                 peer_url,
                 evt_send,
                 ready.clone(),
@@ -195,7 +194,7 @@ async fn task(
     config: Arc<Config>,
     recv_limit: Arc<tokio::sync::Semaphore>,
     ep: Weak<Mutex<EpInner>>,
-    conn: Option<(Arc<Conn>, ConnRecv)>,
+    conn: Option<DynBackWaitCon>,
     peer_url: PeerUrl,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ready: Arc<Mutex<MaybeReady>>,
@@ -206,18 +205,18 @@ async fn task(
         evt_send: evt_send.clone(),
     };
 
-    let (conn, conn_recv) = match conn {
+    let mut wc = match conn {
         None => return,
-        Some(conn) => conn,
+        Some(wc) => wc,
     };
 
-    conn.ready().await;
-
-    let (conn, mut conn_recv) =
-        match FramedConn::new(conn, conn_recv, recv_limit).await {
-            Ok(conn) => conn,
-            Err(_) => return,
-        };
+    let (conn, mut conn_recv) = match wc.wait(recv_limit).await {
+        Ok((conn, conn_recv)) => (conn, conn_recv),
+        Err(err) => {
+            tracing::debug!(?err, "connection wait error");
+            return;
+        }
+    };
 
     if let Some((pf_send, pf_check)) = &config.preflight {
         let pf_data = match pf_send(&peer_url).await {

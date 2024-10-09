@@ -79,7 +79,6 @@ impl EndpointRecv {
 pub(crate) struct EpInner {
     this: Weak<Mutex<EpInner>>,
     config: Arc<Config>,
-    webrtc_config: Vec<u8>,
     recv_limit: Arc<tokio::sync::Semaphore>,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     sig_map: HashMap<SigUrl, Arc<Sig>>,
@@ -117,7 +116,6 @@ impl EpInner {
                 Sig::new(
                     self.this.clone(),
                     self.config.clone(),
-                    self.webrtc_config.clone(),
                     sig_url,
                     listener,
                     self.evt_send.clone(),
@@ -150,20 +148,14 @@ impl EpInner {
             .clone()
     }
 
-    pub fn accept_peer(
-        &mut self,
-        peer_url: PeerUrl,
-        conn: Arc<tx5_connection::Conn>,
-        conn_recv: tx5_connection::ConnRecv,
-    ) {
+    pub fn accept_peer(&mut self, peer_url: PeerUrl, wc: DynBackWaitCon) {
         self.peer_map.entry(peer_url.clone()).or_insert_with(|| {
             Peer::new_accept(
                 self.config.clone(),
                 self.recv_limit.clone(),
                 self.this.clone(),
                 peer_url,
-                conn,
-                conn_recv,
+                wc,
                 self.evt_send.clone(),
             )
         });
@@ -201,12 +193,9 @@ impl Endpoint {
             Self {
                 config: config.clone(),
                 inner: Arc::new_cyclic(|this| {
-                    let webrtc_config =
-                        config.initial_webrtc_config.as_bytes().to_vec();
                     Mutex::new(EpInner {
                         this: this.clone(),
                         config,
-                        webrtc_config,
                         recv_limit,
                         evt_send,
                         sig_map: HashMap::default(),

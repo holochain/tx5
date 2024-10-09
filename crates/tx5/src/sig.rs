@@ -1,10 +1,7 @@
 use crate::*;
 
-use tx5_connection::tx5_signal::*;
-use tx5_connection::*;
-
 enum MaybeReady {
-    Ready(Arc<Hub>),
+    Ready(DynBackEp),
     Wait(Arc<tokio::sync::Semaphore>),
 }
 
@@ -25,7 +22,6 @@ impl Sig {
     pub fn new(
         ep: Weak<Mutex<EpInner>>,
         config: Arc<Config>,
-        webrtc_config: Vec<u8>,
         sig_url: SigUrl,
         listener: bool,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
@@ -39,7 +35,6 @@ impl Sig {
                 ep,
                 this.clone(),
                 config,
-                webrtc_config,
                 sig_url.clone(),
                 listener,
                 evt_send,
@@ -74,25 +69,21 @@ impl Sig {
         }
     }
 
-    pub async fn connect(
-        &self,
-        pub_key: PubKey,
-    ) -> Result<(Arc<Conn>, ConnRecv)> {
-        let hub = match &*self.ready.lock().unwrap() {
+    pub async fn connect(&self, pub_key: PubKey) -> Result<DynBackWaitCon> {
+        let ep = match &*self.ready.lock().unwrap() {
             MaybeReady::Ready(h) => h.clone(),
             _ => return Err(Error::other("not ready")),
         };
-        hub.connect(pub_key).await
+        ep.connect(pub_key).await
     }
 }
 
 async fn connect_loop(
     config: Arc<Config>,
-    webrtc_config: Vec<u8>,
     sig_url: SigUrl,
     listener: bool,
     mut resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
-) -> (Hub, HubRecv) {
+) -> (DynBackEp, DynBackEpRecv) {
     tracing::debug!(
         target: "NETAUDIT",
         ?config,
@@ -105,17 +96,10 @@ async fn connect_loop(
 
     let mut wait = config.backoff_start;
 
-    let signal_config = Arc::new(SignalConfig {
-        listener,
-        allow_plain_text: config.signal_allow_plain_text,
-        max_idle: config.timeout,
-        ..Default::default()
-    });
-
     loop {
         match tokio::time::timeout(
             config.timeout,
-            Hub::new(webrtc_config.clone(), &sig_url, signal_config.clone()),
+            config.backend_module.connect(&sig_url, listener, &config),
         )
         .await
         .map_err(Error::other)
@@ -149,7 +133,7 @@ async fn connect_loop(
 }
 
 struct DropSig {
-    ep: Weak<Mutex<EpInner>>,
+    inner: Weak<Mutex<EpInner>>,
     sig_url: SigUrl,
     local_url: Option<PeerUrl>,
     sig: Weak<Sig>,
@@ -166,9 +150,9 @@ impl Drop for DropSig {
             a = "drop",
         );
 
-        if let Some(ep_inner) = self.ep.upgrade() {
+        if let Some(inner) = self.inner.upgrade() {
             if let Some(sig) = self.sig.upgrade() {
-                ep_inner.lock().unwrap().drop_sig(sig);
+                inner.lock().unwrap().drop_sig(sig);
             }
         }
     }
@@ -176,10 +160,9 @@ impl Drop for DropSig {
 
 #[allow(clippy::too_many_arguments)]
 async fn task(
-    ep: Weak<Mutex<EpInner>>,
+    inner: Weak<Mutex<EpInner>>,
     this: Weak<Sig>,
     config: Arc<Config>,
-    webrtc_config: Vec<u8>,
     sig_url: SigUrl,
     listener: bool,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
@@ -187,32 +170,24 @@ async fn task(
     resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
 ) {
     let mut drop_g = DropSig {
-        ep: ep.clone(),
+        inner: inner.clone(),
         sig_url: sig_url.clone(),
         local_url: None,
         sig: this,
     };
 
-    let (hub, mut hub_recv) = connect_loop(
-        config.clone(),
-        webrtc_config,
-        sig_url.clone(),
-        listener,
-        resp_url,
-    )
-    .await;
+    let (ep, mut ep_recv) =
+        connect_loop(config.clone(), sig_url.clone(), listener, resp_url).await;
 
-    let local_url = sig_url.to_peer(hub.pub_key().clone());
+    let local_url = sig_url.to_peer(ep.pub_key().clone());
     drop_g.local_url = Some(local_url.clone());
-
-    let hub = Arc::new(hub);
 
     {
         let mut lock = ready.lock().unwrap();
         if let MaybeReady::Wait(w) = &*lock {
             w.close();
         }
-        *lock = MaybeReady::Ready(hub);
+        *lock = MaybeReady::Ready(ep);
     }
 
     drop(ready);
@@ -233,10 +208,10 @@ async fn task(
         a = "connected",
     );
 
-    while let Some((conn, conn_recv)) = hub_recv.accept().await {
-        if let Some(ep) = ep.upgrade() {
-            let peer_url = sig_url.to_peer(conn.pub_key().clone());
-            ep.lock().unwrap().accept_peer(peer_url, conn, conn_recv);
+    while let Some(wc) = ep_recv.recv().await {
+        if let Some(inner) = inner.upgrade() {
+            let peer_url = sig_url.to_peer(wc.pub_key().clone());
+            inner.lock().unwrap().accept_peer(peer_url, wc);
         }
     }
 

@@ -11,6 +11,8 @@ use tx5_core::deps::serde_json;
 #[cfg(feature = "backend-go-pion")]
 mod go_pion;
 
+mod mem;
+
 /// Backend modules usable by tx5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BackendModule {
@@ -22,8 +24,8 @@ pub enum BackendModule {
     /// The Webrtc-RS-based backend.
     WebrtcRs,
 
-    /// The mock backend.
-    Mock,
+    /// The mem backend.
+    Mem,
 }
 
 impl Default for BackendModule {
@@ -33,7 +35,7 @@ impl Default for BackendModule {
         return Self::GoPion;
         #[cfg(feature = "backend-webrtc-rs")]
         return Self::WebrtcRs;
-        Self::Mock
+        Self::Mem
     }
 }
 
@@ -45,7 +47,7 @@ impl BackendModule {
             Self::GoPion => go_pion::default_config(),
             #[cfg(feature = "backend-webrtc-rs")]
             Self::WebrtcRs => todo!(),
-            Self::Mock => serde_json::json!({}),
+            Self::Mem => mem::default_config(),
         }
     }
 
@@ -61,7 +63,7 @@ impl BackendModule {
             Self::GoPion => go_pion::connect(config, url, listener).await,
             #[cfg(feature = "backend-webrtc-rs")]
             Self::WebrtcRs => todo!(),
-            Self::Mock => todo!(),
+            Self::Mem => mem::connect(config, url, listener).await,
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::*;
+use tx5_core::deps::serde_json;
 
 /// Tx5 endpoint configuration.
 pub struct Config {
@@ -40,6 +41,15 @@ pub struct Config {
     /// set the callbacks here, otherwise no preflight will
     /// be sent nor validated. Default: None.
     pub preflight: Option<(PreflightSendCb, PreflightCheckCb)>,
+
+    /// The backend connection module to use.
+    /// For the most part you should just leave this at the default.
+    pub backend_module: crate::backend::BackendModule,
+
+    /// The backend module config to use.
+    /// For the most part you should just leave this set at `None`,
+    /// to get the default backend config.
+    pub backend_module_config: Option<serde_json::Value>,
 }
 
 impl std::fmt::Debug for Config {
@@ -81,6 +91,8 @@ impl Default for Config {
             backoff_start: std::time::Duration::from_secs(5),
             backoff_max: std::time::Duration::from_secs(60),
             preflight: None,
+            backend_module: crate::backend::BackendModule::default(),
+            backend_module_config: None,
         }
     }
 }

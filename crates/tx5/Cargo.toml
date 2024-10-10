@@ -21,6 +21,7 @@ backend-webrtc-rs = [ "tx5-connection/backend-webrtc-rs" ]
 
 [dependencies]
 base64 = { workspace = true }
+futures = { workspace = true }
 influxive-otel-atomic-obs = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }

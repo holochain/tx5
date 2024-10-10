@@ -31,25 +31,23 @@ impl BackConRecv for GoConRecv {
     }
 }
 
-struct GoWaitCon(
-    PubKey,
-    Option<Arc<tx5_connection::Conn>>,
-    Option<tx5_connection::ConnRecv>,
-);
+struct GoWaitCon {
+    pub_key: PubKey,
+    con: Option<Arc<tx5_connection::Conn>>,
+    con_recv: Option<tx5_connection::ConnRecv>,
+}
 
 impl BackWaitCon for GoWaitCon {
     fn wait(
         &mut self,
         recv_limit: Arc<tokio::sync::Semaphore>,
     ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecv)>> {
-        let con = self.1.take();
-        let con_recv = self.2.take();
+        let con = self.con.take();
+        let con_recv = self.con_recv.take();
         Box::pin(async move {
             let (con, con_recv) = match (con, con_recv) {
-                (_, None) | (None, _) => {
-                    return Err(std::io::Error::other("already awaited"))
-                }
                 (Some(con), Some(con_recv)) => (con, con_recv),
+                _ => return Err(std::io::Error::other("already awaited")),
             };
 
             con.ready().await;
@@ -66,7 +64,7 @@ impl BackWaitCon for GoWaitCon {
     }
 
     fn pub_key(&self) -> &PubKey {
-        &self.0
+        &self.pub_key
     }
 }
 
@@ -80,8 +78,11 @@ impl BackEp for GoEp {
         Box::pin(async {
             let (con, con_recv) = self.0.connect(pub_key).await?;
             let pub_key = con.pub_key().clone();
-            let wc: DynBackWaitCon =
-                Box::new(GoWaitCon(pub_key, Some(con), Some(con_recv)));
+            let wc: DynBackWaitCon = Box::new(GoWaitCon {
+                pub_key,
+                con: Some(con),
+                con_recv: Some(con_recv),
+            });
             Ok(wc)
         })
     }
@@ -98,8 +99,11 @@ impl BackEpRecv for GoEpRecv {
         Box::pin(async {
             let (con, con_recv) = self.0.accept().await?;
             let pub_key = con.pub_key().clone();
-            let wc: DynBackWaitCon =
-                Box::new(GoWaitCon(pub_key, Some(con), Some(con_recv)));
+            let wc: DynBackWaitCon = Box::new(GoWaitCon {
+                pub_key,
+                con: Some(con),
+                con_recv: Some(con_recv),
+            });
             Some(wc)
         })
     }

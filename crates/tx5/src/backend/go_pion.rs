@@ -96,14 +96,11 @@ struct GoEpRecv(tx5_connection::HubRecv);
 impl BackEpRecv for GoEpRecv {
     fn recv(&mut self) -> BoxFuture<'_, Option<DynBackWaitCon>> {
         Box::pin(async {
-            if let Some((con, con_recv)) = self.0.accept().await {
-                let pub_key = con.pub_key().clone();
-                let wc: DynBackWaitCon =
-                    Box::new(GoWaitCon(pub_key, Some(con), Some(con_recv)));
-                Some(wc)
-            } else {
-                None
-            }
+            let (con, con_recv) = self.0.accept().await?;
+            let pub_key = con.pub_key().clone();
+            let wc: DynBackWaitCon =
+                Box::new(GoWaitCon(pub_key, Some(con), Some(con_recv)));
+            Some(wc)
         })
     }
 }

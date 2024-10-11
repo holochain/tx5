@@ -57,7 +57,7 @@ impl BackendModule {
         url: &str,
         listener: bool,
         config: &Arc<Config>,
-    ) -> Result<(DynBackEp, DynBackEpRecv)> {
+    ) -> Result<(DynBackEp, DynBackEpRecvCon)> {
         match self {
             #[cfg(feature = "backend-go-pion")]
             Self::GoPion => go_pion::connect(config, url, listener).await,
@@ -89,13 +89,13 @@ pub trait BackCon: 'static + Send + Sync {
 pub type DynBackCon = Arc<dyn BackCon + 'static + Send + Sync>;
 
 /// Backend connection receiver.
-pub trait BackConRecv: 'static + Send {
+pub trait BackConRecvData: 'static + Send {
     /// Receive data from this backend connection.
     fn recv(&mut self) -> BoxFuture<'_, Option<Vec<u8>>>;
 }
 
 /// Trait-object version of backend connection receiver.
-pub type DynBackConRecv = Box<dyn BackConRecv + 'static + Send>;
+pub type DynBackConRecvData = Box<dyn BackConRecvData + 'static + Send>;
 
 /// Pending connection.
 pub trait BackWaitCon: 'static + Send {
@@ -104,7 +104,7 @@ pub trait BackWaitCon: 'static + Send {
         &mut self,
         // TODO - this isn't good encapsulation
         recv_limit: Arc<tokio::sync::Semaphore>,
-    ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecv)>>;
+    ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecvData)>>;
 
     /// Get the pub_key identifying this connection.
     fn pub_key(&self) -> &PubKey;
@@ -127,10 +127,10 @@ pub trait BackEp: 'static + Send + Sync {
 pub type DynBackEp = Arc<dyn BackEp + 'static + Send + Sync>;
 
 /// Backend endpoint receiver.
-pub trait BackEpRecv: 'static + Send {
+pub trait BackEpRecvCon: 'static + Send {
     /// Receive incoming connection from this backend endpoint.
     fn recv(&mut self) -> BoxFuture<'_, Option<DynBackWaitCon>>;
 }
 
 /// Trait-object version of backend endpoint receiver.
-pub type DynBackEpRecv = Box<dyn BackEpRecv + 'static + Send>;
+pub type DynBackEpRecvCon = Box<dyn BackEpRecvCon + 'static + Send>;

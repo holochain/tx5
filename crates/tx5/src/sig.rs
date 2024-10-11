@@ -83,7 +83,7 @@ async fn connect_loop(
     sig_url: SigUrl,
     listener: bool,
     mut resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
-) -> (DynBackEp, DynBackEpRecv) {
+) -> (DynBackEp, DynBackEpRecvCon) {
     tracing::debug!(
         target: "NETAUDIT",
         ?config,

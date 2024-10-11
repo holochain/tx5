@@ -23,9 +23,9 @@ impl BackCon for GoCon {
     }
 }
 
-struct GoConRecv(tx5_connection::FramedConnRecv);
+struct GoConRecvData(tx5_connection::FramedConnRecv);
 
-impl BackConRecv for GoConRecv {
+impl BackConRecvData for GoConRecvData {
     fn recv(&mut self) -> BoxFuture<'_, Option<Vec<u8>>> {
         Box::pin(async { self.0.recv().await })
     }
@@ -41,7 +41,7 @@ impl BackWaitCon for GoWaitCon {
     fn wait(
         &mut self,
         recv_limit: Arc<tokio::sync::Semaphore>,
-    ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecv)>> {
+    ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecvData)>> {
         let con = self.con.take();
         let con_recv = self.con_recv.take();
         Box::pin(async move {
@@ -57,7 +57,8 @@ impl BackWaitCon for GoWaitCon {
                     .await?;
 
             let con: DynBackCon = Arc::new(GoCon(con));
-            let con_recv: DynBackConRecv = Box::new(GoConRecv(con_recv));
+            let con_recv: DynBackConRecvData =
+                Box::new(GoConRecvData(con_recv));
 
             Ok((con, con_recv))
         })
@@ -92,9 +93,9 @@ impl BackEp for GoEp {
     }
 }
 
-struct GoEpRecv(tx5_connection::HubRecv);
+struct GoEpRecvCon(tx5_connection::HubRecv);
 
-impl BackEpRecv for GoEpRecv {
+impl BackEpRecvCon for GoEpRecvCon {
     fn recv(&mut self) -> BoxFuture<'_, Option<DynBackWaitCon>> {
         Box::pin(async {
             let (con, con_recv) = self.0.accept().await?;
@@ -119,7 +120,7 @@ pub async fn connect(
     config: &Arc<Config>,
     url: &str,
     listener: bool,
-) -> Result<(DynBackEp, DynBackEpRecv)> {
+) -> Result<(DynBackEp, DynBackEpRecvCon)> {
     let webrtc_config = config.initial_webrtc_config.clone().into_bytes();
     let sig_config = tx5_connection::tx5_signal::SignalConfig {
         listener,
@@ -132,6 +133,6 @@ pub async fn connect(
         tx5_connection::Hub::new(webrtc_config, url, Arc::new(sig_config))
             .await?;
     let ep: DynBackEp = Arc::new(GoEp(hub));
-    let ep_recv: DynBackEpRecv = Box::new(GoEpRecv(hub_recv));
+    let ep_recv: DynBackEpRecvCon = Box::new(GoEpRecvCon(hub_recv));
     Ok((ep, ep_recv))
 }

@@ -1926,9 +1926,9 @@ dependencies = [
 
 [[package]]
 name = "lair_keystore_api"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9519a48df54d2041f8697bba7c3957263a5f2bb720ae6c4954004bad51693c61"
+checksum = "433083f77dcae8f66bc06934c18e9ae2804bccfa74a6c75bb89a3f8057d93267"
 dependencies = [
  "base64 0.22.1",
  "dunce",
@@ -4062,7 +4062,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "backtrace",
  "better-panic",
@@ -4095,7 +4095,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-core"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "app_dirs2",
  "base64 0.13.1",
@@ -4112,7 +4112,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "base64 0.13.1",
  "bytes",
@@ -4134,7 +4134,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "futures",
  "parking_lot",
@@ -4149,7 +4149,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-sys"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "Inflector",
  "base64 0.13.1",
@@ -4167,7 +4167,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-turn"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "base64 0.13.1",
  "dirs",
@@ -4184,7 +4184,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-online"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "once_cell",
  "rand",
@@ -4195,7 +4195,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "futures",
  "lair_keystore_api",
@@ -4225,7 +4225,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal-srv"
-version = "0.0.14-alpha"
+version = "0.0.15-alpha"
 dependencies = [
  "clap",
  "dirs",

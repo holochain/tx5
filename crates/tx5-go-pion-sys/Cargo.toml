@@ -47,3 +47,6 @@ force_dynamic_link = []
 # forces the code to run through the static linking process
 # even if that may not be supported by the target platform
 force_static_link = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(link_dynamic)', 'cfg(link_static)'] }

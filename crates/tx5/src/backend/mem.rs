@@ -46,10 +46,9 @@ impl Con {
 
 impl BackCon for Con {
     fn send(&self, data: Vec<u8>) -> BoxFuture<'_, Result<()>> {
-        let r = self
-            .send
-            .send(data)
-            .map_err(|_| std::io::Error::other("send failure"));
+        let r = self.send.send(data).map_err(|err| {
+            std::io::Error::other(format!("send failure ({err:?})"))
+        });
         Box::pin(async { r })
     }
 
@@ -158,7 +157,12 @@ impl BackEp for Ep {
         &self,
         pub_key: PubKey,
     ) -> BoxFuture<'_, Result<DynBackWaitCon>> {
-        Box::pin(async { STAT.connect(self.pub_key.clone(), pub_key) })
+        Box::pin(async {
+            if self.pub_key == pub_key {
+                return Err(std::io::Error::other("cannot connect to self"));
+            }
+            STAT.connect(self.pub_key.clone(), pub_key)
+        })
     }
 
     fn pub_key(&self) -> &PubKey {
@@ -237,8 +241,8 @@ impl Stat {
             ));
         }
 
-        let (dst_con, src_con_recv) = Con::new(src_pub_key.clone());
-        let (src_con, dst_con_recv) = Con::new(dst_pub_key.clone());
+        let (dst_con, src_con_recv) = Con::new(dst_pub_key.clone());
+        let (src_con, dst_con_recv) = Con::new(src_pub_key.clone());
 
         let dst_wait: DynBackWaitCon = Box::new(WaitCon {
             pub_key: dst_pub_key,
@@ -252,13 +256,13 @@ impl Stat {
             con_recv: Some(src_con_recv),
         });
 
-        if ep.send.send(dst_wait).is_err() {
+        if ep.send.send(src_wait).is_err() {
             return Err(std::io::Error::other(
                 "failed to connect (chan closed)",
             ));
         }
 
-        Ok(src_wait)
+        Ok(dst_wait)
     }
 }
 
@@ -292,24 +296,29 @@ mod tests {
         let (e1, _er1) = connect(&config, "", true).await.unwrap();
         let (e2, mut er2) = connect(&config, "", true).await.unwrap();
 
-        let (c1, _cr1) = e1
-            .connect(e2.pub_key().clone())
-            .await
-            .unwrap()
+        assert_ne!(e1.pub_key(), e2.pub_key());
+
+        let mut w1 = e1.connect(e2.pub_key().clone()).await.unwrap();
+
+        assert_eq!(w1.pub_key(), e2.pub_key());
+
+        let (c1, _cr1) = w1
             .wait(Arc::new(tokio::sync::Semaphore::new(1)))
             .await
             .unwrap();
 
-        let (c2, mut cr2) = er2
-            .recv()
-            .await
-            .unwrap()
+        assert_eq!(c1.pub_key(), e2.pub_key());
+
+        let mut w2 = er2.recv().await.unwrap();
+
+        assert_eq!(w2.pub_key(), e1.pub_key());
+
+        let (c2, mut cr2) = w2
             .wait(Arc::new(tokio::sync::Semaphore::new(1)))
             .await
             .unwrap();
 
-        assert_eq!(e1.pub_key(), c2.pub_key());
-        assert_eq!(e2.pub_key(), c1.pub_key());
+        assert_eq!(c2.pub_key(), e1.pub_key());
 
         c1.send(vec![1]).await.unwrap();
 

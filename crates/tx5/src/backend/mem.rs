@@ -111,11 +111,11 @@ fn gen_pub_key(uniq: u64, loc: usize) -> PubKey {
 
 fn parse_pub_key(pub_key: &PubKey) -> (u64, usize) {
     let mut uniq = [0; 8];
-    uniq.copy_from_slice(&(*pub_key)[16..24]);
+    uniq.copy_from_slice(&pub_key[16..24]);
     let uniq = u64::from_be_bytes(uniq);
 
     let mut loc = [0; 8];
-    loc.copy_from_slice(&(*pub_key)[24..32]);
+    loc.copy_from_slice(&pub_key[24..32]);
     let loc = u64::from_be_bytes(loc) as usize;
 
     (uniq, loc)

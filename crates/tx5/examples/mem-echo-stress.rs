@@ -1,16 +1,14 @@
+//! Mem backend timings. The hope is to have near ideal zero overhead.
+//! At time of writing, you can see we're pretty close to exactly
+//! proportional to node count for a given machine's resources:
+//!
+//! - 1 nodes, 33941 ops, 0.000028 sec/op, in 1.004478s
+//! - 10 nodes, 174041 ops, 0.000056 sec/op, in 1.016977s
+//! - 100 nodes, 175111 ops, 0.000580 sec/op, in 1.018943s
+//! - 1000 nodes, 160266 ops, 0.006361 sec/op, in 1.019859s
+
 use std::sync::Arc;
 use tx5::{backend::*, *};
-
-/*
- * Mem backend timings. The hope is to have near ideal zero overhead.
- * At time of writing, you can see we're pretty close to exactly
- * proportional to node count for a given machine's resources:
- *
- * - 1 nodes, 33941 ops, 0.000028 sec/op, in 1.004478s
- * - 10 nodes, 174041 ops, 0.000056 sec/op, in 1.016977s
- * - 100 nodes, 175111 ops, 0.000580 sec/op, in 1.018943s
- * - 1000 nodes, 160266 ops, 0.006361 sec/op, in 1.019859s
- */
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {

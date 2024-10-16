@@ -24,6 +24,7 @@ base64 = { workspace = true }
 futures = { workspace = true }
 influxive-otel-atomic-obs = { workspace = true }
 serde = { workspace = true }
+slab = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tracing = { workspace = true }
 tx5-connection = { workspace = true, default-features = false }

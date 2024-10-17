@@ -1,5 +1,7 @@
 use crate::*;
 
+const DISCONNECT: &[u8] = b"<<<test-disconnect>>>";
+
 struct TestEp {
     ep: Endpoint,
     task: tokio::task::JoinHandle<()>,
@@ -48,7 +50,7 @@ impl TestEp {
                     }
                     EndpointEvent::Disconnected { peer_url } => {
                         if send
-                            .send((peer_url, b"<<<test-disconnect>>>".to_vec()))
+                            .send((peer_url, DISCONNECT.to_vec()))
                             .is_err()
                         {
                             break;
@@ -468,6 +470,10 @@ async fn ep_messages_contiguous() {
 
     loop {
         let (peer_url, message) = dest_recv.recv().await.unwrap();
+
+        if message == DISCONNECT {
+            continue;
+        }
 
         assert_eq!(((16 * 1024) - 4) * CHUNK_COUNT, message.len());
 

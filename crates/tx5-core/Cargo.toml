@@ -1,6 +1,6 @@
 [package]
 name = "tx5-core"
-version = "0.1.3-beta"
+version = "0.1.4-beta"
 edition = "2021"
 description = "Holochain WebRTC P2P Communication Ecosystem Core Types"
 license = "MIT OR Apache-2.0"

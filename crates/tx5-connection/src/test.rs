@@ -32,11 +32,14 @@ impl TestSrv {
             if let Ok(r) = Hub::new(
                 b"{}".to_vec(),
                 &format!("ws://{addr}"),
-                Arc::new(tx5_signal::SignalConfig {
-                    listener: true,
-                    allow_plain_text: true,
-                    max_idle: std::time::Duration::from_secs(1),
-                    ..Default::default()
+                Arc::new(HubConfig {
+                    backend_module: BackendModule::default(),
+                    signal_config: Arc::new(tx5_signal::SignalConfig {
+                        listener: true,
+                        allow_plain_text: true,
+                        max_idle: std::time::Duration::from_secs(1),
+                        ..Default::default()
+                    }),
                 }),
             )
             .await

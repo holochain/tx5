@@ -13,6 +13,9 @@ categories = ["network-programming"]
 [features]
 default = [ "backend-go-pion" ]
 
+# use the libdatachannel crate as the webrtc backend
+backend-libdatachannel = [ "tx5-connection/backend-libdatachannel" ]
+
 # use the tx5-go-pion crate as the webrtc backend
 backend-go-pion = [ "tx5-connection/backend-go-pion" ]
 

@@ -29,7 +29,7 @@ async fn hub_map_assert(
     pub_key: PubKey,
     map: &mut HubMap,
     client: &Arc<tx5_signal::SignalConnection>,
-    config: &Arc<tx5_signal::SignalConfig>,
+    config: &Arc<HubConfig>,
     hub_cmd_send: &tokio::sync::mpsc::Sender<HubCmd>,
 ) -> Result<(Option<ConnRecv>, Arc<Conn>, CloseSend<ConnCmd>)> {
     let mut found_during_prune = None;
@@ -120,12 +120,15 @@ impl Hub {
     pub async fn new(
         webrtc_config: Vec<u8>,
         url: &str,
-        config: Arc<tx5_signal::SignalConfig>,
+        config: Arc<HubConfig>,
     ) -> Result<(Self, HubRecv)> {
         let webrtc_config = Arc::new(Mutex::new(webrtc_config));
 
-        let (client, mut recv) =
-            tx5_signal::SignalConnection::connect(url, config.clone()).await?;
+        let (client, mut recv) = tx5_signal::SignalConnection::connect(
+            url,
+            config.signal_config.clone(),
+        )
+        .await?;
         let client = Arc::new(client);
 
         tracing::debug!(%url, pub_key = ?client.pub_key(), "hub connected");

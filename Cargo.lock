@@ -3026,6 +3026,7 @@ dependencies = [
  "futures",
  "rand",
  "sbd-server",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

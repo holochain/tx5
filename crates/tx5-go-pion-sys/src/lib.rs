@@ -324,7 +324,7 @@ impl Api {
                     }
 
                     // need to forget it every time, otherwise drop will run
-                    Box::into_raw(closure);
+                    let _ = Box::into_raw(closure);
                     return;
                 }
                 TY_PEER_CON_ON_ICE_CANDIDATE => Event::PeerConICECandidate {
@@ -356,7 +356,7 @@ impl Api {
             closure(evt);
 
             // need to forget it every time, otherwise drop will run
-            Box::into_raw(closure);
+            let _ = Box::into_raw(closure);
         }
 
         let cb: DynCb = Box::new(Arc::new(cb));

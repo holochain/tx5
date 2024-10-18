@@ -8,14 +8,18 @@ use futures::future::BoxFuture;
 use crate::{Config, PubKey};
 use tx5_core::deps::serde_json;
 
-#[cfg(feature = "backend-go-pion")]
-mod go_pion;
+#[cfg(any(feature = "backend-go-pion", feature = "backend-libdatachannel"))]
+mod be_tx5_connection;
 
 mod mem;
 
 /// Backend modules usable by tx5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BackendModule {
+    #[cfg(feature = "backend-libdatachannel")]
+    /// The libdatachannel-based backend.
+    LibDataChannel,
+
     #[cfg(feature = "backend-go-pion")]
     /// The Go Pion-based backend.
     GoPion,
@@ -31,6 +35,8 @@ pub enum BackendModule {
 impl Default for BackendModule {
     #[allow(unreachable_code)]
     fn default() -> Self {
+        #[cfg(feature = "backend-libdatachannel")]
+        return Self::LibDataChannel;
         #[cfg(feature = "backend-go-pion")]
         return Self::GoPion;
         #[cfg(feature = "backend-webrtc-rs")]
@@ -43,8 +49,10 @@ impl BackendModule {
     /// Get a default version of the module-specific config.
     pub fn default_config(&self) -> serde_json::Value {
         match self {
+            #[cfg(feature = "backend-libdatachannel")]
+            Self::LibDataChannel => be_tx5_connection::default_config(),
             #[cfg(feature = "backend-go-pion")]
-            Self::GoPion => go_pion::default_config(),
+            Self::GoPion => be_tx5_connection::default_config(),
             #[cfg(feature = "backend-webrtc-rs")]
             Self::WebrtcRs => todo!(),
             Self::Mem => mem::default_config(),
@@ -59,8 +67,14 @@ impl BackendModule {
         config: &Arc<Config>,
     ) -> Result<(DynBackEp, DynBackEpRecvCon)> {
         match self {
+            #[cfg(feature = "backend-libdatachannel")]
+            Self::LibDataChannel => {
+                be_tx5_connection::connect(config, url, listener).await
+            }
             #[cfg(feature = "backend-go-pion")]
-            Self::GoPion => go_pion::connect(config, url, listener).await,
+            Self::GoPion => {
+                be_tx5_connection::connect(config, url, listener).await
+            }
             #[cfg(feature = "backend-webrtc-rs")]
             Self::WebrtcRs => todo!(),
             Self::Mem => mem::connect(config, url, listener).await,

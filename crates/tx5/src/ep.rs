@@ -294,10 +294,15 @@ impl Endpoint {
 
     /// Get stats.
     pub fn get_stats(&self) -> stats::Stats {
-        #[cfg(feature = "backend-go-pion")]
-        let backend = stats::StatsBackend::BackendGoPion;
-        #[cfg(feature = "backend-webrtc-rs")]
-        let backend = stats::StatsBackend::BackendWebrtcRs;
+        let backend = match self.config.backend_module {
+            #[cfg(feature = "backend-libdatachannel")]
+            BackendModule::LibDataChannel => {
+                stats::StatsBackend::BackendLibDataChannel
+            }
+            #[cfg(feature = "backend-go-pion")]
+            BackendModule::GoPion => stats::StatsBackend::BackendGoPion,
+            BackendModule::Mem => stats::StatsBackend::BackendMem,
+        };
 
         let connection_list = self
             .inner

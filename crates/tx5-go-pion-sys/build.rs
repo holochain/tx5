@@ -118,8 +118,8 @@ fn go_check_version() {
     // Only check the go version if this is NOT a DOCS_RS build.
     if std::env::var("DOCS_RS").is_err() {
         assert!(
-            ver >= 1.20,
-            "go executable version must be >= 1.20, got: {ver}",
+            ver >= 1.19,
+            "go executable version must be >= 1.19, got: {ver}",
         );
     }
 }

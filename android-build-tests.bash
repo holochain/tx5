@@ -41,7 +41,7 @@ export TARGET_AR="${_ndk_root}/bin/llvm-ar"
 export TARGET_RANLIB="${_ndk_root}/bin/llvm-ranlib"
 export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
 
-cargo test --no-default-features --features backend-go-pion --no-run --target ${ANDROID_ARCH}-linux-android --config target.${ANDROID_ARCH}-linux-android.linker="\"${_ndk_root}/bin/${ANDROID_ARCH}-linux-android34-clang\"" --config target.${ANDROID_ARCH}-linux-android.ar="\"${_ndk_root}/bin/llvm-ar\"" 2>&1 | tee output-cargo-test
+cargo test --manifest-path crates/tx5/Cargo.toml --no-default-features --features backend-go-pion --no-run --target ${ANDROID_ARCH}-linux-android --config target.${ANDROID_ARCH}-linux-android.linker="\"${_ndk_root}/bin/${ANDROID_ARCH}-linux-android34-clang\"" --config target.${ANDROID_ARCH}-linux-android.ar="\"${_ndk_root}/bin/llvm-ar\"" 2>&1 | tee output-cargo-test
 cat output-cargo-test | grep Executable | sed -E 's/[^(]*\(([^)]*)\)/\1/' > output-test-executables
 echo "BUILD TESTS:"
 cat output-test-executables

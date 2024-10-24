@@ -207,7 +207,7 @@ async fn task(
         task_err(is_polite, config, send_buffer, evt_send, cmd_send, cmd_recv)
             .await
     {
-        tracing::debug!(?err, "webrtc task error");
+        tracing::warn!(?err, "webrtc task error");
     }
 }
 

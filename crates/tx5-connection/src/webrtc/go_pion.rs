@@ -24,6 +24,7 @@ pub struct Webrtc {
 }
 
 impl Webrtc {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         is_polite: bool,
         config: Vec<u8>,

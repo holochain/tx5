@@ -78,12 +78,14 @@ test: static unit
 unit:
 	cargo build --all-targets
 	RUST_BACKTRACE=1 RUST_LOG=error cargo test -- --nocapture
+	RUST_BACKTRACE=1 RUST_LOG=error cargo test --no-default-features --features backend-go-pion --manifest-path crates/tx5-connection/Cargo.toml -- --nocapture
+	RUST_BACKTRACE=1 RUST_LOG=error cargo test --no-default-features --features backend-go-pion --manifest-path crates/tx5/Cargo.toml -- --nocapture
 
 static: dep fmt lint docs
 	@if [ "${CI}x" != "x" ]; then git diff --exit-code; fi
 
 lint:
-	cargo clippy -- -Dwarnings
+	cargo clippy --features backend-go-pion,backend-libdatachannel -- -Dwarnings
 
 dep:
 	@#uhhh... better way to do this? depend on cargo-tree?

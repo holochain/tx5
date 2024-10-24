@@ -13,6 +13,7 @@ pub enum BackendModule {
 }
 
 impl Default for BackendModule {
+    #[allow(unreachable_code)]
     fn default() -> Self {
         #[cfg(feature = "backend-libdatachannel")]
         return Self::LibDataChannel;

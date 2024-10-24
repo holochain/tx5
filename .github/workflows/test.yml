@@ -65,7 +65,7 @@ jobs:
         run: |-
           $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
           #make unit
-          RUST_LOG=trace cargo test --manifest-path crates/tx5/Cargo.toml webrtc_transition_ordering -- --nocapture
+          cargo test --manifest-path crates/tx5/Cargo.toml webrtc_transition_ordering -- --nocapture
 
       - name: Cargo Test
         if: matrix.os != 'windows-latest'

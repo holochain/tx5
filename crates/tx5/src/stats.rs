@@ -5,11 +5,17 @@
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum StatsBackend {
+    /// The rust ffi bindings to the libdatachannel webrtc library.
+    BackendLibDataChannel,
+
     /// The rust ffi bindings to the golang pion webrtc library.
     BackendGoPion,
 
     /// The rust webrtc library.
     BackendWebrtcRs,
+
+    /// The mem-only stub/test backend.
+    BackendMem,
 }
 
 /// Data for an individual connection.

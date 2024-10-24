@@ -76,7 +76,7 @@ impl Conn {
         is_polite: bool,
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
-        config: Arc<tx5_signal::SignalConfig>,
+        config: Arc<HubConfig>,
         hub_cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
     ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
         netaudit!(
@@ -99,7 +99,7 @@ impl Conn {
         let (mut msg_send, msg_recv) = CloseSend::channel();
         let (cmd_send, mut cmd_recv) = CloseSend::channel();
 
-        let keepalive_dur = config.max_idle / 2;
+        let keepalive_dur = config.signal_config.max_idle / 2;
         let client2 = client.clone();
         let pub_key2 = pub_key.clone();
         let keepalive_task = tokio::task::spawn(async move {
@@ -188,7 +188,12 @@ impl Conn {
                 Result::Ok(())
             };
 
-            match tokio::time::timeout(config.max_idle, handshake_fut).await {
+            match tokio::time::timeout(
+                config.signal_config.max_idle,
+                handshake_fut,
+            )
+            .await
+            {
                 Err(_) | Ok(Err(_)) => {
                     client.close_peer(&pub_key2).await;
                     return;
@@ -201,7 +206,8 @@ impl Conn {
             // closing the semaphore causes all the acquire awaits to end
             ready2.close();
 
-            let (webrtc, mut webrtc_recv) = webrtc::Webrtc::new(
+            let (webrtc, mut webrtc_recv) = webrtc::new_backend_module(
+                config.backend_module,
                 is_polite,
                 webrtc_config,
                 // MAYBE - make this configurable
@@ -324,9 +330,11 @@ impl Conn {
             let mut send_over_webrtc = false;
 
             loop {
-                let cmd =
-                    tokio::time::timeout(config.max_idle, cmd_recv.recv())
-                        .await;
+                let cmd = tokio::time::timeout(
+                    config.signal_config.max_idle,
+                    cmd_recv.recv(),
+                )
+                .await;
 
                 let cmd = match cmd {
                     Err(_) => {

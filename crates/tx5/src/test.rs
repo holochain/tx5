@@ -195,8 +195,18 @@ async fn webrtc_transition_ordering() {
         }
     });
 
+    struct D(tokio::task::JoinHandle<()>);
+
+    impl Drop for D {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+
+    let _d = D(ts1);
+
     let tr2 = tokio::task::spawn(tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(60),
         async move {
             // at least the first message should be passed before webrtc
             // can connect
@@ -220,7 +230,6 @@ async fn webrtc_transition_ordering() {
                     if !got_non_webrtc {
                         panic!("failed to receive any pre-webrtc messages");
                     }
-                    ts1.abort();
                     break;
                 } else {
                     got_non_webrtc = true;

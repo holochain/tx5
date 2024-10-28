@@ -49,10 +49,7 @@ impl TestEp {
                         }
                     }
                     EndpointEvent::Disconnected { peer_url } => {
-                        if send
-                            .send((peer_url, DISCON.to_vec()))
-                            .is_err()
-                        {
+                        if send.send((peer_url, DISCON.to_vec())).is_err() {
                             break;
                         }
                     }
@@ -115,7 +112,8 @@ impl Test {
         let _ = tx5_core::Tx5InitConfig {
             tracing_enabled: true,
             ..Default::default()
-        }.set_as_global_default();
+        }
+        .set_as_global_default();
 
         let mut this = Test {
             sig_srv_hnd: None,

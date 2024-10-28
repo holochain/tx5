@@ -11,7 +11,7 @@ keywords = ["holochain", "holo", "p2p", "webrtc", "networking"]
 categories = ["network-programming"]
 
 [features]
-default = [ "backend-libdatachannel" ]
+default = [ "backend-go-pion" ]
 
 # use the libdatachannel crate as the webrtc backend
 backend-libdatachannel = [ "tx5-connection/backend-libdatachannel" ]

@@ -347,29 +347,27 @@ async fn task_err(
             Cmd::RecvMessage(msg) => {
                 evt_send.send(WebrtcEvt::Message(msg)).await?;
             }
-            Cmd::RecvDescription(desc) => {
-                match desc.sdp_type {
-                    datachannel::SdpType::Offer => {
-                        evt_send
-                            .send(WebrtcEvt::GeneratedOffer(
-                                serde_json::to_string(&desc)?.into_bytes(),
-                            ))
-                            .await?;
-                    }
-                    datachannel::SdpType::Answer => {
-                        evt_send
-                            .send(WebrtcEvt::GeneratedAnswer(
-                                serde_json::to_string(&desc)?.into_bytes(),
-                            ))
-                            .await?;
-                    }
-                    _ => {
-                        return Err(std::io::Error::other(
-                            "unhandled sdp desc type",
+            Cmd::RecvDescription(desc) => match desc.sdp_type {
+                datachannel::SdpType::Offer => {
+                    evt_send
+                        .send(WebrtcEvt::GeneratedOffer(
+                            serde_json::to_string(&desc)?.into_bytes(),
                         ))
-                    }
+                        .await?;
                 }
-            }
+                datachannel::SdpType::Answer => {
+                    evt_send
+                        .send(WebrtcEvt::GeneratedAnswer(
+                            serde_json::to_string(&desc)?.into_bytes(),
+                        ))
+                        .await?;
+                }
+                _ => {
+                    return Err(std::io::Error::other(
+                        "unhandled sdp desc type",
+                    ))
+                }
+            },
             Cmd::DataChanOpen => {
                 evt_send.send(WebrtcEvt::Ready).await?;
             }

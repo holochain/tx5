@@ -17,8 +17,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [
-          #ubuntu-latest,
-          #macos-latest,
+          ubuntu-latest,
+          macos-latest,
           windows-latest,
         ]
         toolchain: [
@@ -64,12 +64,11 @@ jobs:
           RUST_BACKTRACE: 1
         run: |-
           $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
-          #make unit
-          cargo test --manifest-path crates/tx5/Cargo.toml webrtc_transition_ordering -- --nocapture
+          make unit
 
       - name: Cargo Test
         if: matrix.os != 'windows-latest'
         env:
-          RUST_LOG: warn
+          RUST_LOG: trace
           RUST_BACKTRACE: 1
         run: make unit

@@ -1,5 +1,7 @@
 use crate::*;
 
+const DISCON: &[u8] = b"<<<test-disconnect>>>";
+
 struct TestEp {
     ep: Endpoint,
     task: tokio::task::JoinHandle<()>,
@@ -48,7 +50,7 @@ impl TestEp {
                     }
                     EndpointEvent::Disconnected { peer_url } => {
                         if send
-                            .send((peer_url, b"<<<test-disconnect>>>".to_vec()))
+                            .send((peer_url, DISCON.to_vec()))
                             .is_err()
                         {
                             break;
@@ -109,6 +111,11 @@ impl Test {
             .finish();
 
         let _ = tracing::subscriber::set_global_default(subscriber);
+
+        let _ = tx5_core::Tx5InitConfig {
+            tracing_enabled: true,
+            ..Default::default()
+        }.set_as_global_default();
 
         let mut this = Test {
             sig_srv_hnd: None,
@@ -206,7 +213,7 @@ async fn webrtc_transition_ordering() {
     let _d = D(ts1);
 
     let tr2 = tokio::task::spawn(tokio::time::timeout(
-        std::time::Duration::from_secs(60),
+        std::time::Duration::from_secs(30),
         async move {
             // at least the first message should be passed before webrtc
             // can connect

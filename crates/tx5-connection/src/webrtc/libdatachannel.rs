@@ -275,11 +275,8 @@ async fn task_err(
             Some(cmd) => cmd,
         };
 
-        let mut slow_task = "unknown";
-
-        match breakable_timeout!(match cmd {
+        match cmd {
             Cmd::InOffer(o) => {
-                slow_task = "in-offer";
                 if is_polite && !did_handshake {
                     let o: datachannel::SessionDescription =
                         serde_json::from_slice(&o)
@@ -294,7 +291,6 @@ async fn task_err(
                 }
             }
             Cmd::InAnswer(a) => {
-                slow_task = "in-answer";
                 if !is_polite && !did_handshake {
                     let a: datachannel::SessionDescription =
                         serde_json::from_slice(&a)
@@ -305,7 +301,6 @@ async fn task_err(
                 }
             }
             Cmd::InIce(i) => {
-                slow_task = "in-ice";
                 let i: datachannel::IceCandidate =
                     serde_json::from_slice(&i)
                         .map_err(map_err("deserializing remote candidate"))?;
@@ -315,11 +310,10 @@ async fn task_err(
                 {
                     // Don't error on ice candidates, it might be from
                     // a previous negotiation, just note it in the trace
-                    tracing::debug!(?err, "failed to add remote candidate");
+                    tracing::warn!(?err, "failed to add remote candidate");
                 }
             }
             Cmd::GeneratedIce(ice) => {
-                slow_task = "gen-ice";
                 evt_send
                     .send(WebrtcEvt::GeneratedIce(
                         serde_json::to_string(&ice)?.into_bytes(),
@@ -327,7 +321,6 @@ async fn task_err(
                     .await?;
             }
             Cmd::DataChan(mut d) => {
-                slow_task = "data-chan";
                 if data.is_none() {
                     d.set_buffered_amount_low_threshold(send_buffer).map_err(
                         map_err("setting buffer low threshold (in)"),
@@ -338,7 +331,6 @@ async fn task_err(
                 }
             }
             Cmd::SendMessage(msg, resp) => {
-                slow_task = "send-msg";
                 if let Some(d) = &mut data {
                     d.send(&msg).map_err(map_err("sending message"))?;
                     let amt = d.buffered_amount();
@@ -353,11 +345,9 @@ async fn task_err(
                 }
             }
             Cmd::RecvMessage(msg) => {
-                slow_task = "recv-msg";
                 evt_send.send(WebrtcEvt::Message(msg)).await?;
             }
             Cmd::RecvDescription(desc) => {
-                slow_task = "recv-desc";
                 match desc.sdp_type {
                     datachannel::SdpType::Offer => {
                         evt_send
@@ -381,22 +371,13 @@ async fn task_err(
                 }
             }
             Cmd::DataChanOpen => {
-                slow_task = "chan-open";
                 evt_send.send(WebrtcEvt::Ready).await?;
             }
             Cmd::BufferedAmountLow => {
-                slow_task = "buf-low";
                 pend_buffer.clear();
             }
             Cmd::Error(err) => return Err(err),
-        }) {
-            Err(_) => {
-                let err = format!("slow app on webrtc loop task: {slow_task}");
-                tracing::warn!("{err}");
-                Err(Error::other(err))
-            }
-            Ok(r) => r,
-        }?;
+        }
     }
 
     Ok(())

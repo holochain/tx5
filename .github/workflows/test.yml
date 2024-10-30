@@ -51,16 +51,6 @@ jobs:
           manifest-dir: ${{ github.workspace }}/.github/manifest
           github-binarycache: true
 
-      - name: Cargo Build Windows
-        if: matrix.os == 'windows-latest'
-        run: |-
-          $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
-          cargo build --all-targets
-
-      - name: Cargo Build
-        if: matrix.os != 'windows-latest'
-        run: cargo build --all-targets
-
       - name: Cargo Build - musl
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -70,15 +60,15 @@ jobs:
       - name: Cargo Test Windows
         if: matrix.os == 'windows-latest'
         env:
-          RUST_LOG: error
+          RUST_LOG: info
           RUST_BACKTRACE: 1
         run: |-
           $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
-          cargo test -- --nocapture
+          make unit
 
       - name: Cargo Test
         if: matrix.os != 'windows-latest'
         env:
-          RUST_LOG: error
+          RUST_LOG: info
           RUST_BACKTRACE: 1
-        run: cargo test -- --nocapture
+        run: make unit

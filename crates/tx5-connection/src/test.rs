@@ -7,6 +7,7 @@ fn init_tracing() {
         )
         .with_file(true)
         .with_line_number(true)
+        .with_target(true)
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
@@ -28,15 +29,30 @@ impl TestSrv {
     }
 
     pub async fn hub(&self) -> (Hub, HubRecv) {
+        let _ = tx5_core::Tx5InitConfig {
+            tracing_enabled: true,
+            ..Default::default()
+        }
+        .set_as_global_default();
+
         for addr in self.server.bind_addrs() {
             if let Ok(r) = Hub::new(
-                b"{}".to_vec(),
+                br#"{
+                  "iceServers": [
+                    { "urls": ["stun:stun.l.google.com:80"] },
+                    { "urls": ["stun:stun1.l.google.com:80"] }
+                  ]
+                }"#
+                .to_vec(),
                 &format!("ws://{addr}"),
-                Arc::new(tx5_signal::SignalConfig {
-                    listener: true,
-                    allow_plain_text: true,
-                    max_idle: std::time::Duration::from_secs(1),
-                    ..Default::default()
+                Arc::new(HubConfig {
+                    backend_module: BackendModule::default(),
+                    signal_config: Arc::new(tx5_signal::SignalConfig {
+                        listener: true,
+                        allow_plain_text: true,
+                        max_idle: std::time::Duration::from_secs(1),
+                        ..Default::default()
+                    }),
                 }),
             )
             .await

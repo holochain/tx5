@@ -129,9 +129,27 @@ pub async fn connect(
         max_idle: config.timeout,
         ..Default::default()
     };
+
+    let backend_module = match config.backend_module {
+        #[cfg(feature = "backend-libdatachannel")]
+        BackendModule::LibDataChannel => {
+            tx5_connection::BackendModule::LibDataChannel
+        }
+        #[cfg(feature = "backend-go-pion")]
+        BackendModule::GoPion => tx5_connection::BackendModule::GoPion,
+        oth => {
+            return Err(std::io::Error::other(format!(
+                "unsupported backend module: {oth:?}"
+            )))
+        }
+    };
+
+    let hub_config = Arc::new(tx5_connection::HubConfig {
+        backend_module,
+        signal_config: Arc::new(sig_config),
+    });
     let (hub, hub_recv) =
-        tx5_connection::Hub::new(webrtc_config, url, Arc::new(sig_config))
-            .await?;
+        tx5_connection::Hub::new(webrtc_config, url, hub_config).await?;
     let ep: DynBackEp = Arc::new(GoEp(hub));
     let ep_recv: DynBackEpRecvCon = Box::new(GoEpRecvCon(hub_recv));
     Ok((ep, ep_recv))

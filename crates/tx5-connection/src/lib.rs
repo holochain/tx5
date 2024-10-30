@@ -24,14 +24,7 @@
 //! make sure the backend doesn't change out from under you, set
 //! no-default-features and explicitly enable the backend of your choice.
 
-#[cfg(any(
-    not(any(feature = "backend-go-pion", feature = "backend-webrtc-rs")),
-    all(feature = "backend-go-pion", feature = "backend-webrtc-rs"),
-))]
-compile_error!("Must specify exactly 1 webrtc backend");
-
-#[cfg(feature = "backend-go-pion")]
-pub use tx5_go_pion::Tx5InitConfig;
+pub use tx5_core::Tx5InitConfig;
 
 macro_rules! breakable_timeout {
     ($($t:tt)*) => {
@@ -100,7 +93,11 @@ impl<T: 'static + Send> Drop for CloseSend<T> {
 
 impl<T: 'static + Send> CloseSend<T> {
     pub fn channel() -> (Self, CloseRecv<T>) {
-        let (s, r) = futures::channel::mpsc::channel(32);
+        Self::sized_channel(32)
+    }
+
+    pub fn sized_channel(size: usize) -> (Self, CloseRecv<T>) {
+        let (s, r) = futures::channel::mpsc::channel(size);
         (
             Self {
                 sender: Arc::new(Mutex::new(Some(s))),
@@ -112,6 +109,17 @@ impl<T: 'static + Send> CloseSend<T> {
 
     pub fn set_close_on_drop(&mut self, close_on_drop: bool) {
         self.close_on_drop = close_on_drop;
+    }
+
+    #[allow(dead_code)] // only used in libdatachannel backend
+    pub fn send_or_close(&self, t: T) {
+        let mut lock = self.sender.lock().unwrap();
+        if let Some(sender) = &mut *lock {
+            if sender.try_send(t).is_err() {
+                sender.close_channel();
+                *lock = None;
+            }
+        }
     }
 
     pub fn send(
@@ -130,6 +138,7 @@ impl<T: 'static + Send> CloseSend<T> {
         }
     }
 
+    #[allow(dead_code)] // only used in go_pion backend
     pub fn send_slow_app(
         &self,
         t: T,
@@ -161,6 +170,9 @@ impl<T: 'static + Send> CloseSend<T> {
         }
     }
 }
+
+mod config;
+pub use config::*;
 
 mod webrtc;
 

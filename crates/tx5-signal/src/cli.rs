@@ -143,22 +143,13 @@ fn priv_system_tls() -> Arc<rustls::ClientConfig> {
         target_os = "linux",
         target_os = "macos"
     ))]
-    for cert in rustls_native_certs::load_native_certs()
-        .expect("failed to load system tls certs")
     {
-        match roots
-            .add(&rustls::Certificate(cert.0)) {
-                Ok(_) => (),
-                Err(_) => roots.add_server_trust_anchors(
-                    webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|a| {
-                        rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                            a.subject.to_vec(),
-                            a.spki.to_vec(),
-                            a.name_constraints.map(|c| c.to_vec()),
-                        )
-                    }),
-                )
-            }
+        let certs = rustls_native_certs::load_native_certs()
+            .expect("failed to load system tls certs")
+            .into_iter()
+            .map(|c| c.0)
+            .collect::<Vec<Vec<u8>>>();
+        roots.add_parsable_certificates(certs.as_ref());
     }
 
     Arc::new(

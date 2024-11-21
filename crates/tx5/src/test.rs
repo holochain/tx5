@@ -1,3 +1,5 @@
+use tokio::time::timeout;
+
 use crate::*;
 
 const DISCON: &[u8] = b"<<<test-disconnect>>>";
@@ -646,4 +648,29 @@ async fn ep_broadcast_happy() {
 
     let (_, message) = ep3_recv.recv().await.unwrap();
     assert_eq!(&b"world"[..], &message);
+}
+
+// Regression test to prevent dead locking a connection when a peer attempts to
+// connect to itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn connect_to_self_does_not_dead_lock() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
+    let test = Test::new().await;
+
+    let mut ep1 = test.ep(config.clone()).await;
+    let mut ep1_recv = ep1.take_recv().unwrap();
+    let message = b"hello";
+
+    let result = timeout(
+        std::time::Duration::from_secs(1),
+        ep1.send(ep1.peer_url(), message.to_vec()),
+    )
+    .await;
+    assert!(result.is_ok());
+
+    let (_, message) = ep1_recv.recv().await.unwrap();
+    assert_eq!(&message.to_vec(), &message);
 }

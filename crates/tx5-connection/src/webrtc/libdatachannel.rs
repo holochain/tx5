@@ -25,27 +25,29 @@ struct Dch(CloseSend<Cmd>);
 
 impl datachannel::DataChannelHandler for Dch {
     fn on_open(&mut self) {
-        self.0.send_or_close(Cmd::DataChanOpen);
+        let _ = self.0.send_or_close(Cmd::DataChanOpen);
     }
 
     fn on_closed(&mut self) {
-        self.0
+        let _ = self
+            .0
             .send_or_close(Cmd::Error(std::io::Error::other("DataChanClosed")));
     }
 
     fn on_error(&mut self, err: &str) {
-        self.0
-            .send_or_close(Cmd::Error(std::io::Error::other(format!(
-                "DataChanError: {err}"
-            ))));
+        let _ =
+            self.0
+                .send_or_close(Cmd::Error(std::io::Error::other(format!(
+                    "DataChanError: {err}"
+                ))));
     }
 
     fn on_message(&mut self, msg: &[u8]) {
-        self.0.send_or_close(Cmd::RecvMessage(msg.to_vec()));
+        let _ = self.0.send_or_close(Cmd::RecvMessage(msg.to_vec()));
     }
 
     fn on_buffered_amount_low(&mut self) {
-        self.0.send_or_close(Cmd::BufferedAmountLow);
+        let _ = self.0.send_or_close(Cmd::BufferedAmountLow);
     }
 
     /*
@@ -68,19 +70,20 @@ impl datachannel::PeerConnectionHandler for Pch {
     }
 
     fn on_description(&mut self, sess_desc: datachannel::SessionDescription) {
-        self.0
+        let _ = self
+            .0
             .send_or_close(Cmd::RecvDescription(Box::new(sess_desc)));
     }
 
     fn on_candidate(&mut self, cand: datachannel::IceCandidate) {
-        self.0.send_or_close(Cmd::GeneratedIce(cand));
+        let _ = self.0.send_or_close(Cmd::GeneratedIce(cand));
     }
 
     fn on_data_channel(
         &mut self,
         data_channel: Box<datachannel::RtcDataChannel<Self::DCH>>,
     ) {
-        self.0.send_or_close(Cmd::DataChan(data_channel));
+        let _ = self.0.send_or_close(Cmd::DataChan(data_channel));
     }
 }
 
@@ -158,8 +161,7 @@ impl super::Webrtc for Webrtc {
     fn in_offer(&self, offer: Vec<u8>) -> BoxFuture<'_, Result<()>> {
         Box::pin(async move {
             self.cmd_send
-                .send(Cmd::InOffer(offer))
-                .await
+                .send_or_close(Cmd::InOffer(offer))
                 .map_err(|_| Error::other("closed"))
         })
     }
@@ -167,8 +169,7 @@ impl super::Webrtc for Webrtc {
     fn in_answer(&self, answer: Vec<u8>) -> BoxFuture<'_, Result<()>> {
         Box::pin(async move {
             self.cmd_send
-                .send(Cmd::InAnswer(answer))
-                .await
+                .send_or_close(Cmd::InAnswer(answer))
                 .map_err(|_| Error::other("closed"))
         })
     }
@@ -176,8 +177,7 @@ impl super::Webrtc for Webrtc {
     fn in_ice(&self, ice: Vec<u8>) -> BoxFuture<'_, Result<()>> {
         Box::pin(async move {
             self.cmd_send
-                .send(Cmd::InIce(ice))
-                .await
+                .send_or_close(Cmd::InIce(ice))
                 .map_err(|_| Error::other("closed"))
         })
     }
@@ -186,8 +186,7 @@ impl super::Webrtc for Webrtc {
         Box::pin(async move {
             let (s, r) = tokio::sync::oneshot::channel();
             self.cmd_send
-                .send(Cmd::SendMessage(message, s))
-                .await
+                .send_or_close(Cmd::SendMessage(message, s))
                 .map_err(|_| Error::other("closed"))?;
             let _ = r.await;
             Ok(())
@@ -314,11 +313,9 @@ async fn task_err(
                 }
             }
             Cmd::GeneratedIce(ice) => {
-                evt_send
-                    .send(WebrtcEvt::GeneratedIce(
-                        serde_json::to_string(&ice)?.into_bytes(),
-                    ))
-                    .await?;
+                evt_send.send_or_close(WebrtcEvt::GeneratedIce(
+                    serde_json::to_string(&ice)?.into_bytes(),
+                ))?;
             }
             Cmd::DataChan(mut d) => {
                 if data.is_none() {
@@ -345,22 +342,18 @@ async fn task_err(
                 }
             }
             Cmd::RecvMessage(msg) => {
-                evt_send.send(WebrtcEvt::Message(msg)).await?;
+                evt_send.send_or_close(WebrtcEvt::Message(msg))?;
             }
             Cmd::RecvDescription(desc) => match desc.sdp_type {
                 datachannel::SdpType::Offer => {
-                    evt_send
-                        .send(WebrtcEvt::GeneratedOffer(
-                            serde_json::to_string(&desc)?.into_bytes(),
-                        ))
-                        .await?;
+                    evt_send.send_or_close(WebrtcEvt::GeneratedOffer(
+                        serde_json::to_string(&desc)?.into_bytes(),
+                    ))?;
                 }
                 datachannel::SdpType::Answer => {
-                    evt_send
-                        .send(WebrtcEvt::GeneratedAnswer(
-                            serde_json::to_string(&desc)?.into_bytes(),
-                        ))
-                        .await?;
+                    evt_send.send_or_close(WebrtcEvt::GeneratedAnswer(
+                        serde_json::to_string(&desc)?.into_bytes(),
+                    ))?;
                 }
                 _ => {
                     return Err(std::io::Error::other(
@@ -369,7 +362,7 @@ async fn task_err(
                 }
             },
             Cmd::DataChanOpen => {
-                evt_send.send(WebrtcEvt::Ready).await?;
+                evt_send.send_or_close(WebrtcEvt::Ready)?;
             }
             Cmd::BufferedAmountLow => {
                 pend_buffer.clear();

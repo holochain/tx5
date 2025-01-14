@@ -105,24 +105,6 @@ impl<T: 'static + Send> CloseSend<T> {
             Err(ErrorKind::BrokenPipe.into())
         }
     }
-
-    /*
-    pub fn send(
-        &self,
-        t: T,
-    ) -> impl Future<Output = Result<()>> + 'static + Send {
-        use futures::sink::SinkExt;
-        let s = self.sender.lock().unwrap().clone();
-        async move {
-            match s {
-                Some(mut s) => {
-                    s.send(t).await.map_err(|_| ErrorKind::BrokenPipe.into())
-                }
-                None => Err(ErrorKind::BrokenPipe.into()),
-            }
-        }
-    }
-    */
 }
 
 mod config;

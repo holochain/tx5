@@ -96,8 +96,8 @@ impl Conn {
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
         let webrtc_ready = Arc::new(tokio::sync::Semaphore::new(0));
 
-        let (mut msg_send, msg_recv) = CloseSend::channel();
-        let (cmd_send, mut cmd_recv) = CloseSend::channel();
+        let (mut msg_send, msg_recv) = CloseSend::sized_channel(1024);
+        let (cmd_send, mut cmd_recv) = CloseSend::sized_channel(1024);
 
         let keepalive_dur = config.signal_config.max_idle / 2;
         let client2 = client.clone();
@@ -292,8 +292,7 @@ impl Conn {
                         }
                         Message(msg) => {
                             if cmd_send3
-                                .send(ConnCmd::WebrtcMessage(msg))
-                                .await
+                                .send_or_close(ConnCmd::WebrtcMessage(msg))
                                 .is_err()
                             {
                                 netaudit!(
@@ -306,8 +305,7 @@ impl Conn {
                         }
                         Ready => {
                             if cmd_send3
-                                .send(ConnCmd::WebrtcReady)
-                                .await
+                                .send_or_close(ConnCmd::WebrtcReady)
                                 .is_err()
                             {
                                 netaudit!(
@@ -321,7 +319,7 @@ impl Conn {
                     }
                 }
 
-                let _ = cmd_send3.send(ConnCmd::WebrtcClosed).await;
+                let _ = cmd_send3.send_or_close(ConnCmd::WebrtcClosed);
             }));
 
             msg_send.set_close_on_drop(true);
@@ -360,15 +358,12 @@ impl Conn {
                     Some(cmd) => cmd,
                 };
 
-                let mut slow_task = "unknown";
-
-                if breakable_timeout!(match cmd {
+                match cmd {
                     ConnCmd::SigRecv(sig) => {
                         use tx5_signal::SignalMessage::*;
                         match sig {
                             // invalid
                             HandshakeReq(_) | HandshakeRes(_) => {
-                                slow_task = "sig-handshake";
                                 netaudit!(
                                     DEBUG,
                                     pub_key = ?pub_key2,
@@ -377,7 +372,6 @@ impl Conn {
                                 break;
                             }
                             Message(msg) => {
-                                slow_task = "sig-message";
                                 if recv_over_webrtc {
                                     netaudit!(
                                         DEBUG,
@@ -392,7 +386,7 @@ impl Conn {
                                         msg.len() as u64,
                                         Ordering::Relaxed,
                                     );
-                                    if msg_send.send(msg).await.is_err() {
+                                    if msg_send.send_or_close(msg).is_err() {
                                         netaudit!(
                                             DEBUG,
                                             pub_key = ?pub_key2,
@@ -403,7 +397,6 @@ impl Conn {
                                 }
                             }
                             Offer(offer) => {
-                                slow_task = "sig-offer";
                                 netaudit!(
                                     TRACE,
                                     pub_key = ?pub_key2,
@@ -421,7 +414,6 @@ impl Conn {
                                 }
                             }
                             Answer(answer) => {
-                                slow_task = "sig-answer";
                                 netaudit!(
                                     TRACE,
                                     pub_key = ?pub_key2,
@@ -440,7 +432,6 @@ impl Conn {
                                 }
                             }
                             Ice(ice) => {
-                                slow_task = "sig-ice";
                                 netaudit!(
                                     TRACE,
                                     pub_key = ?pub_key2,
@@ -458,7 +449,6 @@ impl Conn {
                                 }
                             }
                             WebrtcReady => {
-                                slow_task = "sig-webrtc-ready";
                                 recv_over_webrtc = true;
                                 netaudit!(
                                     DEBUG,
@@ -468,7 +458,7 @@ impl Conn {
                                 for msg in webrtc_message_buffer.drain(..) {
                                     // don't bump send metrics here,
                                     // we bumped them on receive
-                                    if msg_send.send(msg).await.is_err() {
+                                    if msg_send.send_or_close(msg).is_err() {
                                         netaudit!(
                                             DEBUG,
                                             pub_key = ?pub_key2,
@@ -482,7 +472,6 @@ impl Conn {
                         }
                     }
                     ConnCmd::SendMessage(msg) => {
-                        slow_task = "send-message";
                         send_msg_count2.fetch_add(1, Ordering::Relaxed);
                         send_byte_count2
                             .fetch_add(msg.len() as u64, Ordering::Relaxed);
@@ -518,12 +507,11 @@ impl Conn {
                         }
                     }
                     ConnCmd::WebrtcMessage(msg) => {
-                        slow_task = "webrtc-message";
                         recv_msg_count2.fetch_add(1, Ordering::Relaxed);
                         recv_byte_count2
                             .fetch_add(msg.len() as u64, Ordering::Relaxed);
                         if recv_over_webrtc {
-                            if msg_send.send(msg).await.is_err() {
+                            if msg_send.send_or_close(msg).is_err() {
                                 netaudit!(
                                     DEBUG,
                                     pub_key = ?pub_key2,
@@ -545,7 +533,6 @@ impl Conn {
                         }
                     }
                     ConnCmd::WebrtcReady => {
-                        slow_task = "webrtc-ready";
                         if let Some(client) = client2.upgrade() {
                             if let Err(err) =
                                 client.send_webrtc_ready(&pub_key2).await
@@ -575,7 +562,6 @@ impl Conn {
                         webrtc_ready2.close();
                     }
                     ConnCmd::WebrtcClosed => {
-                        slow_task = "webrtc-closed";
                         netaudit!(
                             DEBUG,
                             pub_key = ?pub_key2,
@@ -583,9 +569,6 @@ impl Conn {
                         );
                         break;
                     }
-                }).is_err() {
-                    tracing::warn!(slow_task, "slow app on conn loop task");
-                    break;
                 }
             }
 
@@ -641,7 +624,7 @@ impl Conn {
 
     /// Send up to 16KiB of message data.
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
-        self.cmd_send.send(ConnCmd::SendMessage(msg)).await
+        self.cmd_send.send_or_close(ConnCmd::SendMessage(msg))
     }
 
     /// Get connection statistics.

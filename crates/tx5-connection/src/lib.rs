@@ -26,23 +26,7 @@
 
 pub use tx5_core::Tx5InitConfig;
 
-macro_rules! breakable_timeout {
-    ($($t:tt)*) => {
-        tokio::time::timeout(
-            ::tx5_core::Tx5InitConfig::get().slow_app_timeout,
-            async {
-                loop {
-                    {$($t)*}
-                    break;
-                }
-                std::io::Result::Ok(())
-            }
-        ).await
-    };
-}
-
 use std::collections::HashMap;
-use std::future::Future;
 use std::io::{Error, ErrorKind, Result};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -92,10 +76,6 @@ impl<T: 'static + Send> Drop for CloseSend<T> {
 }
 
 impl<T: 'static + Send> CloseSend<T> {
-    pub fn channel() -> (Self, CloseRecv<T>) {
-        Self::sized_channel(32)
-    }
-
     pub fn sized_channel(size: usize) -> (Self, CloseRecv<T>) {
         let (s, r) = futures::channel::mpsc::channel(size);
         (
@@ -111,62 +91,18 @@ impl<T: 'static + Send> CloseSend<T> {
         self.close_on_drop = close_on_drop;
     }
 
-    #[allow(dead_code)] // only used in libdatachannel backend
-    pub fn send_or_close(&self, t: T) {
+    pub fn send_or_close(&self, t: T) -> Result<()> {
         let mut lock = self.sender.lock().unwrap();
         if let Some(sender) = &mut *lock {
-            if sender.try_send(t).is_err() {
+            if sender.try_send(t).is_ok() {
+                Ok(())
+            } else {
                 sender.close_channel();
                 *lock = None;
+                Err(ErrorKind::BrokenPipe.into())
             }
-        }
-    }
-
-    pub fn send(
-        &self,
-        t: T,
-    ) -> impl Future<Output = Result<()>> + 'static + Send {
-        use futures::sink::SinkExt;
-        let s = self.sender.lock().unwrap().clone();
-        async move {
-            match s {
-                Some(mut s) => {
-                    s.send(t).await.map_err(|_| ErrorKind::BrokenPipe.into())
-                }
-                None => Err(ErrorKind::BrokenPipe.into()),
-            }
-        }
-    }
-
-    #[allow(dead_code)] // only used in go_pion backend
-    pub fn send_slow_app(
-        &self,
-        t: T,
-    ) -> impl Future<Output = Result<()>> + 'static + Send {
-        use futures::sink::SinkExt;
-
-        let s = self.sender.lock().unwrap().clone();
-        async move {
-            match s {
-                Some(mut s) => {
-                    match tokio::time::timeout(
-                        tx5_core::Tx5InitConfig::get().slow_app_timeout,
-                        s.send(t),
-                    )
-                    .await
-                    {
-                        Err(_) => {
-                            tracing::warn!(
-                                "Closing connection due to slow app"
-                            );
-                            Err(ErrorKind::TimedOut.into())
-                        }
-                        Ok(Err(_)) => Err(ErrorKind::BrokenPipe.into()),
-                        Ok(Ok(_)) => Ok(()),
-                    }
-                }
-                None => Err(ErrorKind::BrokenPipe.into()),
-            }
+        } else {
+            Err(ErrorKind::BrokenPipe.into())
         }
     }
 }

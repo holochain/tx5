@@ -46,8 +46,8 @@ ring = "0.16.20"
 rustls = { version = "0.20.0", features = [ "dangerous_configuration" ] }
 rustls-native-certs = "0.6.2"
 rustls-pemfile = "1.0.2"
-sbd-e2e-crypto-client = "0.0.8-alpha"
-sbd-server = "0.0.8-alpha"
+sbd-e2e-crypto-client = "0.0.9-alpha2"
+sbd-server = "0.0.9-alpha2"
 serde = { version = "1.0.160", features = [ "derive", "rc" ] }
 serde_json = { version = "1.0.96", features = [ "preserve_order" ] }
 sha2 = "0.10.6"

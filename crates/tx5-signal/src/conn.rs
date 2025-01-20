@@ -28,7 +28,7 @@ impl MsgRecv {
     pub async fn recv_message(&mut self) -> Option<(PubKey, SignalMessage)> {
         loop {
             let (pub_key, msg) = self.recv.recv().await?;
-            match SignalMessage::parse(msg) {
+            match SignalMessage::parse(msg.to_vec()) {
                 Err(_) => {
                     if let Some(client) = self.client.upgrade() {
                         client.close_peer(&pub_key).await;

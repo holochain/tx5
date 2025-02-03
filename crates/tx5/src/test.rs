@@ -247,6 +247,102 @@ async fn webrtc_transition_ordering() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn find_the_problem() {
+    use std::sync::atomic::{AtomicU16, Ordering};
+    use std::time::Duration;
+
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(
+            tracing_subscriber::filter::EnvFilter::from_default_env(),
+        )
+        .with_file(true)
+        .with_line_number(true)
+        .finish();
+
+    let _ = tracing::subscriber::set_global_default(subscriber);
+
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
+    let mut sig_srv = Test {
+        sig_srv_hnd: None,
+        sig_port: None,
+        sig_url: None,
+    };
+
+    sig_srv.restart_sig().await;
+
+    let sig_url = sig_srv.sig_url.clone().unwrap();
+
+    let (ep_1, _) = Endpoint::new(config.clone());
+    ep_1.listen(sig_url.clone()).await.unwrap();
+
+    let (ep_2, mut ep_recv_2) = Endpoint::new(config);
+    let peer_url_2 = ep_2.listen(sig_url).await.unwrap();
+
+    let msg_byte_count = 1;
+    let msg_count = 10;
+
+    // open a connection
+    ep_1.send(peer_url_2.clone(), vec![1; msg_byte_count])
+        .await
+        .unwrap();
+    match ep_recv_2.recv().await.unwrap() {
+        EndpointEvent::ListeningAddressOpen { local_url, .. } => {
+            assert_eq!(local_url, peer_url_2)
+        }
+        _ => panic!("ohono"),
+    }
+
+    let sender_count = Arc::new(AtomicU16::new(0));
+    let sender_count_2 = sender_count.clone();
+    let receiver_count = Arc::new(AtomicU16::new(0));
+    let receiver_count_2 = receiver_count.clone();
+
+    tokio::task::spawn(async move {
+        loop {
+            while let Some(r) = ep_recv_2.recv().await {
+                if let EndpointEvent::Message { message, .. } = r {
+                    assert_eq!(message.len(), msg_byte_count);
+                    receiver_count_2.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+    });
+
+    tokio::task::spawn(async move {
+        // with a longer sleep the test passes
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        for _ in 0..msg_count {
+            ep_1.send(peer_url_2.clone(), vec![1; msg_byte_count])
+                .await
+                .unwrap();
+            sender_count_2.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+
+    if let Err(_) = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            if sender_count.load(Ordering::Relaxed) == msg_count
+                && receiver_count.load(Ordering::Relaxed) == msg_count
+            {
+                break;
+            }
+        }
+    })
+    .await
+    {
+        panic!(
+            "received messages {}/{}",
+            receiver_count.load(Ordering::Relaxed),
+            msg_count
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ep_sanity() {
     let config = Arc::new(Config {
         signal_allow_plain_text: true,

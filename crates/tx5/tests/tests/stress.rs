@@ -15,6 +15,15 @@ async fn stress_large_msg() {
 }
 
 async fn stress_msg_size(size: usize) {
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(
+            tracing_subscriber::filter::EnvFilter::from_default_env(),
+        )
+        .with_file(true)
+        .with_line_number(true)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
+
     const MSG_COUNT: usize = 10000;
 
     let msg = vec![0xdb; size];
@@ -25,7 +34,9 @@ async fn stress_msg_size(size: usize) {
     let ep2 = test.ep().await;
 
     for i in 0..MSG_COUNT {
-        println!("send msg {i} of {MSG_COUNT}");
+        if i % (MSG_COUNT / 10) == 0 {
+            println!("send msg {i} of {MSG_COUNT}");
+        }
         ep1.ep
             .send(ep2.peer_url.clone(), msg.clone())
             .await

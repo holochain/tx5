@@ -189,8 +189,7 @@ impl Hub {
                                 }
                                 Ok(r) => r,
                             };
-                            let _ =
-                                cmd_send.send_or_close(ConnCmd::SigRecv(msg));
+                            let _ = cmd_send.send(ConnCmd::SigRecv(msg)).await;
                             if let Some(recv) = recv {
                                 let _ = conn_send.send((conn, recv)).await;
                             }

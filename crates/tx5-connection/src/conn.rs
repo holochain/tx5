@@ -292,7 +292,8 @@ impl Conn {
                         }
                         Message(msg) => {
                             if cmd_send3
-                                .send_or_close(ConnCmd::WebrtcMessage(msg))
+                                .send(ConnCmd::WebrtcMessage(msg))
+                                .await
                                 .is_err()
                             {
                                 netaudit!(
@@ -305,7 +306,8 @@ impl Conn {
                         }
                         Ready => {
                             if cmd_send3
-                                .send_or_close(ConnCmd::WebrtcReady)
+                                .send(ConnCmd::WebrtcReady)
+                                .await
                                 .is_err()
                             {
                                 netaudit!(
@@ -319,7 +321,7 @@ impl Conn {
                     }
                 }
 
-                let _ = cmd_send3.send_or_close(ConnCmd::WebrtcClosed);
+                let _ = cmd_send3.send(ConnCmd::WebrtcClosed).await;
             }));
 
             msg_send.set_close_on_drop(true);
@@ -386,7 +388,7 @@ impl Conn {
                                         msg.len() as u64,
                                         Ordering::Relaxed,
                                     );
-                                    if msg_send.send_or_close(msg).is_err() {
+                                    if msg_send.send(msg).await.is_err() {
                                         netaudit!(
                                             DEBUG,
                                             pub_key = ?pub_key2,
@@ -458,7 +460,7 @@ impl Conn {
                                 for msg in webrtc_message_buffer.drain(..) {
                                     // don't bump send metrics here,
                                     // we bumped them on receive
-                                    if msg_send.send_or_close(msg).is_err() {
+                                    if msg_send.send(msg).await.is_err() {
                                         netaudit!(
                                             DEBUG,
                                             pub_key = ?pub_key2,
@@ -511,7 +513,7 @@ impl Conn {
                         recv_byte_count2
                             .fetch_add(msg.len() as u64, Ordering::Relaxed);
                         if recv_over_webrtc {
-                            if msg_send.send_or_close(msg).is_err() {
+                            if msg_send.send(msg).await.is_err() {
                                 netaudit!(
                                     DEBUG,
                                     pub_key = ?pub_key2,
@@ -624,7 +626,7 @@ impl Conn {
 
     /// Send up to 16KiB of message data.
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
-        self.cmd_send.send_or_close(ConnCmd::SendMessage(msg))
+        self.cmd_send.send(ConnCmd::SendMessage(msg)).await
     }
 
     /// Get connection statistics.

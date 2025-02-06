@@ -62,13 +62,13 @@ tracing = "0.1.37"
 tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.16", features = [ "env-filter" ] }
 trust-dns-resolver = "0.22.0"
-tx5-connection = { version = "0.2.0-beta", default-features = false, path = "crates/tx5-connection" }
-tx5-core = { version = "0.2.0-beta", default-features = false, path = "crates/tx5-core" }
-tx5-go-pion-turn = { version = "0.2.0-beta", path = "crates/tx5-go-pion-turn" }
-tx5-go-pion-sys = { version = "0.2.0-beta", path = "crates/tx5-go-pion-sys" }
-tx5-go-pion = { version = "0.2.0-beta", path = "crates/tx5-go-pion" }
-tx5-signal = { version = "0.2.0-beta", path = "crates/tx5-signal" }
-tx5 = { version = "0.2.0-beta", path = "crates/tx5" }
+tx5-connection = { version = "0.2.1-beta", default-features = false, path = "crates/tx5-connection" }
+tx5-core = { version = "0.2.1-beta", default-features = false, path = "crates/tx5-core" }
+tx5-go-pion-turn = { version = "0.2.1-beta", path = "crates/tx5-go-pion-turn" }
+tx5-go-pion-sys = { version = "0.2.1-beta", path = "crates/tx5-go-pion-sys" }
+tx5-go-pion = { version = "0.2.1-beta", path = "crates/tx5-go-pion" }
+tx5-signal = { version = "0.2.1-beta", path = "crates/tx5-signal" }
+tx5 = { version = "0.2.1-beta", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
 warp = { version = "0.3.4", features = [ "websocket" ] }
 webpki-roots = { version = "0.23.0" }

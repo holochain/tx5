@@ -105,6 +105,40 @@ impl<T: 'static + Send> CloseSend<T> {
             Err(ErrorKind::BrokenPipe.into())
         }
     }
+
+    pub async fn send(&self, t: T) -> Result<()> {
+        let res = tokio::time::timeout(
+            // hard-coded to 1 minute for now. This indicates a system
+            // is very backed up, and is here just to prevent forever hangs
+            std::time::Duration::from_secs(60),
+            async {
+                let sender = self.sender.lock().unwrap().clone();
+                if let Some(mut sender) = sender {
+                    use futures::sink::SinkExt;
+                    if sender.send(t).await.is_ok() {
+                        Result::Ok(())
+                    } else {
+                        Err(ErrorKind::BrokenPipe.into())
+                    }
+                } else {
+                    Err(ErrorKind::BrokenPipe.into())
+                }
+            },
+        )
+        .await;
+
+        match res {
+            Err(_) | Ok(Err(_)) => {
+                let mut lock = self.sender.lock().unwrap();
+                if let Some(sender) = &mut *lock {
+                    sender.close_channel();
+                }
+                *lock = None;
+                Err(ErrorKind::BrokenPipe.into())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 mod config;

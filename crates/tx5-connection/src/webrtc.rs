@@ -20,7 +20,10 @@ pub trait Webrtc: 'static + Send + Sync {
 
 pub type DynWebrtc = Arc<dyn Webrtc + 'static + Send + Sync>;
 
-#[cfg(feature = "backend-libdatachannel")]
+#[cfg(any(
+    feature = "backend-libdatachannel",
+    feature = "backend-libdatachannel-openssl"
+))]
 mod libdatachannel;
 
 #[cfg(feature = "backend-go-pion")]
@@ -33,7 +36,10 @@ pub fn new_backend_module(
     send_buffer: usize,
 ) -> (DynWebrtc, CloseRecv<WebrtcEvt>) {
     match module {
-        #[cfg(feature = "backend-libdatachannel")]
+        #[cfg(any(
+            feature = "backend-libdatachannel",
+            feature = "backend-libdatachannel-openssl"
+        ))]
         BackendModule::LibDataChannel => {
             libdatachannel::Webrtc::new(is_polite, config, send_buffer)
         }

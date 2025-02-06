@@ -4,7 +4,10 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy)]
 pub enum BackendModule {
     /// Use the libdatachannel backend.
-    #[cfg(feature = "backend-libdatachannel")]
+    #[cfg(any(
+        feature = "backend-libdatachannel",
+        feature = "backend-libdatachannel-openssl"
+    ))]
     LibDataChannel,
 
     /// Use the go pion backend.
@@ -15,7 +18,10 @@ pub enum BackendModule {
 impl Default for BackendModule {
     #[allow(unreachable_code)]
     fn default() -> Self {
-        #[cfg(feature = "backend-libdatachannel")]
+        #[cfg(any(
+            feature = "backend-libdatachannel",
+            feature = "backend-libdatachannel-openssl"
+        ))]
         return Self::LibDataChannel;
         #[cfg(feature = "backend-go-pion")]
         Self::GoPion

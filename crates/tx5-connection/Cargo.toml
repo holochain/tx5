@@ -16,6 +16,9 @@ default = [ "backend-go-pion" ]
 # use the libdatachannel crate as the webrtc backend
 backend-libdatachannel = [ "dep:datachannel" ]
 
+# use the libdatachannel crate with vendored openssl as the webrtc backend
+backend-libdatachannel-openssl = [ "dep:datachannel-openssl" ]
+
 # use the tx5-go-pion crate as the webrtc backend
 backend-go-pion = [ "dep:tx5-go-pion" ]
 
@@ -25,6 +28,7 @@ backend-webrtc-rs = [ ]
 [dependencies]
 bit_field = { workspace = true }
 datachannel = { workspace = true, optional = true }
+datachannel-openssl= { workspace = true, optional = true }
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

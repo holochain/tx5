@@ -1,5 +1,7 @@
 use super::*;
 use crate::{AbortTask, CloseRecv, CloseSend};
+#[cfg(feature = "backend-libdatachannel-openssl")]
+use datachannel_openssl as datachannel;
 use std::io::{Error, Result};
 
 type MapErr<E, F> = Box<dyn FnOnce(E) -> F>;

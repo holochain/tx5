@@ -6,15 +6,15 @@ use tx5::*;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stress_small_msg() {
-    stress_msg_size(42).await;
+    stress_msg_size(40000, 42).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stress_large_msg() {
-    stress_msg_size(1024 * 30).await;
+    stress_msg_size(5000, 1024 * 30).await;
 }
 
-async fn stress_msg_size(size: usize) {
+async fn stress_msg_size(msg_count: usize, size: usize) {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(
             tracing_subscriber::filter::EnvFilter::from_default_env(),
@@ -24,8 +24,6 @@ async fn stress_msg_size(size: usize) {
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
-    const MSG_COUNT: usize = 10000;
-
     let msg = vec![0xdb; size];
 
     let test = Test::new().await;
@@ -33,9 +31,9 @@ async fn stress_msg_size(size: usize) {
     let ep1 = test.ep().await;
     let ep2 = test.ep().await;
 
-    for i in 0..MSG_COUNT {
-        if i % (MSG_COUNT / 10) == 0 {
-            println!("send msg {i} of {MSG_COUNT}");
+    for i in 0..msg_count {
+        if i % (msg_count / 10) == 0 {
+            println!("send msg {i} of {msg_count}");
         }
         ep1.ep
             .send(ep2.peer_url.clone(), msg.clone())
@@ -51,9 +49,9 @@ async fn stress_msg_size(size: usize) {
             let count = ep2.messages.lock().unwrap().len();
             if count != got {
                 got = count;
-                println!("recv msg {got} of {MSG_COUNT}");
+                println!("recv msg {got} of {msg_count}");
             }
-            if count == MSG_COUNT {
+            if count == msg_count {
                 // test pass
                 return;
             }

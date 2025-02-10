@@ -1,16 +1,10 @@
 use super::*;
 use std::sync::atomic::Ordering;
 
-/// Message count allowed to accumulate on the boundary switching to webrtc.
-/// This prevents potentially faster to transfer webrtc messages from being
-/// delivered out of order before trailing slower sbd messages are received.
-const MAX_WEBRTC_BUF: usize = 512;
-
 pub(crate) enum ConnCmd {
     SigRecv(tx5_signal::SignalMessage),
+    WebrtcRecv(webrtc::WebrtcEvt),
     SendMessage(Vec<u8>),
-    WebrtcMessage(Vec<u8>),
-    WebrtcReady,
     WebrtcClosed,
 }
 
@@ -31,7 +25,7 @@ pub struct Conn {
     cmd_send: CloseSend<ConnCmd>,
     conn_task: tokio::task::JoinHandle<()>,
     keepalive_task: tokio::task::JoinHandle<()>,
-    webrtc_ready: Arc<tokio::sync::Semaphore>,
+    is_webrtc: Arc<std::sync::atomic::AtomicBool>,
     send_msg_count: Arc<std::sync::atomic::AtomicU64>,
     send_byte_count: Arc<std::sync::atomic::AtomicU64>,
     recv_msg_count: Arc<std::sync::atomic::AtomicU64>,
@@ -87,6 +81,7 @@ impl Conn {
             a = "open",
         );
 
+        let is_webrtc = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let send_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let send_byte_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let recv_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -94,10 +89,9 @@ impl Conn {
 
         // zero len semaphore.. we actually just wait for the close
         let ready = Arc::new(tokio::sync::Semaphore::new(0));
-        let webrtc_ready = Arc::new(tokio::sync::Semaphore::new(0));
 
         let (mut msg_send, msg_recv) = CloseSend::sized_channel(1024);
-        let (cmd_send, mut cmd_recv) = CloseSend::sized_channel(1024);
+        let (cmd_send, cmd_recv) = CloseSend::sized_channel(1024);
 
         let keepalive_dur = config.signal_config.max_idle / 2;
         let client2 = client.clone();
@@ -116,471 +110,27 @@ impl Conn {
             }
         });
 
-        let send_msg_count2 = send_msg_count.clone();
-        let send_byte_count2 = send_byte_count.clone();
-        let recv_msg_count2 = recv_msg_count.clone();
-        let recv_byte_count2 = recv_byte_count.clone();
-        let webrtc_ready2 = webrtc_ready.clone();
-        let ready2 = ready.clone();
-        let client2 = client.clone();
-        let pub_key2 = pub_key.clone();
-        let mut cmd_send3 = cmd_send.clone();
-        let conn_task = tokio::task::spawn(async move {
-            let client = match client2.upgrade() {
-                Some(client) => client,
-                None => return,
-            };
+        msg_send.set_close_on_drop(true);
 
-            let mut webrtc_message_buffer = Vec::new();
-
-            let handshake_fut = async {
-                let nonce = client.send_handshake_req(&pub_key2).await?;
-
-                let mut got_peer_res = false;
-                let mut sent_our_res = false;
-
-                while let Some(cmd) = cmd_recv.recv().await {
-                    match cmd {
-                        ConnCmd::SigRecv(sig) => {
-                            use tx5_signal::SignalMessage::*;
-                            match sig {
-                                HandshakeReq(oth_nonce) => {
-                                    client
-                                        .send_handshake_res(
-                                            &pub_key2, oth_nonce,
-                                        )
-                                        .await?;
-                                    sent_our_res = true;
-                                }
-                                HandshakeRes(res_nonce) => {
-                                    if res_nonce != nonce {
-                                        return Err(Error::other(
-                                            "nonce mismatch",
-                                        ));
-                                    }
-                                    got_peer_res = true;
-                                }
-                                // Ignore all other message types...
-                                // they may be from previous sessions
-                                _ => (),
-                            }
-                        }
-                        ConnCmd::SendMessage(_) => {
-                            return Err(Error::other("send before ready"));
-                        }
-                        ConnCmd::WebrtcMessage(msg) => {
-                            webrtc_message_buffer.push(msg);
-                        }
-                        ConnCmd::WebrtcReady => {
-                            webrtc_ready2.close();
-                        }
-                        ConnCmd::WebrtcClosed => {
-                            // only emitted by the webrtc module
-                            // which at this point hasn't yet been initialized
-                            unreachable!()
-                        }
-                    }
-                    if got_peer_res && sent_our_res {
-                        break;
-                    }
-                }
-
-                Result::Ok(())
-            };
-
-            match tokio::time::timeout(
-                config.signal_config.max_idle,
-                handshake_fut,
-            )
-            .await
-            {
-                Err(_) | Ok(Err(_)) => {
-                    client.close_peer(&pub_key2).await;
-                    return;
-                }
-                Ok(Ok(_)) => (),
-            }
-
-            drop(client);
-
-            // closing the semaphore causes all the acquire awaits to end
-            ready2.close();
-
-            let (webrtc, mut webrtc_recv) = webrtc::new_backend_module(
-                config.backend_module,
-                is_polite,
-                webrtc_config,
-                // MAYBE - make this configurable
-                4096,
-            );
-
-            let client3 = client2.clone();
-            let pub_key3 = pub_key2.clone();
-            let _webrtc_task = AbortTask(tokio::task::spawn(async move {
-                use webrtc::WebrtcEvt::*;
-                cmd_send3.set_close_on_drop(true);
-                while let Some(evt) = webrtc_recv.recv().await {
-                    match evt {
-                        GeneratedOffer(offer) => {
-                            netaudit!(
-                                TRACE,
-                                pub_key = ?pub_key3,
-                                offer = String::from_utf8_lossy(&offer).to_string(),
-                                a = "send_offer",
-                            );
-                            if let Some(client) = client3.upgrade() {
-                                if let Err(err) =
-                                    client.send_offer(&pub_key3, offer).await
-                                {
-                                    netaudit!(
-                                        DEBUG,
-                                        pub_key = ?pub_key3,
-                                        ?err,
-                                        a = "webrtc send_offer error",
-                                    );
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                        GeneratedAnswer(answer) => {
-                            netaudit!(
-                                TRACE,
-                                pub_key = ?pub_key3,
-                                offer = String::from_utf8_lossy(&answer).to_string(),
-                                a = "send_answer",
-                            );
-                            if let Some(client) = client3.upgrade() {
-                                if let Err(err) =
-                                    client.send_answer(&pub_key3, answer).await
-                                {
-                                    netaudit!(
-                                        DEBUG,
-                                        pub_key = ?pub_key3,
-                                        ?err,
-                                        a = "webrtc send_answer error",
-                                    );
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                        GeneratedIce(ice) => {
-                            netaudit!(
-                                TRACE,
-                                pub_key = ?pub_key3,
-                                offer = String::from_utf8_lossy(&ice).to_string(),
-                                a = "send_ice",
-                            );
-                            if let Some(client) = client3.upgrade() {
-                                if let Err(err) =
-                                    client.send_ice(&pub_key3, ice).await
-                                {
-                                    netaudit!(
-                                        DEBUG,
-                                        pub_key = ?pub_key3,
-                                        ?err,
-                                        a = "webrtc send_ice error",
-                                    );
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                        Message(msg) => {
-                            if cmd_send3
-                                .send(ConnCmd::WebrtcMessage(msg))
-                                .await
-                                .is_err()
-                            {
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key3,
-                                    a = "webrtc cmd closed",
-                                );
-                                break;
-                            }
-                        }
-                        Ready => {
-                            if cmd_send3
-                                .send(ConnCmd::WebrtcReady)
-                                .await
-                                .is_err()
-                            {
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key3,
-                                    a = "webrtc cmd closed",
-                                );
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let _ = cmd_send3.send(ConnCmd::WebrtcClosed).await;
-            }));
-
-            msg_send.set_close_on_drop(true);
-
-            let mut recv_over_webrtc = false;
-            let mut send_over_webrtc = false;
-
-            loop {
-                let cmd = tokio::time::timeout(
-                    config.signal_config.max_idle,
-                    cmd_recv.recv(),
-                )
-                .await;
-
-                let cmd = match cmd {
-                    Err(_) => {
-                        netaudit!(
-                            DEBUG,
-                            pub_key = ?pub_key2,
-                            a = "close: connection idle",
-                        );
-                        break;
-                    }
-                    Ok(cmd) => cmd,
-                };
-
-                let cmd = match cmd {
-                    None => {
-                        netaudit!(
-                            DEBUG,
-                            pub_key = ?pub_key2,
-                            a = "close: cmd_recv stream complete",
-                        );
-                        break;
-                    }
-                    Some(cmd) => cmd,
-                };
-
-                match cmd {
-                    ConnCmd::SigRecv(sig) => {
-                        use tx5_signal::SignalMessage::*;
-                        match sig {
-                            // invalid
-                            HandshakeReq(_) | HandshakeRes(_) => {
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key2,
-                                    a = "close: unexpected handshake msg",
-                                );
-                                break;
-                            }
-                            Message(msg) => {
-                                if recv_over_webrtc {
-                                    netaudit!(
-                                        DEBUG,
-                                        pub_key = ?pub_key2,
-                                        a = "close: unexpected sbd msg after recv_over_webrtc",
-                                    );
-                                    break;
-                                } else {
-                                    recv_msg_count2
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    recv_byte_count2.fetch_add(
-                                        msg.len() as u64,
-                                        Ordering::Relaxed,
-                                    );
-                                    if msg_send.send(msg).await.is_err() {
-                                        netaudit!(
-                                            DEBUG,
-                                            pub_key = ?pub_key2,
-                                            a = "close: msg_send closed",
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-                            Offer(offer) => {
-                                netaudit!(
-                                    TRACE,
-                                    pub_key = ?pub_key2,
-                                    offer = String::from_utf8_lossy(&offer).to_string(),
-                                    a = "recv_offer",
-                                );
-                                if let Err(err) = webrtc.in_offer(offer).await {
-                                    netaudit!(
-                                        DEBUG,
-                                        pub_key = ?pub_key2,
-                                        ?err,
-                                        a = "close: webrtc in_offer error",
-                                    );
-                                    break;
-                                }
-                            }
-                            Answer(answer) => {
-                                netaudit!(
-                                    TRACE,
-                                    pub_key = ?pub_key2,
-                                    offer = String::from_utf8_lossy(&answer).to_string(),
-                                    a = "recv_answer",
-                                );
-                                if let Err(err) = webrtc.in_answer(answer).await
-                                {
-                                    netaudit!(
-                                        DEBUG,
-                                        pub_key = ?pub_key2,
-                                        ?err,
-                                        a = "close: webrtc in_answer error",
-                                    );
-                                    break;
-                                }
-                            }
-                            Ice(ice) => {
-                                netaudit!(
-                                    TRACE,
-                                    pub_key = ?pub_key2,
-                                    offer = String::from_utf8_lossy(&ice).to_string(),
-                                    a = "recv_ice",
-                                );
-                                if let Err(err) = webrtc.in_ice(ice).await {
-                                    netaudit!(
-                                        DEBUG,
-                                        pub_key = ?pub_key2,
-                                        ?err,
-                                        a = "close: webrtc in_ice error",
-                                    );
-                                    break;
-                                }
-                            }
-                            WebrtcReady => {
-                                recv_over_webrtc = true;
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key2,
-                                    a = "recv_over_webrtc",
-                                );
-                                for msg in webrtc_message_buffer.drain(..) {
-                                    // don't bump send metrics here,
-                                    // we bumped them on receive
-                                    if msg_send.send(msg).await.is_err() {
-                                        netaudit!(
-                                            DEBUG,
-                                            pub_key = ?pub_key2,
-                                            a = "close: msg_send closed",
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-                            _ => (),
-                        }
-                    }
-                    ConnCmd::SendMessage(msg) => {
-                        send_msg_count2.fetch_add(1, Ordering::Relaxed);
-                        send_byte_count2
-                            .fetch_add(msg.len() as u64, Ordering::Relaxed);
-                        if send_over_webrtc {
-                            if let Err(err) = webrtc.message(msg).await {
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key2,
-                                    ?err,
-                                    a = "close: webrtc message error",
-                                );
-                                break;
-                            }
-                        } else if let Some(client) = client2.upgrade() {
-                            if let Err(err) =
-                                client.send_message(&pub_key2, msg).await
-                            {
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key2,
-                                    ?err,
-                                    a = "close: sbd client send error",
-                                );
-                                break;
-                            }
-                        } else {
-                            netaudit!(
-                                DEBUG,
-                                pub_key = ?pub_key2,
-                                a = "close: sbd client closed",
-                            );
-                            break;
-                        }
-                    }
-                    ConnCmd::WebrtcMessage(msg) => {
-                        recv_msg_count2.fetch_add(1, Ordering::Relaxed);
-                        recv_byte_count2
-                            .fetch_add(msg.len() as u64, Ordering::Relaxed);
-                        if recv_over_webrtc {
-                            if msg_send.send(msg).await.is_err() {
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key2,
-                                    a = "close: msg_send closed",
-                                );
-                                break;
-                            }
-                        } else {
-                            webrtc_message_buffer.push(msg);
-                            if webrtc_message_buffer.len() > MAX_WEBRTC_BUF {
-                                // prevent memory fillup
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key2,
-                                    a = "close: webrtc buffer overflow",
-                                );
-                                break;
-                            }
-                        }
-                    }
-                    ConnCmd::WebrtcReady => {
-                        if let Some(client) = client2.upgrade() {
-                            if let Err(err) =
-                                client.send_webrtc_ready(&pub_key2).await
-                            {
-                                netaudit!(
-                                    DEBUG,
-                                    pub_key = ?pub_key2,
-                                    ?err,
-                                    a = "close: sbd client ready error",
-                                );
-                                break;
-                            }
-                        } else {
-                            netaudit!(
-                                DEBUG,
-                                pub_key = ?pub_key2,
-                                a = "close: sbd client closed",
-                            );
-                            break;
-                        }
-                        send_over_webrtc = true;
-                        netaudit!(
-                            DEBUG,
-                            pub_key = ?pub_key2,
-                            a = "send_over_webrtc",
-                        );
-                        webrtc_ready2.close();
-                    }
-                    ConnCmd::WebrtcClosed => {
-                        netaudit!(
-                            DEBUG,
-                            pub_key = ?pub_key2,
-                            a = "close: webrtc closed",
-                        );
-                        break;
-                    }
-                }
-            }
-
-            // explicitly close the peer
-            if let Some(client) = client2.upgrade() {
-                client.close_peer(&pub_key2).await;
-            };
-
-            // the receiver side is closed because msg_send is dropped.
-        });
+        let con_task_fut = con_task(
+            is_polite,
+            webrtc_config,
+            TaskCore {
+                client,
+                config,
+                pub_key: pub_key.clone(),
+                cmd_send: cmd_send.clone(),
+                cmd_recv,
+                send_msg_count: send_msg_count.clone(),
+                send_byte_count: send_byte_count.clone(),
+                recv_msg_count: recv_msg_count.clone(),
+                recv_byte_count: recv_byte_count.clone(),
+                msg_send,
+                ready: ready.clone(),
+                is_webrtc: is_webrtc.clone(),
+            },
+        );
+        let conn_task = tokio::task::spawn(con_task_fut);
 
         let mut cmd_send2 = cmd_send.clone();
         cmd_send2.set_close_on_drop(true);
@@ -590,7 +140,7 @@ impl Conn {
             cmd_send: cmd_send2,
             conn_task,
             keepalive_task,
-            webrtc_ready,
+            is_webrtc,
             send_msg_count,
             send_byte_count,
             recv_msg_count,
@@ -607,16 +157,9 @@ impl Conn {
         let _ = self.ready.acquire().await;
     }
 
-    /// Wait until this connection is connected via webrtc.
-    /// Note, this will never resolve if we never successfully
-    /// connect over webrtc.
-    pub async fn webrtc_ready(&self) {
-        let _ = self.webrtc_ready.acquire().await;
-    }
-
     /// Returns `true` if we sucessfully connected over webrtc.
     pub fn is_using_webrtc(&self) -> bool {
-        self.webrtc_ready.is_closed()
+        self.is_webrtc.load(Ordering::SeqCst)
     }
 
     /// The pub key of the remote peer this is connected to.
@@ -654,4 +197,431 @@ pub struct ConnStats {
 
     /// byte count received.
     pub recv_byte_count: u64,
+}
+
+struct TaskCore {
+    config: Arc<HubConfig>,
+    client: Weak<tx5_signal::SignalConnection>,
+    pub_key: PubKey,
+    cmd_send: CloseSend<ConnCmd>,
+    cmd_recv: CloseRecv<ConnCmd>,
+    msg_send: CloseSend<Vec<u8>>,
+    ready: Arc<tokio::sync::Semaphore>,
+    is_webrtc: Arc<std::sync::atomic::AtomicBool>,
+    send_msg_count: Arc<std::sync::atomic::AtomicU64>,
+    send_byte_count: Arc<std::sync::atomic::AtomicU64>,
+    recv_msg_count: Arc<std::sync::atomic::AtomicU64>,
+    recv_byte_count: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl TaskCore {
+    async fn handle_recv_msg(
+        &self,
+        msg: Vec<u8>,
+    ) -> std::result::Result<(), ()> {
+        self.recv_msg_count.fetch_add(1, Ordering::Relaxed);
+        self.recv_byte_count
+            .fetch_add(msg.len() as u64, Ordering::Relaxed);
+        if self.msg_send.send(msg).await.is_err() {
+            netaudit!(
+                DEBUG,
+                pub_key = ?self.pub_key,
+                a = "close: msg_send closed",
+            );
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn track_send_msg(&self, len: usize) {
+        self.send_msg_count.fetch_add(1, Ordering::Relaxed);
+        self.send_byte_count
+            .fetch_add(len as u64, Ordering::Relaxed);
+    }
+}
+
+async fn con_task(
+    is_polite: bool,
+    webrtc_config: Vec<u8>,
+    mut task_core: TaskCore,
+) {
+    // first process the handshake
+    if let Some(client) = task_core.client.upgrade() {
+        let handshake_fut = async {
+            let nonce = client.send_handshake_req(&task_core.pub_key).await?;
+
+            let mut got_peer_res = false;
+            let mut sent_our_res = false;
+
+            while let Some(cmd) = task_core.cmd_recv.recv().await {
+                match cmd {
+                    ConnCmd::SigRecv(sig) => {
+                        use tx5_signal::SignalMessage::*;
+                        match sig {
+                            HandshakeReq(oth_nonce) => {
+                                client
+                                    .send_handshake_res(
+                                        &task_core.pub_key,
+                                        oth_nonce,
+                                    )
+                                    .await?;
+                                sent_our_res = true;
+                            }
+                            HandshakeRes(res_nonce) => {
+                                if res_nonce != nonce {
+                                    return Err(Error::other("nonce mismatch"));
+                                }
+                                got_peer_res = true;
+                            }
+                            // Ignore all other message types...
+                            // they may be from previous sessions
+                            _ => (),
+                        }
+                    }
+                    ConnCmd::SendMessage(_) => {
+                        return Err(Error::other("send before ready"));
+                    }
+                    ConnCmd::WebrtcRecv(_) | ConnCmd::WebrtcClosed => {
+                        // only emitted by the webrtc module
+                        // which at this point hasn't yet been initialized
+                        unreachable!()
+                    }
+                }
+                if got_peer_res && sent_our_res {
+                    break;
+                }
+            }
+
+            Result::Ok(())
+        };
+
+        match tokio::time::timeout(
+            task_core.config.signal_config.max_idle,
+            handshake_fut,
+        )
+        .await
+        {
+            Err(_) | Ok(Err(_)) => {
+                client.close_peer(&task_core.pub_key).await;
+                return;
+            }
+            Ok(Ok(_)) => (),
+        }
+    } else {
+        return;
+    }
+
+    // next, attempt webrtc
+    let task_core = match con_task_attempt_webrtc(
+        is_polite,
+        webrtc_config,
+        task_core,
+    )
+    .await
+    {
+        AttemptWebrtcResult::Abort => return,
+        AttemptWebrtcResult::Fallback(task_core) => task_core,
+    };
+
+    task_core.is_webrtc.store(false, Ordering::SeqCst);
+
+    // if webrtc failed in a way that allows us to fall back to sbd,
+    // use the fallback sbd messaging system
+    con_task_fallback_use_signal(task_core).await;
+}
+
+async fn recv_cmd(task_core: &mut TaskCore) -> Option<ConnCmd> {
+    match tokio::time::timeout(
+        task_core.config.signal_config.max_idle,
+        task_core.cmd_recv.recv(),
+    )
+    .await
+    {
+        Err(_) => {
+            netaudit!(
+                DEBUG,
+                pub_key = ?task_core.pub_key,
+                a = "close: connection idle",
+            );
+            None
+        }
+        Ok(None) => {
+            netaudit!(
+                DEBUG,
+                pub_key = ?task_core.pub_key,
+                a = "close: cmd_recv stream complete",
+            );
+            None
+        }
+        Ok(Some(cmd)) => Some(cmd),
+    }
+}
+
+async fn webrtc_task(
+    mut webrtc_recv: CloseRecv<webrtc::WebrtcEvt>,
+    cmd_send: CloseSend<ConnCmd>,
+) {
+    while let Some(evt) = webrtc_recv.recv().await {
+        if cmd_send.send(ConnCmd::WebrtcRecv(evt)).await.is_err() {
+            break;
+        }
+    }
+    let _ = cmd_send.send(ConnCmd::WebrtcClosed).await;
+}
+
+enum AttemptWebrtcResult {
+    Abort,
+    Fallback(TaskCore),
+}
+
+async fn con_task_attempt_webrtc(
+    is_polite: bool,
+    webrtc_config: Vec<u8>,
+    mut task_core: TaskCore,
+) -> AttemptWebrtcResult {
+    use AttemptWebrtcResult::*;
+
+    let (webrtc, webrtc_recv) = webrtc::new_backend_module(
+        task_core.config.backend_module,
+        is_polite,
+        webrtc_config.clone(),
+        // MAYBE - make this configurable
+        4096,
+    );
+
+    struct AbortWebrtc(tokio::task::AbortHandle);
+
+    impl Drop for AbortWebrtc {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+
+    // ensure if we exit this loop that the tokio task is stopped
+    let _abort_webrtc = AbortWebrtc(
+        tokio::task::spawn(webrtc_task(
+            webrtc_recv,
+            task_core.cmd_send.clone(),
+        ))
+        .abort_handle(),
+    );
+
+    while let Some(cmd) = recv_cmd(&mut task_core).await {
+        use tx5_signal::SignalMessage::*;
+        use webrtc::WebrtcEvt::*;
+        use ConnCmd::*;
+        match cmd {
+            SigRecv(HandshakeReq(_)) | SigRecv(HandshakeRes(_)) => {
+                netaudit!(
+                    DEBUG,
+                    pub_key = ?task_core.pub_key,
+                    a = "close: unexpected handshake msg",
+                );
+                return Abort;
+            }
+            SigRecv(tx5_signal::SignalMessage::Message(msg)) => {
+                if task_core.handle_recv_msg(msg).await.is_err() {
+                    return Abort;
+                }
+                // if we get a message from the remote, we have to assume
+                // they are switching to fallback mode, and thus we cannot
+                // use webrtc ourselves.
+                return Fallback(task_core);
+            }
+            SigRecv(Offer(offer)) => {
+                netaudit!(
+                    TRACE,
+                    pub_key = ?task_core.pub_key,
+                    offer = String::from_utf8_lossy(&offer).to_string(),
+                    a = "recv_offer",
+                );
+                if let Err(err) = webrtc.in_offer(offer).await {
+                    netaudit!(
+                        DEBUG,
+                        pub_key = ?task_core.pub_key,
+                        ?err,
+                        a = "close: webrtc in_offer error",
+                    );
+                    return Fallback(task_core);
+                }
+            }
+            SigRecv(Answer(answer)) => {
+                netaudit!(
+                    TRACE,
+                    pub_key = ?task_core.pub_key,
+                    offer = String::from_utf8_lossy(&answer).to_string(),
+                    a = "recv_answer",
+                );
+                if let Err(err) = webrtc.in_answer(answer).await {
+                    netaudit!(
+                        DEBUG,
+                        pub_key = ?task_core.pub_key,
+                        ?err,
+                        a = "close: webrtc in_answer error",
+                    );
+                    return Fallback(task_core);
+                }
+            }
+            SigRecv(Ice(ice)) => {
+                netaudit!(
+                    TRACE,
+                    pub_key = ?task_core.pub_key,
+                    offer = String::from_utf8_lossy(&ice).to_string(),
+                    a = "recv_ice",
+                );
+                if let Err(err) = webrtc.in_ice(ice).await {
+                    netaudit!(
+                        TRACE,
+                        pub_key = ?task_core.pub_key,
+                        ?err,
+                        a = "webrtc in_ice error",
+                    );
+                    // ice errors are often benign... just ignore it
+                }
+            }
+            SigRecv(WebrtcReady) | SigRecv(Keepalive) | SigRecv(Unknown) => {
+                // these are all no-ops
+            }
+            WebrtcRecv(GeneratedOffer(offer)) => {
+                netaudit!(
+                    TRACE,
+                    pub_key = ?task_core.pub_key,
+                    offer = String::from_utf8_lossy(&offer).to_string(),
+                    a = "send_offer",
+                );
+                if let Some(client) = task_core.client.upgrade() {
+                    if let Err(err) =
+                        client.send_offer(&task_core.pub_key, offer).await
+                    {
+                        netaudit!(
+                            DEBUG,
+                            pub_key = ?task_core.pub_key,
+                            ?err,
+                            a = "webrtc send_offer error",
+                        );
+                        return Abort;
+                    }
+                } else {
+                    return Abort;
+                }
+            }
+            WebrtcRecv(GeneratedAnswer(answer)) => {
+                netaudit!(
+                    TRACE,
+                    pub_key = ?task_core.pub_key,
+                    offer = String::from_utf8_lossy(&answer).to_string(),
+                    a = "send_answer",
+                );
+                if let Some(client) = task_core.client.upgrade() {
+                    if let Err(err) =
+                        client.send_answer(&task_core.pub_key, answer).await
+                    {
+                        netaudit!(
+                            DEBUG,
+                            pub_key = ?task_core.pub_key,
+                            ?err,
+                            a = "webrtc send_answer error",
+                        );
+                        return Abort;
+                    }
+                } else {
+                    return Abort;
+                }
+            }
+            WebrtcRecv(GeneratedIce(ice)) => {
+                netaudit!(
+                    TRACE,
+                    pub_key = ?task_core.pub_key,
+                    offer = String::from_utf8_lossy(&ice).to_string(),
+                    a = "send_ice",
+                );
+                if let Some(client) = task_core.client.upgrade() {
+                    if let Err(err) =
+                        client.send_ice(&task_core.pub_key, ice).await
+                    {
+                        netaudit!(
+                            DEBUG,
+                            pub_key = ?task_core.pub_key,
+                            ?err,
+                            a = "webrtc send_ice error",
+                        );
+                        return Abort;
+                    }
+                } else {
+                    return Abort;
+                }
+            }
+            WebrtcRecv(webrtc::WebrtcEvt::Message(msg)) => {
+                if task_core.handle_recv_msg(msg).await.is_err() {
+                    return Abort;
+                }
+            }
+            WebrtcRecv(Ready) => {
+                task_core.is_webrtc.store(true, Ordering::SeqCst);
+                task_core.ready.close();
+            }
+            SendMessage(msg) => {
+                let len = msg.len();
+
+                if let Err(err) = webrtc.message(msg).await {
+                    netaudit!(
+                        DEBUG,
+                        pub_key = ?task_core.pub_key,
+                        ?err,
+                        a = "close: webrtc message error",
+                    );
+                    return Fallback(task_core);
+                }
+
+                task_core.track_send_msg(len);
+            }
+            WebrtcClosed => {
+                return Fallback(task_core);
+            }
+        }
+    }
+
+    Abort
+}
+
+async fn con_task_fallback_use_signal(mut task_core: TaskCore) {
+    // closing the semaphore causes all the acquire awaits to end
+    task_core.ready.close();
+
+    while let Some(cmd) = recv_cmd(&mut task_core).await {
+        match cmd {
+            ConnCmd::SigRecv(tx5_signal::SignalMessage::Message(msg)) => {
+                if task_core.handle_recv_msg(msg).await.is_err() {
+                    break;
+                }
+            }
+            ConnCmd::SendMessage(msg) => match task_core.client.upgrade() {
+                Some(client) => {
+                    let len = msg.len();
+                    if let Err(err) =
+                        client.send_message(&task_core.pub_key, msg).await
+                    {
+                        netaudit!(
+                            DEBUG,
+                            pub_key = ?task_core.pub_key,
+                            ?err,
+                            a = "close: sbd client send error",
+                        );
+                        break;
+                    }
+                    task_core.track_send_msg(len);
+                }
+                None => {
+                    netaudit!(
+                        DEBUG,
+                        pub_key = ?task_core.pub_key,
+                        a = "close: sbd client closed",
+                    );
+                    break;
+                }
+            },
+            _ => (),
+        }
+    }
 }

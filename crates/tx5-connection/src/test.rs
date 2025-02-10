@@ -170,15 +170,14 @@ async fn webrtc_sanity() {
     tokio::join!(c1.ready(), c2.ready());
     println!("ready");
 
-    println!("await webrtc ready");
-    tokio::join!(c1.webrtc_ready(), c2.webrtc_ready());
-    println!("webrtc ready");
-
     c1.send(b"hello".to_vec()).await.unwrap();
     assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());
 
     c2.send(b"world".to_vec()).await.unwrap();
     assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+
+    assert!(c1.is_using_webrtc());
+    assert!(c2.is_using_webrtc());
 }
 
 #[tokio::test(flavor = "multi_thread")]

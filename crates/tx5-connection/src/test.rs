@@ -14,10 +14,15 @@ fn init_tracing() {
 
 pub struct TestSrv {
     server: sbd_server::SbdServer,
+    test_fail_webrtc: bool,
 }
 
 impl TestSrv {
     pub async fn new() -> Self {
+        Self::new_fail_webrtc(false).await
+    }
+
+    pub async fn new_fail_webrtc(test_fail_webrtc: bool) -> Self {
         let config = Arc::new(sbd_server::Config {
             bind: vec!["127.0.0.1:0".to_string(), "[::1]:0".to_string()],
             ..Default::default()
@@ -25,7 +30,10 @@ impl TestSrv {
 
         let server = sbd_server::SbdServer::new(config).await.unwrap();
 
-        Self { server }
+        Self {
+            server,
+            test_fail_webrtc,
+        }
     }
 
     pub async fn hub(&self) -> (Hub, HubRecv) {
@@ -53,6 +61,7 @@ impl TestSrv {
                         max_idle: std::time::Duration::from_secs(1),
                         ..Default::default()
                     }),
+                    test_fail_webrtc: self.test_fail_webrtc,
                 }),
             )
             .await
@@ -111,10 +120,10 @@ async fn base_timeout() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sanity() {
+async fn fallback_sanity() {
     init_tracing();
 
-    let srv = TestSrv::new().await;
+    let srv = TestSrv::new_fail_webrtc(true).await;
 
     let (hub1, _hubr1) = srv.hub().await;
     let pk1 = hub1.pub_key().clone();
@@ -138,6 +147,9 @@ async fn sanity() {
 
     c2.send(b"world".to_vec()).await.unwrap();
     assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+
+    assert!(!c1.is_using_webrtc());
+    assert!(!c2.is_using_webrtc());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -419,6 +419,11 @@ async fn con_task_attempt_webrtc(
 
     let mut is_ready = false;
 
+    #[cfg(test)]
+    if task_core.config.test_fail_webrtc {
+        return Fallback(task_core);
+    }
+
     while let Some(cmd) = recv_cmd(&mut task_core).await {
         use tx5_signal::SignalMessage::*;
         use webrtc::WebrtcEvt::*;

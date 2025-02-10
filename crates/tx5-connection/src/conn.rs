@@ -492,8 +492,8 @@ async fn con_task_attempt_webrtc(
                     // ice errors are often benign... just ignore it
                 }
             }
-            SigRecv(WebrtcReady) | SigRecv(Keepalive) | SigRecv(Unknown) => {
-                // these are all no-ops
+            SigRecv(Keepalive) | SigRecv(Unknown) => {
+                // these are no-ops
             }
             WebrtcRecv(GeneratedOffer(offer)) => {
                 netaudit!(

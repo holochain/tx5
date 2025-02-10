@@ -16,6 +16,8 @@ default = [ "backend-go-pion" ]
 # use the libdatachannel crate as the webrtc backend
 backend-libdatachannel = [ "dep:datachannel" ]
 
+datachannel-vendored = [ "datachannel/vendored" ]
+
 # use the tx5-go-pion crate as the webrtc backend
 backend-go-pion = [ "dep:tx5-go-pion" ]
 

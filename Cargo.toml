@@ -21,7 +21,7 @@ bit_field = "0.10.2"
 bytes = "1.4.0"
 clap = { version = "4.4.6", features = [ "derive", "wrap_help" ] }
 criterion = { version = "0.5.1", features = [ "async_tokio" ] }
-datachannel = { version = "0.13.1", default-features = false, features = [ "tracing", "vendored" ] }
+datachannel = { version = "0.14.0", default-features = false, features = [ "tracing" ] }
 dirs = "5.0.0"
 dunce = "1.0.3"
 futures = "0.3.28"

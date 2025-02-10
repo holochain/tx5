@@ -5,6 +5,7 @@ pub(crate) enum ConnCmd {
     SigRecv(tx5_signal::SignalMessage),
     WebrtcRecv(webrtc::WebrtcEvt),
     SendMessage(Vec<u8>),
+    WebrtcTimeoutCheck,
     WebrtcClosed,
 }
 
@@ -282,7 +283,9 @@ async fn con_task(
                     ConnCmd::SendMessage(_) => {
                         return Err(Error::other("send before ready"));
                     }
-                    ConnCmd::WebrtcRecv(_) | ConnCmd::WebrtcClosed => {
+                    ConnCmd::WebrtcTimeoutCheck
+                    | ConnCmd::WebrtcRecv(_)
+                    | ConnCmd::WebrtcClosed => {
                         // only emitted by the webrtc module
                         // which at this point hasn't yet been initialized
                         unreachable!()
@@ -382,6 +385,13 @@ async fn con_task_attempt_webrtc(
 ) -> AttemptWebrtcResult {
     use AttemptWebrtcResult::*;
 
+    let timeout_dur = task_core.config.signal_config.max_idle;
+    let timeout_cmd_send = task_core.cmd_send.clone();
+    tokio::task::spawn(async move {
+        tokio::time::sleep(timeout_dur).await;
+        let _ = timeout_cmd_send.send(ConnCmd::WebrtcTimeoutCheck).await;
+    });
+
     let (webrtc, webrtc_recv) = webrtc::new_backend_module(
         task_core.config.backend_module,
         is_polite,
@@ -406,6 +416,8 @@ async fn con_task_attempt_webrtc(
         ))
         .abort_handle(),
     );
+
+    let mut is_ready = false;
 
     while let Some(cmd) = recv_cmd(&mut task_core).await {
         use tx5_signal::SignalMessage::*;
@@ -558,6 +570,7 @@ async fn con_task_attempt_webrtc(
                 }
             }
             WebrtcRecv(Ready) => {
+                is_ready = true;
                 task_core.is_webrtc.store(true, Ordering::SeqCst);
                 task_core.ready.close();
             }
@@ -575,6 +588,11 @@ async fn con_task_attempt_webrtc(
                 }
 
                 task_core.track_send_msg(len);
+            }
+            WebrtcTimeoutCheck => {
+                if !is_ready {
+                    return Fallback(task_core);
+                }
             }
             WebrtcClosed => {
                 return Fallback(task_core);

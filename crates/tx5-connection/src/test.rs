@@ -45,13 +45,7 @@ impl TestSrv {
 
         for addr in self.server.bind_addrs() {
             if let Ok(r) = Hub::new(
-                br#"{
-                  "iceServers": [
-                    { "urls": ["stun:stun.l.google.com:80"] },
-                    { "urls": ["stun:stun1.l.google.com:80"] }
-                  ]
-                }"#
-                .to_vec(),
+                b"{}".to_vec(),
                 &format!("ws://{addr}"),
                 Arc::new(HubConfig {
                     backend_module: BackendModule::default(),

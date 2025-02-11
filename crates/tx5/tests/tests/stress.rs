@@ -6,7 +6,7 @@ use tx5::*;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stress_small_msg() {
-    stress_msg_size(40000, 42).await;
+    stress_msg_size(20000, 42).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

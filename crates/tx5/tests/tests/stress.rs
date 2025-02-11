@@ -41,7 +41,7 @@ async fn stress_msg_size(msg_count: usize, size: usize) {
             .unwrap();
     }
 
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
         let mut got = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;

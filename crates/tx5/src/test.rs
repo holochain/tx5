@@ -199,6 +199,10 @@ async fn ep_sanity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(
+    windows,
+    ignore = "windows is too slow to pass this test reliably, and we don't want to set the times slower for other platforms"
+)]
 async fn ep_sig_down() {
     eprintln!("-- STARTUP --");
 

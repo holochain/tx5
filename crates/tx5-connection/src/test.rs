@@ -36,7 +36,9 @@ impl TestSrv {
         }
     }
 
-    pub async fn hub(&self) -> (Hub, HubRecv) {
+    pub async fn hub(&self, max_idle_secs: Option<u64>) -> (Hub, HubRecv) {
+        let max_idle_secs = max_idle_secs.unwrap_or(30);
+
         let _ = tx5_core::Tx5InitConfig {
             tracing_enabled: true,
             ..Default::default()
@@ -52,7 +54,7 @@ impl TestSrv {
                     signal_config: Arc::new(tx5_signal::SignalConfig {
                         listener: true,
                         allow_plain_text: true,
-                        max_idle: std::time::Duration::from_secs(1),
+                        max_idle: std::time::Duration::from_secs(max_idle_secs),
                         ..Default::default()
                     }),
                     test_fail_webrtc: self.test_fail_webrtc,
@@ -74,10 +76,10 @@ async fn base_timeout() {
 
     let srv = TestSrv::new().await;
 
-    let (hub1, _hubr1) = srv.hub().await;
+    let (hub1, _hubr1) = srv.hub(Some(1)).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(Some(1)).await;
     let pk2 = hub2.pub_key().clone();
 
     println!("connect");
@@ -119,10 +121,10 @@ async fn fallback_sanity() {
 
     let srv = TestSrv::new_fail_webrtc(true).await;
 
-    let (hub1, _hubr1) = srv.hub().await;
+    let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(None).await;
     let pk2 = hub2.pub_key().clone();
 
     println!("connect");
@@ -159,31 +161,39 @@ async fn webrtc_sanity() {
 
     let srv = TestSrv::new().await;
 
-    let (hub1, _hubr1) = srv.hub().await;
+    let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(None).await;
     let pk2 = hub2.pub_key().clone();
 
-    println!("connect");
+    println!("@@@@@@@@@@@@@@@ connect");
     let (c1, mut r1) = hub1.connect(pk2).await.unwrap();
-    println!("accept");
+    println!("@@@@@@@@@@@@@@@ accept");
     let (c2, mut r2) = hubr2.accept().await.unwrap();
 
     assert_eq!(&pk1, c2.pub_key());
 
-    println!("await ready");
+    println!("@@@@@@@@@@@@@@@ await ready");
     tokio::join!(c1.ready(), c2.ready());
-    println!("ready");
+    println!("@@@@@@@@@@@@@@@ ready");
 
+    println!("@@@@@@@@@@@@@@@ send1");
     c1.send(b"hello".to_vec()).await.unwrap();
+    println!("@@@@@@@@@@@@@@@ recv1");
     assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());
 
+    println!("@@@@@@@@@@@@@@@ send2");
     c2.send(b"world".to_vec()).await.unwrap();
+    println!("@@@@@@@@@@@@@@@ recv2");
     assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+
+    println!("@@@@@@@@@@@@@@@ check webrtc state");
 
     assert!(c1.is_using_webrtc());
     assert!(c2.is_using_webrtc());
+
+    println!("@@@@@@@@@@@@@@@ TEST COMPLETE");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -192,10 +202,10 @@ async fn framed_sanity() {
 
     let srv = TestSrv::new().await;
 
-    let (hub1, _hubr1) = srv.hub().await;
+    let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(None).await;
     let pk2 = hub2.pub_key().clone();
 
     let ((c1, mut r1), (c2, mut r2)) = tokio::join!(
@@ -229,10 +239,10 @@ async fn base_end_when_disconnected() {
 
     let srv = TestSrv::new().await;
 
-    let (hub1, mut hubr1) = srv.hub().await;
+    let (hub1, mut hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(None).await;
     let pk2 = hub2.pub_key().clone();
 
     println!("connect");
@@ -270,10 +280,10 @@ async fn framed_end_when_disconnected() {
 
     let srv = TestSrv::new().await;
 
-    let (hub1, mut hubr1) = srv.hub().await;
+    let (hub1, mut hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(None).await;
     let pk2 = hub2.pub_key().clone();
 
     let ((c1, mut r1), (c2, mut r2)) = tokio::join!(
@@ -318,10 +328,10 @@ async fn base_con_drop_disconnects() {
 
     let srv = TestSrv::new().await;
 
-    let (hub1, _hubr1) = srv.hub().await;
+    let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(None).await;
     let pk2 = hub2.pub_key().clone();
 
     println!("connect");
@@ -354,10 +364,10 @@ async fn framed_con_drop_disconnects() {
 
     let srv = TestSrv::new().await;
 
-    let (hub1, _hubr1) = srv.hub().await;
+    let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();
 
-    let (hub2, mut hubr2) = srv.hub().await;
+    let (hub2, mut hubr2) = srv.hub(None).await;
     let pk2 = hub2.pub_key().clone();
 
     let ((c1, mut r1), (c2, mut r2)) = tokio::join!(

@@ -421,6 +421,11 @@ async fn con_task_attempt_webrtc(
 
     #[cfg(test)]
     if task_core.config.test_fail_webrtc {
+        netaudit!(
+            WARN,
+            pub_key = ?task_core.pub_key,
+            a = "webrtc fallback: test",
+        );
         return Fallback(task_core);
     }
 
@@ -441,6 +446,11 @@ async fn con_task_attempt_webrtc(
                 if task_core.handle_recv_msg(msg).await.is_err() {
                     return Abort;
                 }
+                netaudit!(
+                    WARN,
+                    pub_key = ?task_core.pub_key,
+                    a = "webrtc fallback: remote sent us an sbd message",
+                );
                 // if we get a message from the remote, we have to assume
                 // they are switching to fallback mode, and thus we cannot
                 // use webrtc ourselves.
@@ -455,10 +465,10 @@ async fn con_task_attempt_webrtc(
                 );
                 if let Err(err) = webrtc.in_offer(offer).await {
                     netaudit!(
-                        DEBUG,
+                        WARN,
                         pub_key = ?task_core.pub_key,
                         ?err,
-                        a = "close: webrtc in_offer error",
+                        a = "webrtc fallback: failed to parse received offer",
                     );
                     return Fallback(task_core);
                 }
@@ -472,10 +482,10 @@ async fn con_task_attempt_webrtc(
                 );
                 if let Err(err) = webrtc.in_answer(answer).await {
                     netaudit!(
-                        DEBUG,
+                        WARN,
                         pub_key = ?task_core.pub_key,
                         ?err,
-                        a = "close: webrtc in_answer error",
+                        a = "webrtc fallback: failed to parse received answer",
                     );
                     return Fallback(task_core);
                 }
@@ -489,10 +499,10 @@ async fn con_task_attempt_webrtc(
                 );
                 if let Err(err) = webrtc.in_ice(ice).await {
                     netaudit!(
-                        TRACE,
+                        DEBUG,
                         pub_key = ?task_core.pub_key,
                         ?err,
-                        a = "webrtc in_ice error",
+                        a = "ignoring webrtc in_ice error",
                     );
                     // ice errors are often benign... just ignore it
                 }
@@ -582,12 +592,18 @@ async fn con_task_attempt_webrtc(
             SendMessage(msg) => {
                 let len = msg.len();
 
+                netaudit!(
+                    TRACE,
+                    pub_key = ?task_core.pub_key,
+                    byte_len = len,
+                    a = "queue msg for backend send",
+                );
                 if let Err(err) = webrtc.message(msg).await {
                     netaudit!(
-                        DEBUG,
+                        WARN,
                         pub_key = ?task_core.pub_key,
                         ?err,
-                        a = "close: webrtc message error",
+                        a = "webrtc fallback: failed to send message",
                     );
                     return Fallback(task_core);
                 }
@@ -596,10 +612,20 @@ async fn con_task_attempt_webrtc(
             }
             WebrtcTimeoutCheck => {
                 if !is_ready {
+                    netaudit!(
+                        WARN,
+                        pub_key = ?task_core.pub_key,
+                        a = "webrtc fallback: failed to ready within timeout",
+                    );
                     return Fallback(task_core);
                 }
             }
             WebrtcClosed => {
+                netaudit!(
+                    WARN,
+                    pub_key = ?task_core.pub_key,
+                    a = "webrtc fallback: webrtc processing task closed",
+                );
                 return Fallback(task_core);
             }
         }

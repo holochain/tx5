@@ -136,13 +136,6 @@ impl SignalConnection {
         Ok(())
     }
 
-    /// Send webrtc ready message to a peer.
-    pub async fn send_webrtc_ready(&self, pub_key: &PubKey) -> Result<()> {
-        let msg = SignalMessage::webrtc_ready();
-        self.client.send(pub_key, &msg).await?;
-        Ok(())
-    }
-
     /// Keepalive.
     pub async fn send_keepalive(&self, pub_key: &PubKey) -> Result<()> {
         let msg = SignalMessage::keepalive();

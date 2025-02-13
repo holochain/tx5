@@ -6,7 +6,6 @@ const F_OFFR: &[u8] = b"offr";
 const F_ANSW: &[u8] = b"answ";
 const F_ICEM: &[u8] = b"icem";
 const F_FMSG: &[u8] = b"fmsg";
-const F_RTCG: &[u8] = b"rtcg";
 const F_KEEP: &[u8] = b"keep";
 
 /// Parsed signal message.
@@ -29,9 +28,6 @@ pub enum SignalMessage {
     /// Pre-webrtc and webrtc failure fallback communication message.
     Message(Vec<u8>),
 
-    /// Notification that further messages will be passed via webrtc.
-    WebrtcReady,
-
     /// Keepalive
     Keepalive,
 
@@ -48,7 +44,6 @@ impl std::fmt::Debug for SignalMessage {
             Self::Answer(_) => f.write_str("Answer"),
             Self::Ice(_) => f.write_str("Ice"),
             Self::Message(_) => f.write_str("Message"),
-            Self::WebrtcReady => f.write_str("WebrtcReady"),
             Self::Keepalive => f.write_str("Keepalive"),
             Self::Unknown => f.write_str("Unknown"),
         }
@@ -106,11 +101,6 @@ impl SignalMessage {
         Ok(msg)
     }
 
-    /// Notification that further messages will be passed via webrtc.
-    pub(crate) fn webrtc_ready() -> Vec<u8> {
-        F_RTCG.to_vec()
-    }
-
     /// Keepalive.
     pub(crate) fn keepalive() -> Vec<u8> {
         F_KEEP.to_vec()
@@ -154,7 +144,6 @@ impl SignalMessage {
                 let _ = b.drain(..4);
                 Ok(SignalMessage::Message(b))
             }
-            F_RTCG => Ok(SignalMessage::WebrtcReady),
             F_KEEP => Ok(SignalMessage::Keepalive),
             _ => Ok(SignalMessage::Unknown),
         }

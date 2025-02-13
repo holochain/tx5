@@ -184,6 +184,7 @@ impl super::Webrtc for Webrtc {
 
     fn message(&self, message: Vec<u8>) -> BoxFuture<'_, Result<()>> {
         Box::pin(async move {
+            tracing::trace!(byte_len = message.len(), "datachannel queue send");
             let (s, r) = tokio::sync::oneshot::channel();
             self.cmd_send
                 .send_or_close(Cmd::SendMessage(message, s))
@@ -331,6 +332,11 @@ async fn task_err(
                 if let Some(d) = &mut data {
                     d.send(&msg).map_err(map_err("sending message"))?;
                     let amt = d.buffered_amount();
+                    tracing::trace!(
+                        byte_len = msg.len(),
+                        buffer_amt = amt,
+                        "datachannel sent"
+                    );
                     if amt <= send_buffer {
                         drop(resp);
                         pend_buffer.clear();

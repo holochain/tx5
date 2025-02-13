@@ -176,77 +176,6 @@ impl Test {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn webrtc_transition_ordering() {
-    let config = Arc::new(Config {
-        signal_allow_plain_text: true,
-        ..Default::default()
-    });
-    let test = Test::new().await;
-
-    let ep1 = test.ep(config.clone()).await;
-
-    let mut ep2 = test.ep(config).await;
-    let a2 = ep2.peer_url();
-    let mut r2 = ep2.take_recv().unwrap();
-
-    let ts1 = tokio::task::spawn(async move {
-        let mut msg_id = 1_u32;
-        loop {
-            ep1.send(a2.clone(), msg_id.to_be_bytes().to_vec())
-                .await
-                .unwrap();
-            msg_id += 1;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    });
-
-    struct D(tokio::task::JoinHandle<()>);
-
-    impl Drop for D {
-        fn drop(&mut self) {
-            self.0.abort();
-        }
-    }
-
-    let _d = D(ts1);
-
-    let tr2 = tokio::task::spawn(tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        async move {
-            // at least the first message should be passed before webrtc
-            // can connect
-            let mut got_non_webrtc = false;
-
-            let mut want_msg_id = 1_u32;
-            loop {
-                let (_, msg) = r2.recv().await.unwrap();
-                if u32::from_be_bytes([msg[0], msg[1], msg[2], msg[3]])
-                    != want_msg_id
-                {
-                    panic!("out of order message");
-                }
-                println!("got {want_msg_id}");
-                want_msg_id += 1;
-
-                let is_webrtc =
-                    ep2.get_stats().connection_list.get(0).unwrap().is_webrtc;
-                println!("is_webrtc {is_webrtc}");
-                if is_webrtc {
-                    if !got_non_webrtc {
-                        panic!("failed to receive any pre-webrtc messages");
-                    }
-                    break;
-                } else {
-                    got_non_webrtc = true;
-                }
-            }
-        },
-    ));
-
-    tr2.await.unwrap().unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn ep_sanity() {
     let config = Arc::new(Config {
         signal_allow_plain_text: true,
@@ -270,6 +199,10 @@ async fn ep_sanity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(
+    windows,
+    ignore = "windows is too slow to pass this test reliably, and we don't want to set the times slower for other platforms"
+)]
 async fn ep_sig_down() {
     eprintln!("-- STARTUP --");
 

@@ -1,6 +1,6 @@
 [package]
 name = "tx5-go-pion"
-version = "0.2.1-beta"
+version = "0.3.0-beta"
 edition = "2021"
 description = "Rust bindings to the go pion webrtc library"
 license = "MIT OR Apache-2.0"

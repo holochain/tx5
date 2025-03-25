@@ -53,6 +53,7 @@ tx5 = { version = "0.3.0-beta", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
 zip = { version = "0.6.4", default-features = false, features = [ "deflate" ] }
 
-#[patch.crates-io]
+[patch.crates-io]
+rustls = { version = "0.23.25", features = [ "ring" ]}
 #sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
 #sbd-server = { path = "../sbd/rust/sbd-server" }

@@ -448,7 +448,7 @@ async fn main_err() -> Result<()> {
                             info,
                             "RECV_BIG",
                             "len:{} {:?}",
-                            d.as_bytes().len(),
+                            d.len(),
                             peer_url.pub_key(),
                         );
                     }

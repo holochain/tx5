@@ -31,8 +31,8 @@ libloading = "0.8.0"
 once_cell = "1.17.1"
 ouroboros = "0.15.6"
 rand = "0.8.5"
-sbd-e2e-crypto-client = "0.0.9-alpha2"
-sbd-server = "0.0.9-alpha2"
+sbd-e2e-crypto-client = "0.0.11-alpha2"
+sbd-server = "0.0.11-alpha2"
 serde = { version = "1.0.160", features = [ "derive", "rc" ] }
 serde_json = { version = "1.0.96", features = [ "preserve_order" ] }
 sha2 = "0.10.6"

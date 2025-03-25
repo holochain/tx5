@@ -12,11 +12,9 @@ categories = ["network-programming"]
 
 [dependencies]
 futures = { workspace = true }
-parking_lot = { workspace = true }
 tokio = { workspace = true, features = [ "full" ] }
 tx5-go-pion-sys = { workspace = true }
 tracing = { workspace = true }
-url = { workspace = true }
 
 [dev-dependencies]
 tx5-core = { workspace = true }

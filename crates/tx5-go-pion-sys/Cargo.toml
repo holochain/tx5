@@ -18,7 +18,6 @@ links = "go-pion-webrtc"
 
 [dependencies]
 base64 = { workspace = true }
-dirs = { workspace = true }
 libc = { workspace = true }
 libloading = { workspace = true }
 once_cell = { workspace = true }
@@ -26,9 +25,6 @@ ouroboros = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
 tx5-core = { workspace = true, features = [ "file_check" ] }
-
-[dev-dependencies]
-parking_lot = { workspace = true }
 
 [build-dependencies]
 base64 = { workspace = true }

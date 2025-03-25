@@ -18,7 +18,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = [ "sync" ] }
 tracing = { workspace = true }
-url = { workspace = true }
 
 # file_check deps
 app_dirs2 = { workspace = true, optional = true }

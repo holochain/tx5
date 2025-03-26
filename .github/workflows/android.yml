@@ -40,7 +40,7 @@ jobs:
           #rustup target add aarch64-linux-android
           rustup target add x86_64-linux-android
           cargo install --force --locked bindgen-cli
-          sudo apt-get install gcc-multilib
+          sudo apt install libclang-dev
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2

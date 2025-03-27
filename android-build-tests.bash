@@ -42,7 +42,6 @@ export TARGET_RANLIB="${_ndk_root}/bin/llvm-ranlib"
 export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
 
 # https://github.com/aws/aws-lc-rs/issues/751
-# export BINDGEN_EXTRA_CLANG_ARGS="-Wno-strict-prototypes -I${_ndk_root}/sysroot/usr/include --sysroot=${_ndk_root}/sysroot"
 export BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android="--sysroot=${_ndk_root}/sysroot"
 export CFLAGS_x86_64_linux_android="${BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android}"
 

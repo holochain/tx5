@@ -14,7 +14,6 @@ resolver = "2"
 
 [workspace.dependencies]
 app_dirs2 = "2.5.5"
-aws-lc-rs = { version = "1", features = ["bindgen"] }
 base64 = "0.22.1"
 bit_field = "0.10.2"
 clap = { version = "4.4.6", features = [ "derive", "wrap_help" ] }

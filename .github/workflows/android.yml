@@ -54,7 +54,6 @@ jobs:
           key: avd-${{ matrix.android-api-level }}
 
       - name: Avd Snapshot
-        if: steps.avd-cache.outputs.cache-hit != 'true'
         env:
           ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
           ANDROID_NDK_VERSION: ${{ matrix.android-ndk-version }}

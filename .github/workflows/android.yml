@@ -39,6 +39,7 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           #rustup target add aarch64-linux-android
           rustup target add x86_64-linux-android
+          cargo install --force --locked bindgen-cli
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2

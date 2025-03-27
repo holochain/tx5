@@ -43,8 +43,7 @@ export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr
 # https://github.com/aws/aws-lc-rs/issues/751
 export BINDGEN_EXTRA_CLANG_ARGS="-I${_ndk_root}/sysroot/usr/include"
 export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=${_ndk_root}/sysroot"
-
-export RUSTFLAGS="-C link-arg=-Wno-strict-prototypes"
+export BINDGEN_EXTRA_CLANG_ARGS="-Wno-strict-prototypes"
 
 cargo test --manifest-path crates/tx5/Cargo.toml --no-default-features --features backend-go-pion --no-run --target ${ANDROID_ARCH}-linux-android --config target.${ANDROID_ARCH}-linux-android.linker="\"${_ndk_root}/bin/${ANDROID_ARCH}-linux-android34-clang\"" --config target.${ANDROID_ARCH}-linux-android.ar="\"${_ndk_root}/bin/llvm-ar\"" 2>&1 | tee output-cargo-test
 cat output-cargo-test | grep Executable | sed -E 's/[^(]*\(([^)]*)\)/\1/' > output-test-executables

@@ -59,7 +59,7 @@ publish:
 			exit 1; \
 			;; \
 	esac; \
-	export VER="v$$(grep version $${MANIFEST} | head -1 | cut -d ' ' -f 3 | cut -d \" -f 2)"; \
+	export VER="v$$(grep version ./Cargo.toml | head -1 | cut -d ' ' -f 3 | cut -d \" -f 2)"; \
 	echo "publish $(crate) $${MANIFEST} $${VER}"; \
 	git diff --exit-code; \
 	cargo publish --manifest-path $${MANIFEST}; \
@@ -71,7 +71,7 @@ bump:
 		echo "USAGE: make bump ver=0.0.2-alpha"; \
 		exit 1; \
 	fi
-	sed -i 's/^\(tx5[^=]*= { \|\)version = "[^"]*"/\1version = "$(ver)"/g' $$(find . -name Cargo.toml)
+	sed -i 's/^\(tx5[^=]*= { version = "\|version = "\)[^"]*"/\1$(ver)"/g' ./Cargo.toml
 
 test: static unit
 

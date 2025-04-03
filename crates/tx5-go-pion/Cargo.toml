@@ -1,7 +1,7 @@
 [package]
 name = "tx5-go-pion"
-version = "0.3.1-beta"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Rust bindings to the go pion webrtc library"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/holochain/tx5"

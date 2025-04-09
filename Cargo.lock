@@ -2366,9 +2366,9 @@ dependencies = [
 
 [[package]]
 name = "sbd-server"
-version = "0.0.9-alpha2"
+version = "0.0.9-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa2c5b7f97a15217e0c4378b6416a6f525202e321d1dc056f6a83d16b085547e"
+checksum = "11af8e5c7b88138a5c9e3ca0a054f0f40f4899ca3a98ccc89bae4efdfb0628ee"
 dependencies = [
  "anstyle",
  "base64 0.22.1",

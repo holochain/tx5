@@ -2354,11 +2354,10 @@ dependencies = [
 
 [[package]]
 name = "sbd-e2e-crypto-client"
-version = "0.0.9-alpha2"
+version = "0.0.9-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50b3f2616dad53cbe25ba970243bdad92aadb37fec2caeb91462c40900f75448"
+checksum = "53754777ba5a7985c3758f8ec2fb2c5de769003a49570afe03331fcd0e0e9d74"
 dependencies = [
- "bytes",
  "sbd-client",
  "sodoken",
  "tokio",

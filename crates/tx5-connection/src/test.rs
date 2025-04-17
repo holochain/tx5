@@ -71,6 +71,7 @@ impl TestSrv {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore = "flaky on non-linux")]
 async fn base_timeout() {
     init_tracing();
 

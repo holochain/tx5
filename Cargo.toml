@@ -22,7 +22,7 @@ base64 = "0.22.1"
 bit_field = "0.10.2"
 clap = { version = "4.4.6", features = [ "derive", "wrap_help" ] }
 criterion = { version = "0.5.1", features = [ "async_tokio" ] }
-datachannel = { version = "0.14.0", default-features = false, features = [ "tracing" ] }
+datachannel = { version = "0.15.0", default-features = false, features = [ "tracing" ] }
 dirs = "6.0.0"
 dunce = "1.0.3"
 futures = "0.3.28"

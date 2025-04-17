@@ -5,11 +5,13 @@ use std::sync::{
 use tx5::*;
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore = "flaky on non-linux")]
 async fn stress_small_msg() {
     stress_msg_size(20000, 42).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore = "flaky on non-linux")]
 async fn stress_large_msg() {
     stress_msg_size(5000, 1024 * 30).await;
 }

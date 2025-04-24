@@ -37,6 +37,15 @@ pub struct HubConfig {
     pub test_fail_webrtc: bool,
 }
 
+/// The type of credential to use for ICE servers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum CredentialType {
+    /// A password is used for authentication.
+    #[default]
+    Password,
+}
+
 /// Configuration for a group of ICE servers.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -44,6 +53,29 @@ pub struct HubConfig {
 pub struct IceServers {
     /// The ICE server URLs to use for discovering external candidates.
     pub urls: Vec<String>,
+
+    /// The username to use for authentication.
+    #[serde(default)]
+    pub username: Option<String>,
+    
+    /// The credential to use for authentication.
+    #[serde(default)]
+    pub credential: Option<String>,
+    
+    /// The credential type to use for authentication.
+    #[serde(default)]
+    pub credential_type: Option<CredentialType>,
+}
+
+/// ICE transport policy.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum TransportPolicy {
+    /// Any type of candidate can be used.
+    #[default]
+    All,
+    /// Only media relay candidates can be used.
+    Relay,
 }
 
 /// WebRTC config.
@@ -56,6 +88,10 @@ pub struct IceServers {
 pub struct WebRtcConfig {
     /// A list of ICE servers configurations.
     pub ice_servers: Vec<IceServers>,
+
+    /// The ICE transport policy to use.
+    #[serde(default)]
+    pub ice_transport_policy: TransportPolicy,
 }
 
 #[cfg(feature = "backend-go-pion")]

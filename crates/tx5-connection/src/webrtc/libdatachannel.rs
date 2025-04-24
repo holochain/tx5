@@ -1,5 +1,6 @@
 use super::*;
 use crate::{AbortTask, CloseRecv, CloseSend};
+use datachannel::TransportPolicy;
 use std::io::{Error, Result};
 
 type MapErr<E, F> = Box<dyn FnOnce(E) -> F>;
@@ -232,6 +233,10 @@ async fn task_err(
             .cloned()
             .collect::<Vec<_>>(),
     )
+    .ice_transport_policy(match config.ice_transport_policy {
+        crate::config::TransportPolicy::All => TransportPolicy::All,
+        crate::config::TransportPolicy::Relay => TransportPolicy::Relay,
+    })
     .port_range_begin(init_config.ephemeral_udp_port_min)
     .port_range_end(init_config.ephemeral_udp_port_max);
     let mut peer =

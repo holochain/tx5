@@ -24,7 +24,7 @@ impl HubMap {
 }
 
 async fn hub_map_assert(
-    webrtc_config: &Arc<Mutex<Vec<u8>>>,
+    webrtc_config: &Arc<Mutex<WebRtcConfig>>,
     is_polite: bool,
     pub_key: PubKey,
     map: &mut HubMap,
@@ -99,7 +99,7 @@ impl HubRecv {
 
 /// A signal server connection from which we can establish tx5 connections.
 pub struct Hub {
-    webrtc_config: Arc<Mutex<Vec<u8>>>,
+    webrtc_config: Arc<Mutex<WebRtcConfig>>,
     client: Arc<tx5_signal::SignalConnection>,
     hub_cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
     task_list: Vec<tokio::task::JoinHandle<()>>,
@@ -118,7 +118,7 @@ impl Hub {
     /// Note, if this is not a "listener" client,
     /// you do not need to ever call accept.
     pub async fn new(
-        webrtc_config: Vec<u8>,
+        webrtc_config: WebRtcConfig,
         url: &str,
         config: Arc<HubConfig>,
     ) -> Result<(Self, HubRecv)> {
@@ -276,10 +276,11 @@ impl Hub {
         }
     }
 
-    /// Alter the webrtc_config at runtime. This will affect all future
-    /// new outgoing connections, and all connections accepted on the
+    /// Alter the webrtc_config at runtime.
+    ///
+    /// This will affect all future new outgoing connections, and all connections accepted on the
     /// receiver. It will not affect any connections already established.
-    pub fn set_webrtc_config(&self, webrtc_config: Vec<u8>) {
+    pub fn set_webrtc_config(&self, webrtc_config: WebRtcConfig) {
         *self.webrtc_config.lock().unwrap() = webrtc_config;
     }
 }

@@ -25,6 +25,9 @@ backend-go-pion = [ "tx5-connection/backend-go-pion" ]
 # use the webrtc-rs crate as the webrtc backend
 backend-webrtc-rs = [ "tx5-connection/backend-webrtc-rs" ]
 
+# make a schema available for configuration types
+schema = [ "tx5-connection/schema" ]
+
 [dependencies]
 base64 = { workspace = true }
 futures = { workspace = true }

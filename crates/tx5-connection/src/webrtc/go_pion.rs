@@ -27,7 +27,7 @@ impl Webrtc {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
         is_polite: bool,
-        config: Vec<u8>,
+        config: WebRtcConfig,
         send_buffer: usize,
     ) -> (DynWebrtc, CloseRecv<WebrtcEvt>) {
         let (mut cmd_send, cmd_recv) = CloseSend::sized_channel(1024);
@@ -94,7 +94,7 @@ impl super::Webrtc for Webrtc {
 
 async fn task(
     is_polite: bool,
-    config: Vec<u8>,
+    config: WebRtcConfig,
     send_buffer: usize,
     mut evt_send: CloseSend<WebrtcEvt>,
     cmd_send: CloseSend<Cmd>,
@@ -102,6 +102,7 @@ async fn task(
 ) -> Result<()> {
     evt_send.set_close_on_drop(true);
 
+    let config = config.to_go_buf()?;
     let (peer, mut peer_evt) = tx5_go_pion::PeerConnection::new(config).await?;
 
     let mut cmd_send2 = cmd_send.clone();

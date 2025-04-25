@@ -57,11 +57,11 @@ pub struct IceServers {
     /// The username to use for authentication.
     #[serde(default)]
     pub username: Option<String>,
-    
+
     /// The credential to use for authentication.
     #[serde(default)]
     pub credential: Option<String>,
-    
+
     /// The credential type to use for authentication.
     #[serde(default)]
     pub credential_type: Option<CredentialType>,

@@ -25,6 +25,8 @@
 #[cfg(feature = "backend-go-pion")]
 pub use tx5_connection::Tx5InitConfig;
 
+pub use tx5_connection::{IceServers, WebRtcConfig};
+
 use std::collections::HashMap;
 use std::io::{Error, Result};
 use std::sync::{Arc, Mutex, Weak};
@@ -73,8 +75,6 @@ pub mod stats;
 
 #[cfg(test)]
 mod test;
-
-//pub use tx5_core::Tx5InitConfig;
 
 // #[cfg(test)]
 // mod test_behavior;

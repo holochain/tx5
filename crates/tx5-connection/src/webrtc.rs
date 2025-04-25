@@ -1,4 +1,4 @@
-use crate::{BackendModule, CloseRecv};
+use crate::{BackendModule, CloseRecv, WebRtcConfig};
 use futures::future::BoxFuture;
 use std::io::Result;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ mod go_pion;
 pub fn new_backend_module(
     module: BackendModule,
     is_polite: bool,
-    config: Vec<u8>,
+    config: WebRtcConfig,
     send_buffer: usize,
 ) -> (DynWebrtc, CloseRecv<WebrtcEvt>) {
     match module {

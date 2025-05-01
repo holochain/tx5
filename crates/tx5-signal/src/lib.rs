@@ -9,7 +9,7 @@
 use std::io::{Error, Result};
 use std::sync::{Arc, Weak};
 
-pub use sbd_e2e_crypto_client::PubKey;
+pub use sbd_e2e_crypto_client::{PubKey, SbdClientConfig};
 
 mod wire;
 pub use wire::*;

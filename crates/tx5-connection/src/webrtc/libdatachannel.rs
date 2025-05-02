@@ -102,6 +102,9 @@ impl Webrtc {
         config: WebRtcConfig,
         send_buffer: usize,
     ) -> (DynWebrtc, CloseRecv<WebrtcEvt>) {
+        static PRELOAD: std::sync::Once = std::sync::Once::new();
+        PRELOAD.call_once(datachannel::preload);
+
         static INIT_TRACING: std::sync::Once = std::sync::Once::new();
         INIT_TRACING.call_once(|| {
             use tracing::event_enabled;

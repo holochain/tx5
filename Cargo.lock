@@ -3066,7 +3066,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64",
  "criterion",
@@ -3086,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-connection"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bit_field",
  "datachannel",
@@ -3106,7 +3106,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "app_dirs2",
  "base64",
@@ -3122,7 +3122,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64",
  "clap",
@@ -3138,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "futures",
  "tokio",
@@ -3151,7 +3151,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-sys"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "Inflector",
  "base64",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-turn"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64",
  "dirs",
@@ -3184,7 +3184,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-online"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "once_cell",
  "rand 0.8.5",
@@ -3195,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "rand 0.8.5",
  "sbd-e2e-crypto-client",

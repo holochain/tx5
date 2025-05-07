@@ -35,8 +35,8 @@ libloading = "0.8.0"
 once_cell = "1.17.1"
 ouroboros = "0.15.6"
 rand = "0.8.5"
-sbd-e2e-crypto-client = "0.2.0"
-sbd-server = "0.2.0"
+sbd-e2e-crypto-client = "0.3.0"
+sbd-server = "0.3.0"
 serde = { version = "1.0.160", features = [ "derive", "rc" ] }
 serde_json = { version = "1.0.96", features = [ "preserve_order" ] }
 sha2 = "0.10.6"
@@ -58,7 +58,7 @@ url = { version = "2.3.1", features = [ "serde" ] }
 zip = { version = "0.6.4", default-features = false, features = [ "deflate" ] }
 schemars = { version = "0.8.22", features = ["preserve_order"] }
 
-[patch.crates-io]
-sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
-sbd-client = { path = "../sbd/rust/sbd-client" }
-sbd-server = { path = "../sbd/rust/sbd-server" }
+#[patch.crates-io]
+#sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
+#sbd-client = { path = "../sbd/rust/sbd-client" }
+#sbd-server = { path = "../sbd/rust/sbd-server" }

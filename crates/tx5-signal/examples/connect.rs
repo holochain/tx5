@@ -21,7 +21,10 @@ async fn main() {
     tracing::info!(%sig_url);
 
     let config = tx5_signal::SignalConfig {
-        allow_plain_text: true,
+        client_config: tx5_signal::SbdClientConfig {
+            allow_plain_text: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

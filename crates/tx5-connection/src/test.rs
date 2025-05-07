@@ -52,8 +52,11 @@ impl TestSrv {
                 Arc::new(HubConfig {
                     backend_module: BackendModule::default(),
                     signal_config: Arc::new(tx5_signal::SignalConfig {
+                        client_config: tx5_signal::SbdClientConfig {
+                            allow_plain_text: true,
+                            ..Default::default()
+                        },
                         listener: true,
-                        allow_plain_text: true,
                         max_idle: std::time::Duration::from_secs(max_idle_secs),
                         ..Default::default()
                     }),

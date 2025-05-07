@@ -33,8 +33,11 @@ impl TestSrv {
             if let Ok(r) = SignalConnection::connect(
                 &format!("ws://{addr}"),
                 Arc::new(SignalConfig {
+                    client_config: SbdClientConfig {
+                        allow_plain_text: true,
+                        ..Default::default()
+                    },
                     listener: true,
-                    allow_plain_text: true,
                     ..Default::default()
                 }),
             )

@@ -7,6 +7,9 @@ pub struct Config {
     /// Allow plain text (non-tls) signal server connections.
     pub signal_allow_plain_text: bool,
 
+    /// Supply signal authentication material.
+    pub signal_auth_material: Option<Vec<u8>>,
+
     /// Initial webrtc peer connection config.
     pub initial_webrtc_config: WebRtcConfig,
 
@@ -55,8 +58,14 @@ pub struct Config {
 
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let signal_auth_material = if self.signal_auth_material.is_some() {
+            "some"
+        } else {
+            "none"
+        };
         f.debug_struct("Config")
             .field("signal_allow_plain_text", &self.signal_allow_plain_text)
+            .field("signal_auth_material", &signal_auth_material)
             .field("initial_webrtc_config", &self.initial_webrtc_config)
             .field("connection_count_max", &self.connection_count_max)
             .field("send_buffer_bytes_max", &self.send_buffer_bytes_max)
@@ -81,6 +90,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             signal_allow_plain_text: false,
+            signal_auth_material: None,
             initial_webrtc_config: WebRtcConfig::default(),
             connection_count_max: 4096,
             send_buffer_bytes_max: 64 * 1024,

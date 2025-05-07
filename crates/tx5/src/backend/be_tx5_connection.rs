@@ -123,8 +123,12 @@ pub async fn connect(
 ) -> Result<(DynBackEp, DynBackEpRecvCon)> {
     let webrtc_config = config.initial_webrtc_config.clone();
     let sig_config = tx5_connection::tx5_signal::SignalConfig {
+        client_config: tx5_connection::tx5_signal::SbdClientConfig {
+            allow_plain_text: config.signal_allow_plain_text,
+            auth_material: config.signal_auth_material.clone(),
+            ..Default::default()
+        },
         listener,
-        allow_plain_text: config.signal_allow_plain_text,
         //max_connections: config.connection_count_max as usize,
         max_idle: config.timeout,
         ..Default::default()

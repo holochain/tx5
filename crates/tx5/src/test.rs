@@ -580,3 +580,29 @@ async fn ep_broadcast_happy() {
     let (_, message) = ep3_recv.recv().await.unwrap();
     assert_eq!(&b"world"[..], &message);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ep_get_connected() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
+    let test = Test::new().await;
+
+    let ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config).await;
+
+    ep1.send(ep2.peer_url(), b"hello".to_vec()).await.unwrap();
+
+    let (from, msg) = ep2.recv().await.unwrap();
+    assert_eq!(ep1.peer_url(), from);
+    assert_eq!(&b"hello"[..], &msg);
+
+    let ep1_connected = ep1.get_connected_peer_addresses();
+    assert_eq!(1, ep1_connected.len());
+    assert_eq!(ep1_connected[0], ep2.peer_url());
+
+    let ep2_connected = ep2.get_connected_peer_addresses();
+    assert_eq!(1, ep2_connected.len());
+    assert_eq!(ep2_connected[0], ep1.peer_url());
+}

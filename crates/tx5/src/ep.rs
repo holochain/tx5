@@ -292,6 +292,17 @@ impl Endpoint {
             .collect()
     }
 
+    /// Get the list of peers (PeerUrls) that this endpoint is currently connected to.
+    pub fn get_connected_peer_addresses(&self) -> Vec<PeerUrl> {
+        self.inner
+            .lock()
+            .unwrap()
+            .peer_map
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
     /// Get stats.
     pub fn get_stats(&self) -> stats::Stats {
         let backend = match self.config.backend_module {

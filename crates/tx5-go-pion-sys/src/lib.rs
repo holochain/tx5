@@ -315,7 +315,6 @@ impl Api {
                     let msg =
                         std::slice::from_raw_parts(slot_b as *const u8, slot_c);
                     let msg = String::from_utf8_lossy(msg);
-                    println!("Got a trace message: {msg}");
                     match slot_a {
                         1 => tracing::trace!("{}", msg),
                         2 => tracing::debug!("{}", msg),

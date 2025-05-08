@@ -216,10 +216,7 @@ impl Endpoint {
             .lock()
             .unwrap()
             .assert_sig(sig_url, true, Some(s));
-        match r.await {
-            Ok(p) => Some(p),
-            _ => None,
-        }
+        (r.await).ok()
     }
 
     /// Request that the peer connection identified by the given `peer_url`

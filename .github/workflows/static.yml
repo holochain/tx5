@@ -2,13 +2,16 @@ name: Static Analysis
 on:
   merge_group:
     branches:
-      - 0.1.x-beta
+      - main
+      - 'release*'
   push:
     branches:
-      - 0.1.x-beta
+      - main
+      - 'release*'
   pull_request:
     branches:
-      - 0.1.x-beta
+      - main
+      - 'release*'
 jobs:
   static-analysis:
     runs-on: ${{ matrix.os }}

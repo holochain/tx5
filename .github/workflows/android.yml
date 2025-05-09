@@ -2,13 +2,16 @@ name: Android Test
 on:
   merge_group:
     branches:
-      - 0.1.x-beta
+      - main
+      - 'release*'
   push:
     branches:
-      - 0.1.x-beta
+      - main
+      - 'release*'
   pull_request:
     branches:
-      - 0.1.x-beta
+      - main
+      - 'release*'
 jobs:
   test:
     runs-on: ubuntu-latest

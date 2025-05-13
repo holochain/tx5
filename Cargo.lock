@@ -2320,9 +2320,9 @@ dependencies = [
 
 [[package]]
 name = "sbd-client"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b452ee98b4f998c06974eb8d76adb15c8ee690eee909502d97320b137004500"
+checksum = "b6fbb93bf789bd1a24deed43931e46d1280c1b97d343eba7e5db28890e2c419c"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -2343,9 +2343,9 @@ dependencies = [
 
 [[package]]
 name = "sbd-e2e-crypto-client"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80c29c3ca89b21e2ce97249cd0976ddd9190ebbb41b5ac7d97aad96c0bf493e5"
+checksum = "0d97d0056c4c2826c48b8bbd94b65e35234800cda25c3a636d9cd81b28e4a102"
 dependencies = [
  "bytes",
  "sbd-client",
@@ -2356,9 +2356,9 @@ dependencies = [
 
 [[package]]
 name = "sbd-server"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a04b28404386ab199a7a588eae490eefcdead523779db5b65e05562f1128123"
+checksum = "66c65a7965b49c516a8a779bbad378ad1077cfd631b56ed1340623f2158214f8"
 dependencies = [
  "anstyle",
  "axum",
@@ -2371,6 +2371,7 @@ dependencies = [
  "rand 0.8.5",
  "rustls",
  "rustls-pemfile",
+ "serde",
  "serde_json",
  "slab",
  "tokio",
@@ -3066,7 +3067,7 @@ dependencies = [
 
 [[package]]
 name = "tx5"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "criterion",
@@ -3086,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-connection"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "bit_field",
  "datachannel",
@@ -3106,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-core"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "app_dirs2",
  "base64",
@@ -3122,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-demo"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "clap",
@@ -3138,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "futures",
  "tokio",
@@ -3151,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-sys"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "Inflector",
  "base64",
@@ -3167,7 +3168,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-go-pion-turn"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "dirs",
@@ -3184,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-online"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "once_cell",
  "rand 0.8.5",
@@ -3195,7 +3196,7 @@ dependencies = [
 
 [[package]]
 name = "tx5-signal"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "rand 0.8.5",
  "sbd-e2e-crypto-client",

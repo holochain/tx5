@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::*;
 
 const DISCON: &[u8] = b"<<<test-disconnect>>>";
@@ -607,10 +609,9 @@ async fn ep_get_connected() {
     assert_eq!(ep2_connected[0], ep1.peer_url());
 }
 
-// Regression test to prevent dead locking a connection when a peer attempts to
-// connect to itself.
+// Prevent connecting to oneself.
 #[tokio::test(flavor = "multi_thread")]
-async fn connect_to_self_does_not_dead_lock() {
+async fn connect_to_self_fails() {
     let config = Arc::new(Config {
         signal_allow_plain_text: true,
         ..Default::default()
@@ -623,4 +624,36 @@ async fn connect_to_self_does_not_dead_lock() {
     ep1.send(ep1.peer_url(), message.to_vec())
         .await
         .unwrap_err();
+}
+
+// Regression test to prevent dead locking a connection when a peer connection fails.
+#[tokio::test(flavor = "multi_thread")]
+async fn connect_to_self_does_not_dead_lock() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
+    let test = Test::new().await;
+
+    let ep1 = test.ep(config.clone()).await;
+    let ep2 = test.ep(config).await;
+    let non_existing_peer_url = PeerUrl::parse(
+        "ws://127.0.0.1:1/YUx2ETC3-hkUNmNBaEbuxsnEWQDyL5WPX4i_h9eDk2s",
+    )
+    .unwrap();
+    let message = b"hello";
+
+    // Make two calls in parallel from ep1 - one that will time out because the peer
+    // does not exist, and the other to an existing peer.
+    // The timeout on the two parallel calls ensures that ep1 isn't locked while
+    // waiting for the first call.
+    let call_number = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+                _ = ep1.send(non_existing_peer_url, message.to_vec()) => 1, // This call will time out in 60 seconds.
+                _ = ep1.send(ep2.peer_url(), message.to_vec()) => 2, // This call should succeed immediately.
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(call_number, 2)
 }

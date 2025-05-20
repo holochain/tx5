@@ -10,15 +10,15 @@
 //! Tx5 can be backed currently by 1 of 2 backend webrtc libraries.
 //!
 //! - <b><i>`*`DEFAULT`*`</i></b> `backend-libdatachannel` - WebRTC library
-//!   writen in c++.
+//!   written in C++.
 //!   - [https://github.com/paullouisageneau/libdatachannel](https://github.com/paullouisageneau/libdatachannel)
 //! - `backend-go-pion` - The pion webrtc library
-//!   writen in go (golang).
+//!   written in Go (golang).
 //!   - [https://github.com/pion/webrtc](https://github.com/pion/webrtc)
 //!
 //! The go pion library was the original implementation, but as libdatachannel
 //! has reached stability, we have switched it over to be the default as
-//! it is much easier to write rust FFI bindings to c++ code than go code.
+//! it is much easier to write rust FFI bindings to C++ code than Go code.
 
 pub use tx5_connection::Tx5InitConfig;
 

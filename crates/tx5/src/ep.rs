@@ -232,6 +232,12 @@ impl Endpoint {
     /// The future returned from this method will resolve when
     /// the data is handed off to our networking backend.
     pub async fn send(&self, peer_url: PeerUrl, data: Vec<u8>) -> Result<()> {
+        let listening_addresses = self.get_listening_addresses();
+        if listening_addresses.iter().any(|url| peer_url == *url) {
+            return Err(Error::other(
+                "Endpoint trying to connect/send a message to itself",
+            ));
+        }
         tokio::time::timeout(self.config.timeout, async {
             let peer = self.inner.lock().unwrap().connect_peer(peer_url);
             peer.ready().await;

@@ -5,6 +5,21 @@
 //!
 //! Access the go-pion-webrtc api interface using the
 //! pub once_cell::sync::Lazy static [API] handle.
+//!
+//! WARNING - Only 1 single golang ffi binding is allowed per binary.
+//!           If you attempt to include a second one, you will end up
+//!           running 2 parallel garbage collectors that will step on
+//!           each other and crash your program.
+//!
+//! Golang ffi works better with static linking on platforms that support it.
+//!
+//! Unfortunately, we also must support dynamic linking for Android and Windows.
+//!
+//! Either way, the Go code exports two calls:
+//! - "OnEvent" allows the go code to emit events to the rust library
+//! - "Call" allows the rust libary to invoke functions within go
+//!
+//! Every api passes through one of these two iterfaces.
 
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
@@ -88,6 +103,8 @@ pub mod constants {
 }
 use constants::*;
 
+// If we are static linking, define the signatures exported by go
+// and convert them to be callable by rust.
 #[cfg(link_static)]
 mod static_lib {
     use super::*;
@@ -134,10 +151,12 @@ mod static_lib {
             LibInner
         }
 
+        /// Get the "OnEvent" function pointer.
         pub fn on_event_fn(&self) -> &OnEventSig {
             &(OnEvent as OnEventSig)
         }
 
+        /// Get the "Call" function pointer.
         pub fn call_fn(&self) -> &CallSig {
             &(Call as CallSig)
         }
@@ -147,6 +166,7 @@ mod static_lib {
 #[cfg(link_static)]
 use static_lib::*;
 
+// If we are dynamic linking, load the dll/so and hook into what it exports.
 #[cfg(link_dynamic)]
 mod dynamic_lib {
     use super::*;
@@ -230,10 +250,12 @@ mod dynamic_lib {
             .build()
         }
 
+        /// Get the "OnEvent" function pointer.
         pub fn on_event_fn(&self) -> &OnEventSig {
             self.borrow_on_event()
         }
 
+        /// Get the "Call" function pointer.
         pub fn call_fn(&self) -> &CallSig {
             self.borrow_call()
         }
@@ -287,6 +309,8 @@ impl Api {
         Self(unsafe { LibInner::priv_new() })
     }
 
+    /// Register an event handler to receive events emitted by Go code.
+    /// You should call this once before invoking any other API.
     pub unsafe fn on_event<Cb>(&self, cb: Cb)
     where
         Cb: Fn(Event) + 'static + Send + Sync,
@@ -416,6 +440,8 @@ impl Api {
         out
     }
 
+    /// Helper function translates a call_cb into a closure making it
+    /// easier to work with in rust.
     #[inline]
     unsafe fn call_inner<'lt, 'a, Cb>(
         &'lt self,
@@ -481,6 +507,7 @@ impl Api {
         })
     }
 
+    /// Free a buffer that had been created in go memory.
     #[inline]
     pub unsafe fn buffer_free(&self, id: BufferId) {
         self.0.call_fn()(
@@ -494,6 +521,8 @@ impl Api {
         );
     }
 
+    /// Access a go buffer. The memory accessible within the callback
+    /// is only available for the duration of this function call.
     #[inline]
     pub unsafe fn buffer_access<Cb, R>(&self, id: BufferId, cb: Cb) -> Result<R>
     where
@@ -512,6 +541,7 @@ impl Api {
         })
     }
 
+    /// Make sure the go buffer has given additional space reserved.
     #[inline]
     pub unsafe fn buffer_reserve(
         &self,
@@ -524,6 +554,7 @@ impl Api {
         })
     }
 
+    /// Extend the go buffer with given bytes.
     #[inline]
     pub unsafe fn buffer_extend(&self, id: BufferId, add: &[u8]) -> Result<()> {
         self.call(
@@ -539,6 +570,7 @@ impl Api {
         )
     }
 
+    /// Read "len" bytes from the given go buffer.
     #[inline]
     pub unsafe fn buffer_read<Cb, R>(
         &self,
@@ -562,6 +594,7 @@ impl Api {
         })
     }
 
+    /// Allocate a new peer connection.
     #[inline]
     pub unsafe fn peer_con_alloc(
         &self,
@@ -573,6 +606,7 @@ impl Api {
         })
     }
 
+    /// Free the given peer connection.
     #[inline]
     pub unsafe fn peer_con_free(&self, id: PeerConId) {
         self.0.call_fn()(
@@ -586,6 +620,7 @@ impl Api {
         );
     }
 
+    /// Get stats for the given peer connection.
     #[inline]
     pub unsafe fn peer_con_stats(&self, id: PeerConId) -> Result<BufferId> {
         self.call(TY_PEER_CON_STATS, id, 0, 0, 0, |r| match r {
@@ -594,6 +629,7 @@ impl Api {
         })
     }
 
+    /// Call create offer on the given peer connection.
     #[inline]
     pub unsafe fn peer_con_create_offer(
         &self,
@@ -613,6 +649,7 @@ impl Api {
         )
     }
 
+    /// Call create answer on the given peer connection.
     #[inline]
     pub unsafe fn peer_con_create_answer(
         &self,
@@ -627,6 +664,7 @@ impl Api {
         })
     }
 
+    /// Set a local description on the given peer connection.
     #[inline]
     pub unsafe fn peer_con_set_local_desc(
         &self,
@@ -646,6 +684,7 @@ impl Api {
         )
     }
 
+    /// Set a remote description on the given peer connection.
     #[inline]
     pub unsafe fn peer_con_set_rem_desc(
         &self,
@@ -665,6 +704,7 @@ impl Api {
         )
     }
 
+    /// Add an ice candidate to the given peer connection.
     #[inline]
     pub unsafe fn peer_con_add_ice_candidate(
         &self,
@@ -679,6 +719,7 @@ impl Api {
         })
     }
 
+    /// Create a data channel on the given peer connection.
     #[inline]
     pub unsafe fn peer_con_create_data_chan(
         &self,
@@ -693,6 +734,7 @@ impl Api {
         })
     }
 
+    /// Free a data channel.
     #[inline]
     pub unsafe fn data_chan_free(&self, id: DataChanId) {
         self.0.call_fn()(
@@ -706,6 +748,7 @@ impl Api {
         );
     }
 
+    /// Get the ready state of the given data channel.
     #[inline]
     pub unsafe fn data_chan_ready_state(
         &self,
@@ -717,6 +760,7 @@ impl Api {
         })
     }
 
+    /// Get the label of the given data channel.
     #[inline]
     pub unsafe fn data_chan_label(&self, id: DataChanId) -> Result<BufferId> {
         self.call(TY_DATA_CHAN_LABEL, id, 0, 0, 0, |r| match r {
@@ -725,6 +769,7 @@ impl Api {
         })
     }
 
+    /// Send data over the given data channel.
     #[inline]
     pub unsafe fn data_chan_send(
         &self,
@@ -737,6 +782,7 @@ impl Api {
         })
     }
 
+    /// Set a buffer amount threshold on the given data channel.
     #[inline]
     pub unsafe fn data_chan_set_buffered_amount_low_threshold(
         &self,
@@ -756,6 +802,7 @@ impl Api {
         )
     }
 
+    /// Get the current buffered amount on the given data channel.
     #[inline]
     pub unsafe fn data_chan_buffered_amount(
         &self,

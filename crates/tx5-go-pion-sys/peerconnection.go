@@ -22,6 +22,7 @@ type PeerCon struct {
 	handle UintPtrT
 }
 
+// Free a peer connection
 func (peerCon *PeerCon) Free() {
 	peerCon.mu.Lock()
 	defer peerCon.mu.Unlock()
@@ -42,6 +43,7 @@ type PeerConConfig struct {
 	Certificates []string           `json:"certificates,omitempty"`
 }
 
+// Allocate a peer connection.
 func CallPeerConAlloc(
 	config_buf_id UintPtrT,
 	response_cb MessageCb,
@@ -186,12 +188,14 @@ func CallPeerConAlloc(
 	)
 }
 
+// Free a peer connection.
 func CallPeerConFree(peer_con_id UintPtrT) {
 	hnd := cgo.Handle(peer_con_id)
 	peerCon := hnd.Value().(*PeerCon)
 	peerCon.Free()
 }
 
+// Get stats from a peer connection.
 func CallPeerConStats(
 	peer_con_id UintPtrT,
 	response_cb MessageCb,
@@ -232,6 +236,7 @@ func CallPeerConStats(
 	)
 }
 
+// Create an offer on a peer connection.
 func CallPeerConCreateOffer(
 	peer_con_id UintPtrT,
 	config_buf_id UintPtrT,
@@ -283,6 +288,7 @@ func CallPeerConCreateOffer(
 	)
 }
 
+// Create an answer on a peer connection.
 func CallPeerConCreateAnswer(
 	peer_con_id UintPtrT,
 	config_buf_id UintPtrT,
@@ -334,6 +340,7 @@ func CallPeerConCreateAnswer(
 	)
 }
 
+// Set a local description on a peer connection.
 func CallPeerConSetLocalDesc(
 	peer_con_id UintPtrT,
 	desc_buf_id UintPtrT,
@@ -377,6 +384,7 @@ func CallPeerConSetLocalDesc(
 	)
 }
 
+// Set a remote description on a peer connection.
 func CallPeerConSetRemDesc(
 	peer_con_id UintPtrT,
 	desc_buf_id UintPtrT,
@@ -420,6 +428,7 @@ func CallPeerConSetRemDesc(
 	)
 }
 
+// Add an ice candidate to a peer connection.
 func CallPeerConAddICECandidate(
 	peer_con_id UintPtrT,
 	ice_buf_id UintPtrT,
@@ -473,6 +482,7 @@ type DataChanConfig struct {
 	Init  *DataChanInit `json:"init,omitempty"`
 }
 
+// Create a data channel on a peer connection.
 func CallPeerConCreateDataChan(
 	peer_con_id UintPtrT,
 	config_buf_id UintPtrT,

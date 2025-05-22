@@ -33,6 +33,7 @@ func NewBuffer(initBuf []byte) *Buffer {
 	return buf
 }
 
+// Make sure your mutex is locked before invoking this.
 func (buf *Buffer) FreeAlreadyLocked() {
 	if buf.closed {
 		return
@@ -42,6 +43,7 @@ func (buf *Buffer) FreeAlreadyLocked() {
 	(cgo.Handle)(buf.handle).Delete()
 }
 
+// Allocate a new buffer.
 func CallBufferAlloc(
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
@@ -58,6 +60,7 @@ func CallBufferAlloc(
 	)
 }
 
+// Free a buffer.
 func CallBufferFree(id UintPtrT) {
 	buf := BufferFromPtr(id)
 	buf.mu.Lock()
@@ -66,6 +69,7 @@ func CallBufferFree(id UintPtrT) {
 	buf.FreeAlreadyLocked()
 }
 
+// Gain access to the buffer data within a callback.
 func CallBufferAccess(
 	id UintPtrT,
 	response_cb MessageCb,
@@ -105,6 +109,7 @@ func CallBufferAccess(
 	)
 }
 
+// Reserve data in a buffer.
 func CallBufferReserve(
 	id UintPtrT,
 	add UintPtrT,
@@ -132,6 +137,7 @@ func CallBufferReserve(
 	)
 }
 
+// Extend a buffer with a byte array.
 func CallBufferExtend(
 	id UintPtrT,
 	data UintPtrT,
@@ -163,6 +169,7 @@ func CallBufferExtend(
 	)
 }
 
+// Read data from a buffer.
 func CallBufferRead(
 	id UintPtrT,
 	cnt UintPtrT,

@@ -23,6 +23,7 @@ impl HubMap {
     }
 }
 
+/// Insert or update a peer connection in the hub.
 async fn hub_map_assert(
     webrtc_config: &Arc<Mutex<WebRtcConfig>>,
     is_polite: bool,
@@ -34,6 +35,7 @@ async fn hub_map_assert(
 ) -> Result<(Option<ConnRecv>, Arc<Conn>, CloseSend<ConnCmd>)> {
     let mut found_during_prune = None;
 
+    // remove anything that has been dropped
     map.retain(|_, c| {
         if let Some(conn) = c.0.upgrade() {
             let cmd_send = c.1.clone();
@@ -46,6 +48,8 @@ async fn hub_map_assert(
         }
     });
 
+    // if we happened to find what we were looking for
+    // (that is still valid) in the prune loop above, short circuit here.
     if let Some((conn, cmd_send)) = found_during_prune {
         return Ok((None, conn, cmd_send));
     }
@@ -137,6 +141,7 @@ impl Hub {
 
         let (hub_cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
 
+        // forward received messages to the cmd task
         let hub_cmd_send2 = hub_cmd_send.clone();
         task_list.push(tokio::task::spawn(async move {
             while let Some((pub_key, msg)) = recv.recv_message().await {
@@ -152,6 +157,7 @@ impl Hub {
             let _ = hub_cmd_send2.send(HubCmd::Close).await;
         }));
 
+        // the cmd task is the main event loop of the hub logic
         let webrtc_config2 = webrtc_config.clone();
         let (conn_send, conn_recv) = tokio::sync::mpsc::channel(32);
         let weak_client = Arc::downgrade(&client);
@@ -168,6 +174,8 @@ impl Hub {
                                 // ignore self messages
                                 continue;
                             }
+
+                            // assert a connection for this message
                             let is_polite = pub_key > this_pub_key;
                             let (recv, conn, cmd_send) = match hub_map_assert(
                                 &webrtc_config2,
@@ -189,7 +197,12 @@ impl Hub {
                                 }
                                 Ok(r) => r,
                             };
+
+                            // then forward it along
                             let _ = cmd_send.send(ConnCmd::SigRecv(msg)).await;
+
+                            // if this opened a new connection,
+                            // send that event too
                             if let Some(recv) = recv {
                                 let _ = conn_send.send((conn, recv)).await;
                             }
@@ -198,6 +211,8 @@ impl Hub {
                         }
                     }
                     HubCmd::Connect { pub_key, resp } => {
+                        // user requested a connect without a message to send
+
                         if pub_key == this_pub_key {
                             let _ = resp.send(Err(Error::other(
                                 "cannot connect to self",
@@ -224,6 +239,8 @@ impl Hub {
                         }
                     }
                     HubCmd::Disconnect(pub_key) => {
+                        // disconnect from a remote peer
+
                         if let Some(client) = weak_client.upgrade() {
                             let _ = client.close_peer(&pub_key).await;
                         } else {

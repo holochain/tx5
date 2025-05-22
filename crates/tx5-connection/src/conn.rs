@@ -76,6 +76,7 @@ impl Conn {
     ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
         netaudit!(DEBUG, ?webrtc_config, ?pub_key, ?is_polite, a = "open",);
 
+        // set up some metrics
         let is_webrtc = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let send_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let send_byte_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -88,6 +89,7 @@ impl Conn {
         let (mut msg_send, msg_recv) = CloseSend::sized_channel(1024);
         let (cmd_send, cmd_recv) = CloseSend::sized_channel(1024);
 
+        // signal keepalive task
         let keepalive_dur = config.signal_config.max_idle / 2;
         let client2 = client.clone();
         let pub_key2 = pub_key.clone();
@@ -107,6 +109,7 @@ impl Conn {
 
         msg_send.set_close_on_drop(true);
 
+        // con_task is the main event loop for a connection
         let con_task_fut = con_task(
             is_polite,
             webrtc_config,
@@ -423,6 +426,7 @@ async fn con_task_attempt_webrtc(
         return Fallback(task_core);
     }
 
+    // receive webrtc commands
     while let Some(cmd) = recv_cmd(&mut task_core).await {
         use tx5_signal::SignalMessage::*;
         use webrtc::WebrtcEvt::*;

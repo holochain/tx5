@@ -1,14 +1,13 @@
 name: Android Test
+
 on:
-  merge_group:
-    branches:
-      - main
   push:
     branches:
       - main
   pull_request:
     branches:
       - main
+
 jobs:
   test:
     runs-on: ubuntu-latest

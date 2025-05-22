@@ -5,6 +5,8 @@ enum MaybeReady {
     Wait(Arc<tokio::sync::Semaphore>),
 }
 
+/// Manage a backend signal connection. This is actually represented
+/// by the tx5-connection "Hub" type.
 pub(crate) struct Sig {
     pub(crate) listener: bool,
     pub(crate) sig_url: SigUrl,
@@ -31,6 +33,7 @@ impl Sig {
             let wait = Arc::new(tokio::sync::Semaphore::new(0));
             let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
 
+            // spawn the main event-loop for the signal connection
             let task = tokio::task::spawn(task(
                 ep,
                 this.clone(),
@@ -51,6 +54,7 @@ impl Sig {
         })
     }
 
+    /// This future resolves when the signal connection is ready to be used.
     pub async fn ready(&self) {
         let w = match &*self.ready.lock().unwrap() {
             MaybeReady::Ready(_) => return,
@@ -60,6 +64,7 @@ impl Sig {
         let _ = w.acquire().await;
     }
 
+    /// Get the address at which this peer will be reachable.
     pub fn get_peer_url(&self) -> Option<PeerUrl> {
         match &*self.ready.lock().unwrap() {
             MaybeReady::Wait(_) => None,
@@ -69,6 +74,7 @@ impl Sig {
         }
     }
 
+    /// Attempt to establish a connection to a remote peer.
     pub async fn connect(&self, pub_key: PubKey) -> Result<DynBackWaitCon> {
         let ep = match &*self.ready.lock().unwrap() {
             MaybeReady::Ready(h) => h.clone(),
@@ -78,6 +84,7 @@ impl Sig {
     }
 }
 
+/// Loop attempting to establish a signal connection.
 async fn connect_loop(
     config: Arc<Config>,
     sig_url: SigUrl,
@@ -132,6 +139,7 @@ async fn connect_loop(
     }
 }
 
+/// Helper guard for performing cleanup if the signal event loop task closes.
 struct DropSig {
     inner: Weak<Mutex<EpInner>>,
     sig_url: SigUrl,
@@ -158,6 +166,7 @@ impl Drop for DropSig {
     }
 }
 
+/// This is the main event-loop task for the signal connection
 #[allow(clippy::too_many_arguments)]
 async fn task(
     inner: Weak<Mutex<EpInner>>,
@@ -169,6 +178,7 @@ async fn task(
     ready: Arc<Mutex<MaybeReady>>,
     resp_url: Option<tokio::sync::oneshot::Sender<PeerUrl>>,
 ) {
+    // establish our drop-guard incase this task is aborted or exits
     let mut drop_g = DropSig {
         inner: inner.clone(),
         sig_url: sig_url.clone(),
@@ -176,12 +186,16 @@ async fn task(
         sig: this,
     };
 
+    // create a connection to the signal server (tx5-connection "Hub").
     let (ep, mut ep_recv) =
         connect_loop(config.clone(), sig_url.clone(), listener, resp_url).await;
 
+    // get our url
     let local_url = sig_url.to_peer(ep.pub_key().clone());
     drop_g.local_url = Some(local_url.clone());
 
+    // mark ourselves as ready and store a handle
+    // that will be used for establishing outgoing connections
     {
         let mut lock = ready.lock().unwrap();
         if let MaybeReady::Wait(w) = &*lock {
@@ -190,9 +204,11 @@ async fn task(
         *lock = MaybeReady::Ready(ep);
     }
 
+    // now notify that we are ready
     drop(ready);
 
     if listener {
+        // if we are a listener, emit the listening event
         let _ = evt_send
             .send(EndpointEvent::ListeningAddressOpen {
                 local_url: local_url.clone(),
@@ -208,6 +224,8 @@ async fn task(
         a = "connected",
     );
 
+    // now, our only task is to listen for incoming connections
+    // and process them
     while let Some(wc) = ep_recv.recv().await {
         if let Some(inner) = inner.upgrade() {
             let peer_url = sig_url.to_peer(wc.pub_key().clone());
@@ -227,6 +245,7 @@ async fn task(
     tokio::time::sleep(config.backoff_start).await;
 
     if listener {
+        // we are closing. If we are a listener, notify the fact
         let _ = evt_send
             .send(EndpointEvent::ListeningAddressClosed {
                 local_url: local_url.clone(),
@@ -241,4 +260,6 @@ async fn task(
         t = "signal",
         a = "closed",
     );
+
+    // all other cleanup is handled by the drop guard
 }

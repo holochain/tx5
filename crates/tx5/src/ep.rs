@@ -86,6 +86,7 @@ pub(crate) struct EpInner {
 }
 
 impl EpInner {
+    /// In case a signal connection is closed, clean up our references to it.
     pub fn drop_sig(&mut self, sig: Arc<Sig>) {
         let sig_url = sig.sig_url.clone();
         let listener = sig.listener;
@@ -104,6 +105,7 @@ impl EpInner {
         }
     }
 
+    /// Get an existing signal connection or create a new one.
     pub fn assert_sig(
         &mut self,
         sig_url: SigUrl,
@@ -125,10 +127,12 @@ impl EpInner {
             .clone()
     }
 
+    /// In case a peer connection is closed, clean up our references to it.
     pub fn drop_peer_url(&mut self, peer_url: &PeerUrl) {
         self.peer_map.remove(peer_url);
     }
 
+    /// Get an existing peer connection or create a new outgoing one.
     pub fn connect_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
         if let Some(peer) = self.peer_map.get(&peer_url) {
             return peer.clone();
@@ -148,6 +152,7 @@ impl EpInner {
             .clone()
     }
 
+    /// Get an existing peer connection or accept an incoming one.
     pub fn accept_peer(&mut self, peer_url: PeerUrl, wc: DynBackWaitCon) {
         self.peer_map.entry(peer_url.clone()).or_insert_with(|| {
             Peer::new_accept(
@@ -161,6 +166,7 @@ impl EpInner {
         });
     }
 
+    /// Get all open peer connections.
     pub fn clone_peers(&mut self) -> Vec<Arc<Peer>> {
         self.peer_map.values().cloned().collect()
     }

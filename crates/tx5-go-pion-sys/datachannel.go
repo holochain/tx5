@@ -89,6 +89,7 @@ func NewDataChan(ch *webrtc.DataChannel) *DataChan {
 	return dataChan
 }
 
+// Free a data channel.
 func (dataChan *DataChan) Free() {
 	dataChan.mu.Lock()
 	defer dataChan.mu.Unlock()
@@ -104,12 +105,14 @@ func (dataChan *DataChan) Free() {
 	dataChan.ch = nil
 }
 
+// Free a data channel.
 func CallDataChanFree(data_chan_id UintPtrT) {
 	hnd := cgo.Handle(data_chan_id)
 	dataChan := hnd.Value().(*DataChan)
 	dataChan.Free()
 }
 
+// Get the label of a data channel.
 func CallDataChanLabel(
 	data_chan_id UintPtrT,
 	response_cb MessageCb,
@@ -137,6 +140,7 @@ func CallDataChanLabel(
 	)
 }
 
+// Get the ready state of a data channel.
 func CallDataChanReadyState(
 	data_chan_id UintPtrT,
 	response_cb MessageCb,
@@ -164,6 +168,7 @@ func CallDataChanReadyState(
 	)
 }
 
+// Set the buffer threshold of a data channel.
 func CallDataChanSetBufferedAmountLowThreshold(
 	data_chan_id UintPtrT,
 	threshold UintPtrT,
@@ -194,6 +199,7 @@ func CallDataChanSetBufferedAmountLowThreshold(
 	)
 }
 
+// Get the current buffered amount of a data channel.
 func CallDataChanBufferedAmount(
 	data_chan_id UintPtrT,
 	response_cb MessageCb,
@@ -221,6 +227,7 @@ func CallDataChanBufferedAmount(
 	)
 }
 
+// Send data over a data channel.
 func CallDataChanSend(
 	data_chan_id UintPtrT,
 	buffer_id UintPtrT,

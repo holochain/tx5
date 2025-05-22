@@ -18,10 +18,12 @@
     any(target_os = "macos", target_os = "ios", target_os = "tvos"),
     link(name = "CoreFoundation", kind = "framework")
 )]
+extern "C" {}
 #[cfg_attr(
     any(target_os = "macos", target_os = "ios", target_os = "tvos"),
     link(name = "Security", kind = "framework")
 )]
+extern "C" {}
 #[cfg_attr(
     any(target_os = "macos", target_os = "ios", target_os = "tvos"),
     link(name = "resolv")

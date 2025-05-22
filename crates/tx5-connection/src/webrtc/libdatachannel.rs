@@ -22,6 +22,7 @@ enum Cmd {
     Error(std::io::Error),
 }
 
+/// Data channel handler.
 struct Dch(CloseSend<Cmd>);
 
 impl datachannel::DataChannelHandler for Dch {
@@ -58,6 +59,7 @@ impl datachannel::DataChannelHandler for Dch {
     */
 }
 
+/// Peer connection handler.
 struct Pch(CloseSend<Cmd>);
 
 impl datachannel::PeerConnectionHandler for Pch {
@@ -88,6 +90,7 @@ impl datachannel::PeerConnectionHandler for Pch {
     }
 }
 
+/// Libdatachannel backed webrtc implementation.
 pub struct Webrtc {
     cmd_send: CloseSend<Cmd>,
     _task: AbortTask<()>,
@@ -95,6 +98,7 @@ pub struct Webrtc {
 }
 
 impl Webrtc {
+    /// Construct a new libdatachannel backed webrtc implementation.
     #[allow(clippy::new_ret_no_self)]
     #[allow(clippy::needless_return)]
     pub fn new(
@@ -102,9 +106,11 @@ impl Webrtc {
         config: WebRtcConfig,
         send_buffer: usize,
     ) -> (DynWebrtc, CloseRecv<WebrtcEvt>) {
+        // make some of the library calls faster by preloading once
         static PRELOAD: std::sync::Once = std::sync::Once::new();
         PRELOAD.call_once(datachannel::preload);
 
+        // initialize tracing once
         static INIT_TRACING: std::sync::Once = std::sync::Once::new();
         INIT_TRACING.call_once(|| {
             use tracing::event_enabled;
@@ -139,6 +145,7 @@ impl Webrtc {
         let (mut cmd_send, cmd_recv) = CloseSend::sized_channel(1024);
         let (mut evt_send, evt_recv) = CloseSend::sized_channel(1024);
 
+        // spawn the background task
         let task = tokio::task::spawn(task(
             is_polite,
             config,
@@ -163,6 +170,7 @@ impl Webrtc {
 
 impl super::Webrtc for Webrtc {
     fn in_offer(&self, offer: Vec<u8>) -> BoxFuture<'_, Result<()>> {
+        // forward the offer to our task
         Box::pin(async move {
             self.cmd_send
                 .send_or_close(Cmd::InOffer(offer))
@@ -171,6 +179,7 @@ impl super::Webrtc for Webrtc {
     }
 
     fn in_answer(&self, answer: Vec<u8>) -> BoxFuture<'_, Result<()>> {
+        // forward the answer to our task
         Box::pin(async move {
             self.cmd_send
                 .send_or_close(Cmd::InAnswer(answer))
@@ -179,6 +188,7 @@ impl super::Webrtc for Webrtc {
     }
 
     fn in_ice(&self, ice: Vec<u8>) -> BoxFuture<'_, Result<()>> {
+        // forward the ice candidate to our task
         Box::pin(async move {
             self.cmd_send
                 .send_or_close(Cmd::InIce(ice))
@@ -187,6 +197,7 @@ impl super::Webrtc for Webrtc {
     }
 
     fn message(&self, message: Vec<u8>) -> BoxFuture<'_, Result<()>> {
+        // forward the message to our task and await it actually being sent
         Box::pin(async move {
             tracing::trace!(byte_len = message.len(), "datachannel queue send");
             let (s, r) = tokio::sync::oneshot::channel();
@@ -227,6 +238,7 @@ async fn task_err(
 
     let init_config = tx5_core::Tx5InitConfig::get();
 
+    // set up the webrtc config
     // TODO - max_message_size?
     let config = datachannel::RtcConfig::new::<String>(
         &config
@@ -242,6 +254,8 @@ async fn task_err(
     })
     .port_range_begin(init_config.ephemeral_udp_port_min)
     .port_range_end(init_config.ephemeral_udp_port_max);
+
+    // create the actual peer connection, passing in our handler
     let mut peer =
         datachannel::RtcPeerConnection::new(&config, Pch(cmd_send.clone()))
             .map_err(map_err("constructing peer connection"))?;
@@ -250,7 +264,9 @@ async fn task_err(
     let mut did_handshake = false;
     let mut pend_buffer = Vec::new();
 
+    // if we are the impolite node, create the datachannel and be the offerer
     if !is_polite {
+        // create a datachannel, passing in our handler
         let mut d = peer
             .create_data_channel("data", Dch(cmd_send.clone()))
             .map_err(map_err("creating data channel"))?;
@@ -261,6 +277,7 @@ async fn task_err(
             .map_err(map_err("setting local desc to offer"))?;
     }
 
+    // loop on incoming commands
     loop {
         let cmd = match cmd_recv.recv().await {
             None => break,
@@ -269,6 +286,7 @@ async fn task_err(
 
         match cmd {
             Cmd::InOffer(o) => {
+                // only polite nodes should receive offers
                 if is_polite && !did_handshake {
                     let o: datachannel::SessionDescription =
                         serde_json::from_slice(&o)
@@ -283,6 +301,7 @@ async fn task_err(
                 }
             }
             Cmd::InAnswer(a) => {
+                // only impolite nodes should receive answers
                 if !is_polite && !did_handshake {
                     let a: datachannel::SessionDescription =
                         serde_json::from_slice(&a)
@@ -293,6 +312,7 @@ async fn task_err(
                 }
             }
             Cmd::InIce(i) => {
+                // all nodes receive trickle ice candidates from the remote peer
                 let i: datachannel::IceCandidate =
                     serde_json::from_slice(&i)
                         .map_err(map_err("deserializing remote candidate"))?;
@@ -306,21 +326,27 @@ async fn task_err(
                 }
             }
             Cmd::GeneratedIce(ice) => {
+                // as libdatachannel generates candidates,
+                // forward them to our remote peer
                 evt_send.send_or_close(WebrtcEvt::GeneratedIce(
                     serde_json::to_string(&ice)?.into_bytes(),
                 ))?;
             }
             Cmd::DataChan(mut d) => {
+                // the polite peer should receive the data channel
+                // that was created by the impolite one.
                 if data.is_none() {
                     d.set_buffered_amount_low_threshold(send_buffer).map_err(
                         map_err("setting buffer low threshold (in)"),
                     )?;
                     data = Some(d);
                 } else {
+                    // we cannot proceed if a datachannel was created in error
                     return Err(std::io::Error::other("duplicate data chan"));
                 }
             }
             Cmd::SendMessage(msg, resp) => {
+                // send an outgoing message over the data channel
                 if let Some(d) = &mut data {
                     d.send(&msg).map_err(map_err("sending message"))?;
                     let amt = d.buffered_amount();
@@ -329,6 +355,10 @@ async fn task_err(
                         buffer_amt = amt,
                         "datachannel sent"
                     );
+
+                    // Depending on how much is buffered, either drop the resp
+                    // (i.e. allow new messages to be sent), or queue it up
+                    // to be dropped when we get a BufferedAmountLow event.
                     if amt <= send_buffer {
                         drop(resp);
                         pend_buffer.clear();
@@ -340,15 +370,18 @@ async fn task_err(
                 }
             }
             Cmd::RecvMessage(msg) => {
+                // If we receive a message, send it to the evt receiver.
                 evt_send.send_or_close(WebrtcEvt::Message(msg))?;
             }
             Cmd::RecvDescription(desc) => match desc.sdp_type {
                 datachannel::SdpType::Offer => {
+                    // send the offer to our remote peer
                     evt_send.send_or_close(WebrtcEvt::GeneratedOffer(
                         serde_json::to_string(&desc)?.into_bytes(),
                     ))?;
                 }
                 datachannel::SdpType::Answer => {
+                    // send the answer to our remote peer
                     evt_send.send_or_close(WebrtcEvt::GeneratedAnswer(
                         serde_json::to_string(&desc)?.into_bytes(),
                     ))?;
@@ -360,9 +393,12 @@ async fn task_err(
                 }
             },
             Cmd::DataChanOpen => {
+                // Mark the instance as ready to send/receive
                 evt_send.send_or_close(WebrtcEvt::Ready)?;
             }
             Cmd::BufferedAmountLow => {
+                // notify any pending sends that their data has been sent
+                // (or at least handed off to the backend)
                 pend_buffer.clear();
             }
             Cmd::Error(err) => return Err(err),

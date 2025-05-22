@@ -22,6 +22,16 @@ impl FramedConnRecv {
 
 /// A framed wrapper that can send and receive larger messages than
 /// the base connection.
+///
+/// If a message is under the frame limit, it is just sent.
+///
+/// If a message is OVER the frame limit, we instead request a permit
+/// to send the frame count to the remote peer. We only begin sending frames
+/// once we receive the permit to do so.
+///
+/// This allows individual peers to throttle the amount of pending-completion
+/// message memory they are allocating by only issuing permits up to a
+/// configured memory threshold.
 pub struct FramedConn {
     pub_key: PubKey,
     weak_conn: Weak<Conn>,
@@ -47,12 +57,14 @@ impl FramedConn {
     ) -> Result<(Self, FramedConnRecv)> {
         conn.ready().await;
 
+        // send the protocol header
         let (a, b, c, d) = crate::proto::PROTO_VER_2.encode()?;
         conn.send(vec![a, b, c, d]).await?;
 
         let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
         let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
 
+        // set up the recieve to just feed straight into the cmd task
         let cmd_send2 = cmd_send.clone();
         let recv_task = tokio::task::spawn(async move {
             while let Some(msg) = conn_recv.recv().await {
@@ -66,10 +78,13 @@ impl FramedConn {
 
         let pub_key = conn.pub_key().clone();
 
+        // set up the cmd task.
+        // this is the main event loop of the framed wrapper
         let pub_key2 = pub_key.clone();
         let cmd_send2 = cmd_send.clone();
         let weak_conn = Arc::downgrade(&conn);
         let cmd_task = tokio::task::spawn(async move {
+            // init the stateful protocol decoder
             let mut dec = crate::proto::ProtoDecoder::default();
 
             while let Some(cmd) = cmd_recv.recv().await {
@@ -80,6 +95,7 @@ impl FramedConn {
                             Err(_) => break,
                             Ok(Idle) => (),
                             Ok(Message(msg)) => {
+                                // received a message, forward to receiver
                                 tracing::trace!(
                                     target: "NETAUDIT",
                                     pub_key = ?pub_key2,
@@ -92,6 +108,10 @@ impl FramedConn {
                                 }
                             }
                             Ok(RemotePermitRequest(permit_len)) => {
+                                // receive a permit request,
+                                // await the semaphore outside this loop,
+                                // the semaphore permits will be issued
+                                // in the order the request come in
                                 let recv_limit = recv_limit.clone();
                                 let cmd_send = cmd_send2.clone();
                                 // fire and forget
@@ -115,18 +135,32 @@ impl FramedConn {
                         await_registered,
                         got_permit,
                     } => {
+                        // register a oneshot to be triggered when a
+                        // permit request is responded to
+
+                        // we register the oneshot request with the
+                        // stateful decoder
                         if dec
                             .sent_remote_permit_request(Some(got_permit))
                             .is_err()
                         {
                             break;
                         }
+
+                        // we also notify the caller that we registered it
                         let _ = await_registered.send(());
                     }
                     Cmd::RemotePermit(permit, permit_len) => {
+                        // our semaphore has granted a permit for the
+                        // remote peer to begin sending us data
+                        // now we need to notify them of that fact
+
+                        // our stateful decoder also needs to know about it
                         if dec.sent_remote_permit_grant(permit).is_err() {
                             break;
                         }
+
+                        // now notify our peer
                         if let Some(conn) = weak_conn.upgrade() {
                             let (a, b, c, d) =
                                 match crate::proto::ProtoHeader::PermitGrant(
@@ -213,20 +247,26 @@ impl FramedConn {
         }
     }
 
+    /// Helper to do the sending, breaking up the messages if needed and
+    /// awaiting the permit before sending broken up messages.
     async fn send_inner(&self, msg: Vec<u8>) -> Result<()> {
         let conn = self.conn.lock().await;
 
         match crate::proto::proto_encode(&msg)? {
             crate::proto::ProtoEncodeResult::OneMessage(msg) => {
+                // it's a small message, just send it as one chunk
                 conn.send(msg).await?;
             }
             crate::proto::ProtoEncodeResult::NeedPermit {
                 permit_req,
                 msg_payload,
             } => {
+                // it's a big message, we've got chunks
+
                 let (s_reg, r_reg) = tokio::sync::oneshot::channel();
                 let (s_perm, r_perm) = tokio::sync::oneshot::channel();
 
+                // coordinate with the cmd task that we need a permit
                 self.cmd_send
                     .send(Cmd::AwaitPermit {
                         await_registered: s_reg,
@@ -235,12 +275,16 @@ impl FramedConn {
                     .await
                     .map_err(|_| Error::other("closed"))?;
 
+                // wait for the want permit to be registered
                 r_reg.await.map_err(|_| Error::other("closed"))?;
 
+                // send the permit request
                 conn.send(permit_req).await?;
 
+                // wait for the permit to be authorized by the peer
                 r_perm.await.map_err(|_| Error::other("closed"))?;
 
+                // send the chunked messages
                 for msg in msg_payload {
                     conn.send(msg).await?;
                 }

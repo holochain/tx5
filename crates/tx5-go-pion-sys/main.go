@@ -1,5 +1,8 @@
 package main
 
+// The following may look like a comment, but it is built into the cgo output.
+// DO NOT CHANGE unless you are actually trying to change the C interface.
+
 /*
 #include <stdint.h>
 #include <stdlib.h>
@@ -48,21 +51,28 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
+// Extract a cgo type from our cgo ffi interface.
 type UintPtrT = C.uintptr_t
+
+// Extract a cgo type from our cgo ffi interface.
 type MessageCb = C.MessageCb
 
+// Type conversion helper.
 func VoidStarToPtrT(v unsafe.Pointer) UintPtrT {
 	return C.void_star_to_ptr_t(v)
 }
 
+// Type conversion helper.
 func PtrToVoidStar(ptr UintPtrT) unsafe.Pointer {
 	return C.ptr_to_void_star(ptr)
 }
 
+// Type conversion helper.
 func PtrToCharStar(ptr UintPtrT) *byte {
 	return (*byte)(C.ptr_to_void_star(ptr))
 }
 
+// Read bytes from an unmanaged memory location into go gc-ed memory.
 func LoadBytesSafe(ptr UintPtrT, length UintPtrT) *bytes.Buffer {
 	raw := unsafe.Slice(PtrToCharStar(ptr), length)
 
@@ -72,6 +82,7 @@ func LoadBytesSafe(ptr UintPtrT, length UintPtrT) *bytes.Buffer {
 	return buf
 }
 
+// Set up a custom logger that will forward over the "OnEvent" callback.
 type customLogger struct{}
 
 func (c customLogger) Trace(msg string) {
@@ -111,9 +122,13 @@ func (c customLoggerFactory) NewLogger(subsystem string) logging.LeveledLogger {
 	return customLogger{}
 }
 
+// Mutex for our webrtc api.
 var webrtcApiMu sync.Mutex
+
+// Configurable webrtc api.
 var webrtcApi *webrtc.API
 
+// Set the api respecting the mutex.
 func setWebrtcApi(api *webrtc.API) {
 	if api == nil {
 		panic("CannotSetWebrtcApiToNil")
@@ -126,6 +141,7 @@ func setWebrtcApi(api *webrtc.API) {
 	webrtcApi = api
 }
 
+// Get the api respecting the mutex.
 func getWebrtcApi() *webrtc.API {
 	webrtcApiMu.Lock()
 	defer webrtcApiMu.Unlock()
@@ -135,6 +151,7 @@ func getWebrtcApi() *webrtc.API {
 	return webrtcApi
 }
 
+// Call a C callback function from go code.
 func MessageCbInvoke(
 	cb MessageCb,
 	usr unsafe.Pointer,
@@ -147,14 +164,17 @@ func MessageCbInvoke(
 	C.MessageCbInvoke(cb, usr, message_type, slot_a, slot_b, slot_c, slot_d)
 }
 
+// Type to hold the "OnEvent" callback and mutex.
 type eventReg struct {
 	mu        sync.Mutex
 	event_cb  C.MessageCb
 	event_usr unsafe.Pointer
 }
 
+// Global "OnEvent" callback and mutex.
 var globalEventReg eventReg
 
+// Go helper for emitting an event over the "OnEvent" callback.
 func EmitEvent(
 	message_type UintPtrT,
 	slot_a UintPtrT,
@@ -184,6 +204,7 @@ func EmitEvent(
 	)
 }
 
+// Configuration that can only be set once before api is initialized.
 type Tx5InitConfig struct {
 	TracingEnabled      *bool   `json:"tracingEnabled,omitempty"`
 	EphemeralUdpPortMin *uint16 `json:"ephemeralUdpPortMin,omitempty"`
@@ -276,6 +297,7 @@ const (
 	LvlError UintPtrT = 0x05
 )
 
+// Emit a tracing message.
 func EmitTrace(
 	lvl UintPtrT,
 	msg string,
@@ -420,4 +442,5 @@ func callInner(
 	}
 }
 
+// go is weird
 func main() {}

@@ -38,4 +38,19 @@ Rust bindings to the go pion webrtc library.
 Access the go-pion-webrtc api interface using the
 pub once_cell::sync::Lazy static [API] handle.
 
+WARNING - Only 1 single golang ffi binding is allowed per binary.
+          If you attempt to include a second one, you will end up
+          running 2 parallel garbage collectors that will step on
+          each other and crash your program.
+
+Golang ffi works better with static linking on platforms that support it.
+
+Unfortunately, we also must support dynamic linking for Android and Windows.
+
+Either way, the Go code exports two calls:
+- "OnEvent" allows the go code to emit events to the rust library
+- "Call" allows the rust libary to invoke functions within go
+
+Every api passes through one of these two iterfaces.
+
 <!-- cargo-rdme end -->

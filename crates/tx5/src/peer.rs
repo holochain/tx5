@@ -7,6 +7,8 @@ enum MaybeReady {
     Wait(Arc<tokio::sync::Semaphore>),
 }
 
+/// This struct represents a connection to an individual peer.
+/// It is a pretty thin wrapper around the tx5-connection "Conn".
 pub(crate) struct Peer {
     ready: Arc<Mutex<MaybeReady>>,
     task: tokio::task::JoinHandle<()>,
@@ -28,6 +30,7 @@ impl Drop for Peer {
 }
 
 impl Peer {
+    /// Call this when we are establishing a new outgoing connection.
     pub fn new_connect(
         config: Arc<Config>,
         recv_limit: Arc<tokio::sync::Semaphore>,
@@ -60,6 +63,7 @@ impl Peer {
         })
     }
 
+    /// Call this when we are accepting a new incoming connection.
     pub fn new_accept(
         config: Arc<Config>,
         recv_limit: Arc<tokio::sync::Semaphore>,
@@ -94,6 +98,8 @@ impl Peer {
         })
     }
 
+    /// This is initially false, but can transition into true.
+    /// If establishing a webrtc connection fails, it will remain false.
     pub fn is_using_webrtc(&self) -> bool {
         if let MaybeReady::Ready(r) = &*self.ready.lock().unwrap() {
             r.is_using_webrtc()
@@ -102,6 +108,7 @@ impl Peer {
         }
     }
 
+    /// Get connection statistics.
     pub fn get_stats(&self) -> ConnStats {
         if let MaybeReady::Ready(r) = &*self.ready.lock().unwrap() {
             r.get_stats()
@@ -110,6 +117,7 @@ impl Peer {
         }
     }
 
+    /// This future resolves when the connection is ready to use.
     pub async fn ready(&self) {
         let w = match &*self.ready.lock().unwrap() {
             MaybeReady::Ready(_) => return,
@@ -119,6 +127,7 @@ impl Peer {
         let _ = w.acquire().await;
     }
 
+    /// Send data to the remote peer over this connection.
     pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
         let conn = match &*self.ready.lock().unwrap() {
             MaybeReady::Ready(c) => c.clone(),
@@ -128,6 +137,8 @@ impl Peer {
     }
 }
 
+/// Establish an outgoing connection. Once connected, this function
+/// will delegate to the main event-loop "task" function below.
 async fn connect(
     config: Arc<Config>,
     recv_limit: Arc<tokio::sync::Semaphore>,
@@ -165,6 +176,7 @@ async fn connect(
     task(config, recv_limit, ep, conn, peer_url, evt_send, ready).await;
 }
 
+/// Drop guard to manage cleanup incase the main event loop task exits.
 struct DropPeer {
     ep: Weak<Mutex<EpInner>>,
     peer_url: PeerUrl,
@@ -189,6 +201,7 @@ impl Drop for DropPeer {
     }
 }
 
+/// This is the main event-loop task for a connection.
 #[allow(clippy::too_many_arguments)]
 async fn task(
     config: Arc<Config>,
@@ -199,6 +212,7 @@ async fn task(
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ready: Arc<Mutex<MaybeReady>>,
 ) {
+    // establish our cleanup drop guard
     let _drop = DropPeer {
         ep,
         peer_url: peer_url.clone(),
@@ -210,6 +224,7 @@ async fn task(
         Some(wc) => wc,
     };
 
+    // wait for the connection to actually be established
     let (conn, mut conn_recv) = match wc.wait(recv_limit).await {
         Ok((conn, conn_recv)) => (conn, conn_recv),
         Err(err) => {
@@ -218,6 +233,7 @@ async fn task(
         }
     };
 
+    // manage preflight if configured to do so
     if let Some((pf_send, pf_check)) = &config.preflight {
         let pf_data = match pf_send(&peer_url).await {
             Ok(pf_data) => pf_data,
@@ -246,6 +262,7 @@ async fn task(
         }
     }
 
+    // store a handle for use sending outgoing data
     {
         let mut lock = ready.lock().unwrap();
         if let MaybeReady::Wait(w) = &*lock {
@@ -254,8 +271,10 @@ async fn task(
         *lock = MaybeReady::Ready(Arc::new(conn));
     }
 
+    // send the notification that the connection is ready
     drop(ready);
 
+    // send an event saying there is a new connection
     let _ = evt_send
         .send(EndpointEvent::Connected {
             peer_url: peer_url.clone(),
@@ -264,6 +283,7 @@ async fn task(
 
     tracing::info!(?peer_url, "peer connected");
 
+    // main event loop handling incoming messages
     while let Some(msg) = conn_recv.recv().await {
         let _ = evt_send
             .send(EndpointEvent::Message {
@@ -273,9 +293,12 @@ async fn task(
             .await;
     }
 
+    // the above loop ended, notify of disconnect
     let _ = evt_send
         .send(EndpointEvent::Disconnected {
             peer_url: peer_url.clone(),
         })
         .await;
+
+    // all other cleanup is handled by the drop guard
 }

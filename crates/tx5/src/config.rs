@@ -54,6 +54,10 @@ pub struct Config {
     /// For the most part you should just leave this set at `None`,
     /// to get the default backend config.
     pub backend_module_config: Option<serde_json::Value>,
+
+    /// Test falling back by failing webrtc setup.
+    #[cfg(any(test, feature = "test_utils"))]
+    pub test_fail_webrtc: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -104,6 +108,8 @@ impl Default for Config {
             preflight: None,
             backend_module: BackendModule::default(),
             backend_module_config: None,
+            #[cfg(any(test, feature = "test_utils"))]
+            test_fail_webrtc: false,
         }
     }
 }

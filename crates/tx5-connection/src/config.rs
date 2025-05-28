@@ -33,7 +33,7 @@ pub struct HubConfig {
     pub signal_config: Arc<tx5_signal::SignalConfig>,
 
     /// Test falling back by failing webrtc setup.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test_utils"))]
     pub test_fail_webrtc: bool,
 }
 

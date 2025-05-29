@@ -28,7 +28,7 @@ backend-webrtc-rs = [ ]
 schema = [ "dep:schemars" ]
 
 # enable some testing utility apis
-test_utils = [ ]
+test-utils = [ ]
 
 [dependencies]
 bit_field = { workspace = true }

@@ -56,7 +56,7 @@ pub struct Config {
     pub backend_module_config: Option<serde_json::Value>,
 
     /// Test falling back by failing webrtc setup.
-    #[cfg(any(test, feature = "test_utils"))]
+    #[cfg(any(test, feature = "test-utils"))]
     pub test_fail_webrtc: bool,
 }
 
@@ -108,7 +108,7 @@ impl Default for Config {
             preflight: None,
             backend_module: BackendModule::default(),
             backend_module_config: None,
-            #[cfg(any(test, feature = "test_utils"))]
+            #[cfg(any(test, feature = "test-utils"))]
             test_fail_webrtc: false,
         }
     }

@@ -28,6 +28,9 @@ backend-webrtc-rs = [ "tx5-connection/backend-webrtc-rs" ]
 # make a schema available for configuration types
 schema = [ "tx5-connection/schema" ]
 
+# enable some testing utility apis
+test-utils = [ "tx5-connection/test-utils" ]
+
 [dependencies]
 base64 = { workspace = true }
 futures = { workspace = true }
@@ -46,6 +49,7 @@ futures = { workspace = true }
 sbd-server = { workspace = true }
 serde_json = { workspace = true }
 tracing-subscriber = { workspace = true }
+tx5 = { path = ".", features = [ "test-utils" ] }
 
 [[bench]]
 name = "throughput"

@@ -3080,6 +3080,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "tx5",
  "tx5-connection",
  "tx5-core",
  "url",

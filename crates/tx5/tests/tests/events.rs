@@ -103,7 +103,7 @@ async fn connected_event_is_consistent_fail_webrtc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "TODO - this test doesn't pass"]
+#[ignore = "TODO - this test doesn't pass (https://github.com/holochain/tx5/issues/130)"]
 async fn disconnected_event_is_consistent() {
     let sig = sbd().await;
     let (_p1, e1, mut r1) = ep(&sig, false).await;
@@ -151,7 +151,7 @@ async fn disconnected_event_is_consistent() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "TODO - this test doesn't pass"]
+#[ignore = "TODO - this test doesn't pass (https://github.com/holochain/tx5/issues/130)"]
 async fn disconnected_event_is_consistent_fail_webrtc() {
     let sig = sbd().await;
     let (_p1, e1, mut r1) = ep(&sig, true).await;

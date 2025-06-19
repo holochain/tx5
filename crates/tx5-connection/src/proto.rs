@@ -451,7 +451,7 @@ mod test {
         let (a, b, c, d) = PROTO_VER_2.encode().unwrap();
         assert_eq!(ProtoDecodeResult::Idle, dec.decode(&[a, b, c, d]).unwrap(),);
         let mut msg = vec![0; 15 * 1024 * 1024];
-        rand::thread_rng().fill(&mut msg[..]);
+        rand::rng().fill(&mut msg[..]);
         match proto_encode(&msg).unwrap() {
             ProtoEncodeResult::NeedPermit {
                 permit_req,
@@ -514,7 +514,7 @@ mod test {
         dec.sent_remote_permit_request(None).unwrap();
 
         let mut msg = vec![0; 17 * 1024];
-        rand::thread_rng().fill(&mut msg[..]);
+        rand::rng().fill(&mut msg[..]);
         match proto_encode(&msg).unwrap() {
             ProtoEncodeResult::NeedPermit {
                 permit_req,

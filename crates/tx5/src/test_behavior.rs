@@ -200,7 +200,7 @@ fn run_large_msg(share: Arc<Share>, peer_echo: PeerUrl) {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
                 use rand::Rng;
-                rand::thread_rng().fill(&mut full[..]);
+                rand::rng().fill(&mut full[..]);
 
                 track_err!(errors, "large msg send", {
                     ep.send(peer_echo.clone(), &full).await

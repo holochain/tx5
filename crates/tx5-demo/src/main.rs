@@ -67,7 +67,7 @@ impl Message {
         use rand::Rng;
 
         let mut big = vec![0; (1024 * 1024 * 15 * 3) / 4]; // 15 MiB but base64
-        rand::thread_rng().fill(&mut big[..]);
+        rand::rng().fill(&mut big[..]);
 
         let big = base64::engine::general_purpose::STANDARD.encode(&big);
         Message::Big(big)
@@ -259,7 +259,7 @@ impl Node {
             return Ok(());
         }
 
-        rand::seq::SliceRandom::shuffle(&mut v[..], &mut rand::thread_rng());
+        rand::seq::SliceRandom::shuffle(&mut v[..], &mut rand::rng());
         let big = Message::big().encode()?;
         self.send(ep, v.first().unwrap(), big);
 

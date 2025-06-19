@@ -57,9 +57,10 @@ impl Default for Target {
 
         if std::env::var("CARGO_FEATURE_FORCE_STATIC_LINK").is_ok() {
             if link_type_forced {
-                panic!("force_static_link and force_dynamic_link cannot both be specified");
+                println!("cargo:warning=force_static_link and force_dynamic_link should not both be specified, defaulting to dynamic link");
+            } else {
+                link_type = LinkType::Static;
             }
-            link_type = LinkType::Static;
         }
 
         // allow these cfgs in check

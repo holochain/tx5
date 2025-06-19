@@ -251,7 +251,7 @@ impl std::io::Read for GoBuf {
                 }
                 Err(err) => Err(err),
             })
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+            .map_err(std::io::Error::other)
         }
     }
 
@@ -261,10 +261,8 @@ impl std::io::Read for GoBuf {
 
 impl std::io::Write for GoBuf {
     #[inline]
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.extend(buf).map_err(|err| {
-            std::io::Error::new(std::io::ErrorKind::Other, err)
-        })?;
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.extend(buf).map_err(std::io::Error::other)?;
         Ok(buf.len())
     }
 
@@ -274,13 +272,9 @@ impl std::io::Write for GoBuf {
         bufs: &[std::io::IoSlice<'_>],
     ) -> std::io::Result<usize> {
         let len = bufs.iter().map(|b| b.len()).sum();
-        self.reserve(len).map_err(|err| {
-            std::io::Error::new(std::io::ErrorKind::Other, err)
-        })?;
+        self.reserve(len).map_err(std::io::Error::other)?;
         for buf in bufs {
-            self.extend(buf).map_err(|err| {
-                std::io::Error::new(std::io::ErrorKind::Other, err)
-            })?;
+            self.extend(buf).map_err(std::io::Error::other)?;
         }
         Ok(len)
     }
@@ -294,9 +288,7 @@ impl std::io::Write for GoBuf {
 
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        self.extend(buf).map_err(|err| {
-            std::io::Error::new(std::io::ErrorKind::Other, err)
-        })?;
+        self.extend(buf).map_err(std::io::Error::other)?;
         Ok(())
     }
 

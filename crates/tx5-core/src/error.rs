@@ -28,7 +28,7 @@ impl From<&str> for Error {
 impl From<Error> for std::io::Error {
     #[inline]
     fn from(e: Error) -> Self {
-        std::io::Error::new(std::io::ErrorKind::Other, e)
+        std::io::Error::other(e)
     }
 }
 

@@ -100,10 +100,10 @@ impl WebRtcConfig {
     pub fn to_go_buf(&self) -> std::io::Result<tx5_go_pion::GoBuf> {
         serde_json::to_vec(self)
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("failed to serialize WebRtcConfig: {}", e),
-                )
+                std::io::Error::other(format!(
+                    "failed to serialize WebRtcConfig: {}",
+                    e
+                ))
             })?
             .try_into()
     }

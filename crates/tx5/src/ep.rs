@@ -222,10 +222,7 @@ impl Endpoint {
             .lock()
             .unwrap()
             .assert_sig(sig_url, true, Some(s));
-        match r.await {
-            Ok(p) => Some(p),
-            _ => None,
-        }
+        r.await.ok()
     }
 
     /// Request that the peer connection identified by the given `peer_url`
@@ -239,7 +236,7 @@ impl Endpoint {
     /// the data is handed off to our networking backend.
     pub async fn send(&self, peer_url: PeerUrl, data: Vec<u8>) -> Result<()> {
         let listening_addresses = self.get_listening_addresses();
-        if listening_addresses.iter().any(|url| peer_url == *url) {
+        if listening_addresses.contains(&peer_url) {
             return Err(Error::other(
                 "Endpoint trying to connect/send a message to itself",
             ));

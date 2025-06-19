@@ -56,7 +56,7 @@ impl SignalMessage {
         use rand::Rng;
 
         let mut nonce = [0; 32];
-        rand::thread_rng().fill(&mut nonce[..]);
+        rand::rng().fill(&mut nonce[..]);
 
         let mut out = Vec::with_capacity(4 + 32);
         out.extend_from_slice(F_HREQ);

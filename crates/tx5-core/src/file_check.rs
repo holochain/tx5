@@ -190,7 +190,7 @@ mod tests {
     async fn file_check_stress() {
         use rand::Rng;
         let mut data = vec![0; 1024 * 1024 * 10]; // 10 MiB
-        rand::thread_rng().fill(&mut data[..]);
+        rand::rng().fill(&mut data[..]);
         let data = Arc::new(data);
 
         use sha2::Digest;
@@ -247,7 +247,7 @@ mod tests {
 
         use rand::Rng;
         let mut data = vec![0; 1024 * 1024 * 10]; // 10 MiB
-        rand::thread_rng().fill(&mut data[..]);
+        rand::rng().fill(&mut data[..]);
         let data = Arc::new(data);
 
         use sha2::Digest;

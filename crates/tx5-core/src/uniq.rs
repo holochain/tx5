@@ -4,7 +4,7 @@ use std::sync::{atomic, Arc};
 fn gen_node() -> String {
     use rand::Rng;
     let mut b = [0; 6];
-    rand::thread_rng().fill(&mut b[..]);
+    rand::rng().fill(&mut b[..]);
     base64::encode_config(b, base64::URL_SAFE_NO_PAD)
 }
 

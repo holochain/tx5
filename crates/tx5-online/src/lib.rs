@@ -75,7 +75,7 @@ static RCV: Lazy<OnlineReceiver> = Lazy::new(|| {
                 }
             });
 
-            let s = rand::Rng::gen_range(&mut rand::thread_rng(), 4.0..8.0);
+            let s = rand::Rng::random_range(&mut rand::rng(), 4.0..8.0);
             let s = std::time::Duration::from_secs_f64(s);
             tokio::time::sleep(s).await;
         }
@@ -90,7 +90,7 @@ async fn check_status() -> OnlineEvent {
     servers.append(&mut NameServerConfigGroup::google().into_inner());
     servers.append(&mut NameServerConfigGroup::quad9().into_inner());
 
-    rand::seq::SliceRandom::shuffle(&mut servers[..], &mut rand::thread_rng());
+    rand::seq::SliceRandom::shuffle(&mut servers[..], &mut rand::rng());
 
     let conf = ResolverConfig::from_parts(None, Vec::new(), servers);
 
@@ -99,15 +99,15 @@ async fn check_status() -> OnlineEvent {
     opts.cache_size = 0;
     opts.use_hosts_file = false;
 
-    let r = TokioAsyncResolver::tokio(conf, opts).unwrap();
+    let r = TokioAsyncResolver::tokio(conf, opts);
 
     const TLD: [&str; 5] = [".com.", ".net.", ".org.", ".edu.", ".gov."];
 
-    let tld = rand::seq::SliceRandom::choose(&TLD[..], &mut rand::thread_rng())
-        .unwrap();
+    let tld =
+        rand::seq::IndexedRandom::choose(&TLD[..], &mut rand::rng()).unwrap();
 
     let mut nonce = [0_u8; 8];
-    rand::Rng::fill(&mut rand::thread_rng(), &mut nonce);
+    rand::Rng::fill(&mut rand::rng(), &mut nonce);
     let mut name = String::new();
     for c in nonce {
         name.push_str(&format!("{c:02x}"));

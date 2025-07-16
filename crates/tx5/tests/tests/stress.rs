@@ -1,3 +1,4 @@
+use crate::tests::enable_tracing;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -17,14 +18,7 @@ async fn stress_large_msg() {
 }
 
 async fn stress_msg_size(msg_count: usize, size: usize) {
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(
-            tracing_subscriber::filter::EnvFilter::from_default_env(),
-        )
-        .with_file(true)
-        .with_line_number(true)
-        .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    enable_tracing();
 
     let msg = vec![0xdb; size];
 

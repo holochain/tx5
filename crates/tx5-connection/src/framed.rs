@@ -64,7 +64,7 @@ impl FramedConn {
         let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
         let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
 
-        // set up the recieve to just feed straight into the cmd task
+        // set up the receive to just feed straight into the cmd task
         let cmd_send2 = cmd_send.clone();
         let recv_task = tokio::task::spawn(async move {
             while let Some(msg) = conn_recv.recv().await {
@@ -104,6 +104,7 @@ impl FramedConn {
                                     a = "recv_framed",
                                 );
                                 if msg_send.send(msg).await.is_err() {
+                                    tracing::info!("FramedConnRecv closed, stopping cmd task");
                                     break;
                                 }
                             }

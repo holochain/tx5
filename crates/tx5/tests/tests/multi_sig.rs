@@ -1,27 +1,4 @@
-use std::sync::Arc;
-
-async fn sbd() -> sbd_server::SbdServer {
-    let config = sbd_server::Config {
-        bind: vec!["127.0.0.1:0".to_string(), "[::1]:0".to_string()],
-        limit_clients: 100,
-        disable_rate_limiting: true,
-        ..Default::default()
-    };
-    sbd_server::SbdServer::new(Arc::new(config)).await.unwrap()
-}
-
-async fn ep(
-    s: &sbd_server::SbdServer,
-) -> (tx5::PeerUrl, tx5::Endpoint, tx5::EndpointRecv) {
-    let config = tx5::Config {
-        signal_allow_plain_text: true,
-        ..Default::default()
-    };
-    let (ep, recv) = tx5::Endpoint::new(Arc::new(config));
-    let sig = format!("ws://{}", s.bind_addrs()[0]);
-    let peer_url = ep.listen(tx5::SigUrl::parse(sig).unwrap()).await.unwrap();
-    (peer_url, ep, recv)
-}
+use crate::tests::{ep, sbd};
 
 async fn check_msg(
     msg: &str,

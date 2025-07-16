@@ -3046,6 +3046,7 @@ dependencies = [
  "criterion",
  "futures",
  "influxive-otel-atomic-obs",
+ "rustls",
  "sbd-server",
  "serde",
  "serde_json",

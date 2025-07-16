@@ -32,9 +32,8 @@ pub struct HubConfig {
     /// The signal config to use.
     pub signal_config: Arc<tx5_signal::SignalConfig>,
 
-    /// Test falling back by failing webrtc setup.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub test_fail_webrtc: bool,
+    /// Test falling back to the signal relay by failing the WebRTC setup.
+    pub danger_force_signal_relay: bool,
 }
 
 /// The type of credential to use for ICE servers.

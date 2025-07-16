@@ -151,8 +151,7 @@ pub async fn connect(
     let hub_config = Arc::new(tx5_connection::HubConfig {
         backend_module,
         signal_config: Arc::new(sig_config),
-        #[cfg(any(test, feature = "test-utils"))]
-        test_fail_webrtc: config.test_fail_webrtc,
+        danger_force_signal_relay: config.danger_force_signal_relay,
     });
     let (hub, hub_recv) =
         tx5_connection::Hub::new(webrtc_config, url, hub_config).await?;

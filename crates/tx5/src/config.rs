@@ -55,9 +55,8 @@ pub struct Config {
     /// to get the default backend config.
     pub backend_module_config: Option<serde_json::Value>,
 
-    /// Test falling back by failing webrtc setup.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub test_fail_webrtc: bool,
+    /// Test falling back to the signal relay by failing the WebRTC setup.
+    pub danger_force_signal_relay: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -108,8 +107,7 @@ impl Default for Config {
             preflight: None,
             backend_module: BackendModule::default(),
             backend_module_config: None,
-            #[cfg(any(test, feature = "test-utils"))]
-            test_fail_webrtc: false,
+            danger_force_signal_relay: false,
         }
     }
 }

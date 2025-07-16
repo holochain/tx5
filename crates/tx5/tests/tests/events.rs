@@ -12,11 +12,11 @@ async fn sbd() -> sbd_server::SbdServer {
 
 async fn ep(
     s: &sbd_server::SbdServer,
-    test_fail_webrtc: bool,
+    danger_force_signal_relay: bool,
 ) -> (tx5::PeerUrl, tx5::Endpoint, tx5::EndpointRecv) {
     let config = tx5::Config {
         signal_allow_plain_text: true,
-        test_fail_webrtc,
+        danger_force_signal_relay,
         ..Default::default()
     };
     let (ep, recv) = tx5::Endpoint::new(Arc::new(config));

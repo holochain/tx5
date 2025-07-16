@@ -416,8 +416,7 @@ async fn con_task_attempt_webrtc(
 
     let mut is_ready = false;
 
-    #[cfg(any(test, feature = "test-utils"))]
-    if task_core.config.test_fail_webrtc {
+    if task_core.config.danger_force_signal_relay {
         netaudit!(
             WARN,
             pub_key = ?task_core.pub_key,

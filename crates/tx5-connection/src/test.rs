@@ -14,15 +14,17 @@ fn init_tracing() {
 
 pub struct TestSrv {
     server: sbd_server::SbdServer,
-    test_fail_webrtc: bool,
+    danger_force_signal_relay: bool,
 }
 
 impl TestSrv {
     pub async fn new() -> Self {
-        Self::new_fail_webrtc(false).await
+        Self::new_force_signal_relay(false).await
     }
 
-    pub async fn new_fail_webrtc(test_fail_webrtc: bool) -> Self {
+    pub async fn new_force_signal_relay(
+        danger_force_signal_relay: bool,
+    ) -> Self {
         let config = Arc::new(sbd_server::Config {
             bind: vec!["127.0.0.1:0".to_string(), "[::1]:0".to_string()],
             ..Default::default()
@@ -32,7 +34,7 @@ impl TestSrv {
 
         Self {
             server,
-            test_fail_webrtc,
+            danger_force_signal_relay,
         }
     }
 
@@ -60,7 +62,7 @@ impl TestSrv {
                         max_idle: std::time::Duration::from_secs(max_idle_secs),
                         ..Default::default()
                     }),
-                    test_fail_webrtc: self.test_fail_webrtc,
+                    danger_force_signal_relay: self.danger_force_signal_relay,
                 }),
             )
             .await
@@ -123,7 +125,7 @@ async fn base_timeout() {
 async fn fallback_sanity() {
     init_tracing();
 
-    let srv = TestSrv::new_fail_webrtc(true).await;
+    let srv = TestSrv::new_force_signal_relay(true).await;
 
     let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();

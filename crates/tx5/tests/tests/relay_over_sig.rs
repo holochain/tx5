@@ -1,6 +1,7 @@
-use crate::tests::{enable_tracing, ep_with_config, sbd_with_config};
+use crate::tests::{
+    enable_tracing, ep_with_config, receive_next_message_from, sbd_with_config,
+};
 use tokio::time::Instant;
-use tx5::PeerUrl;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn relay_over_sig() {
@@ -75,28 +76,4 @@ async fn relay_over_sig() {
     })
     .await
     .unwrap();
-}
-
-async fn receive_next_message_from(
-    r: &mut tx5::EndpointRecv,
-    url: PeerUrl,
-) -> Vec<u8> {
-    loop {
-        let evt = r.recv().await;
-        match evt {
-            Some(tx5::EndpointEvent::Message { peer_url, message }) => {
-                if peer_url != url {
-                    panic!("Received message from unexpected peer: {peer_url}");
-                }
-
-                return message;
-            }
-            Some(evt) => {
-                tracing::info!("Received unexpected event: {evt:?}");
-
-                continue; // Ignore other events
-            }
-            None => panic!("Unexpected end of receiver"),
-        }
-    }
 }

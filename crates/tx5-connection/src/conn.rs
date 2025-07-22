@@ -364,6 +364,7 @@ async fn webrtc_task(
             break;
         }
     }
+    netaudit!(DEBUG, a = "webrtc task closed, sending WebrtcClosed",);
     let _ = cmd_send.send(ConnCmd::WebrtcClosed).await;
 }
 
@@ -434,11 +435,11 @@ async fn con_task_attempt_webrtc(
                     pub_key = ?task_core.pub_key,
                     a = "close: unexpected handshake msg",
                 );
-                return Abort;
+                break;
             }
             SigRecv(tx5_signal::SignalMessage::Message(msg)) => {
                 if task_core.handle_recv_msg(msg).await.is_err() {
-                    return Abort;
+                    break;
                 }
                 netaudit!(
                     WARN,
@@ -521,10 +522,10 @@ async fn con_task_attempt_webrtc(
                             ?err,
                             a = "webrtc send_offer error",
                         );
-                        return Abort;
+                        break;
                     }
                 } else {
-                    return Abort;
+                    break;
                 }
             }
             WebrtcRecv(GeneratedAnswer(answer)) => {
@@ -544,10 +545,10 @@ async fn con_task_attempt_webrtc(
                             ?err,
                             a = "webrtc send_answer error",
                         );
-                        return Abort;
+                        break;
                     }
                 } else {
-                    return Abort;
+                    break;
                 }
             }
             WebrtcRecv(GeneratedIce(ice)) => {
@@ -567,15 +568,15 @@ async fn con_task_attempt_webrtc(
                             ?err,
                             a = "webrtc send_ice error",
                         );
-                        return Abort;
+                        break;
                     }
                 } else {
-                    return Abort;
+                    break;
                 }
             }
             WebrtcRecv(webrtc::WebrtcEvt::Message(msg)) => {
                 if task_core.handle_recv_msg(msg).await.is_err() {
-                    return Abort;
+                    break;
                 }
             }
             WebrtcRecv(Ready) => {
@@ -618,9 +619,9 @@ async fn con_task_attempt_webrtc(
                 netaudit!(
                     WARN,
                     pub_key = ?task_core.pub_key,
-                    a = "webrtc fallback: webrtc processing task closed",
+                    a = "webrtc processing task closed",
                 );
-                return Fallback(task_core);
+                break;
             }
         }
     }

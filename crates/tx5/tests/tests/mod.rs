@@ -3,6 +3,7 @@ use tx5::{Endpoint, EndpointRecv, PeerUrl};
 
 mod events;
 mod multi_sig;
+mod reconnect;
 mod relay_over_sig;
 mod stress;
 
@@ -44,6 +45,30 @@ async fn ep_with_config(
     let sig = format!("ws://{}", s.bind_addrs()[0]);
     let peer_url = ep.listen(tx5::SigUrl::parse(sig).unwrap()).await.unwrap();
     (peer_url, ep, recv)
+}
+
+async fn receive_next_message_from(
+    r: &mut EndpointRecv,
+    url: PeerUrl,
+) -> Vec<u8> {
+    loop {
+        let evt = r.recv().await;
+        match evt {
+            Some(tx5::EndpointEvent::Message { peer_url, message }) => {
+                if peer_url != url {
+                    panic!("Received message from unexpected peer: {peer_url}");
+                }
+
+                return message;
+            }
+            Some(evt) => {
+                tracing::info!("Received unexpected event: {evt:?}");
+
+                continue; // Ignore other events
+            }
+            None => panic!("Unexpected end of receiver"),
+        }
+    }
 }
 
 fn enable_tracing() {

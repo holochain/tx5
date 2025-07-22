@@ -280,7 +280,10 @@ async fn task_err(
     // loop on incoming commands
     loop {
         let cmd = match cmd_recv.recv().await {
-            None => break,
+            None => {
+                tracing::info!("Command receiver closed, exiting Webrtc task");
+                break;
+            }
             Some(cmd) => cmd,
         };
 
@@ -366,6 +369,9 @@ async fn task_err(
                         pend_buffer.push(resp);
                     }
                 } else {
+                    tracing::info!(
+                        "Data channel not available, exiting Webrtc task"
+                    );
                     break;
                 }
             }

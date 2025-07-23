@@ -121,7 +121,7 @@ pub async fn connect(
     url: &str,
     listener: bool,
 ) -> Result<(DynBackEp, DynBackEpRecvCon)> {
-    let webrtc_config = config.initial_webrtc_config.clone();
+    let webrtc_config = config.initial_webrtc_config.clone().into_bytes();
     let sig_config = tx5_connection::tx5_signal::SignalConfig {
         listener,
         allow_plain_text: config.signal_allow_plain_text,

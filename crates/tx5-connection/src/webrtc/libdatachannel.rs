@@ -1,6 +1,5 @@
 use super::*;
 use crate::{AbortTask, CloseRecv, CloseSend};
-use datachannel::TransportPolicy;
 use std::io::{Error, Result};
 
 type MapErr<E, F> = Box<dyn FnOnce(E) -> F>;
@@ -99,7 +98,7 @@ impl Webrtc {
     #[allow(clippy::needless_return)]
     pub fn new(
         is_polite: bool,
-        config: WebRtcConfig,
+        config: Vec<u8>,
         send_buffer: usize,
     ) -> (DynWebrtc, CloseRecv<WebrtcEvt>) {
         static INIT_TRACING: std::sync::Once = std::sync::Once::new();
@@ -198,7 +197,7 @@ impl super::Webrtc for Webrtc {
 
 async fn task(
     is_polite: bool,
-    config: WebRtcConfig,
+    config: Vec<u8>,
     send_buffer: usize,
     evt_send: CloseSend<WebrtcEvt>,
     cmd_send: CloseSend<Cmd>,
@@ -214,7 +213,7 @@ async fn task(
 
 async fn task_err(
     is_polite: bool,
-    config: WebRtcConfig,
+    config: Vec<u8>,
     send_buffer: usize,
     mut evt_send: CloseSend<WebrtcEvt>,
     cmd_send: CloseSend<Cmd>,
@@ -222,23 +221,35 @@ async fn task_err(
 ) -> Result<()> {
     evt_send.set_close_on_drop(true);
 
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct U {
+        pub urls: Vec<String>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct C {
+        #[serde(default)]
+        pub ice_servers: Vec<U>,
+    }
+
+    let mut ice = Vec::new();
+    match serde_json::from_slice::<C>(&config) {
+        Ok(mut c) => {
+            for mut u in c.ice_servers.drain(..) {
+                ice.append(&mut u.urls);
+            }
+        }
+        Err(err) => tracing::error!(?err, "failed to parse iceServers"),
+    }
+
     let init_config = tx5_core::Tx5InitConfig::get();
 
     // TODO - max_message_size?
-    let config = datachannel::RtcConfig::new::<String>(
-        &config
-            .ice_servers
-            .iter()
-            .flat_map(|s| s.urls.iter())
-            .cloned()
-            .collect::<Vec<_>>(),
-    )
-    .ice_transport_policy(match config.ice_transport_policy {
-        crate::config::TransportPolicy::All => TransportPolicy::All,
-        crate::config::TransportPolicy::Relay => TransportPolicy::Relay,
-    })
-    .port_range_begin(init_config.ephemeral_udp_port_min)
-    .port_range_end(init_config.ephemeral_udp_port_max);
+    let config = datachannel::RtcConfig::new::<String>(&ice)
+        .port_range_begin(init_config.ephemeral_udp_port_min)
+        .port_range_end(init_config.ephemeral_udp_port_max);
     let mut peer =
         datachannel::RtcPeerConnection::new(&config, Pch(cmd_send.clone()))
             .map_err(map_err("constructing peer connection"))?;

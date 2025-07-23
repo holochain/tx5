@@ -47,7 +47,7 @@ impl TestSrv {
 
         for addr in self.server.bind_addrs() {
             if let Ok(r) = Hub::new(
-                WebRtcConfig::default(),
+                b"{}".to_vec(),
                 &format!("ws://{addr}"),
                 Arc::new(HubConfig {
                     backend_module: BackendModule::default(),

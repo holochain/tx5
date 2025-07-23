@@ -1,5 +1,4 @@
 use crate::*;
-use tx5_connection::WebRtcConfig;
 use tx5_core::deps::serde_json;
 
 /// Tx5 endpoint configuration.
@@ -7,8 +6,8 @@ pub struct Config {
     /// Allow plain text (non-tls) signal server connections.
     pub signal_allow_plain_text: bool,
 
-    /// Initial webrtc peer connection config.
-    pub initial_webrtc_config: WebRtcConfig,
+    /// Initial webrtc peer connection config. Defaults to `{}`.
+    pub initial_webrtc_config: String,
 
     /// Maximum count of open connections. Default 4096.
     pub connection_count_max: u32,
@@ -20,7 +19,7 @@ pub struct Config {
     pub recv_buffer_bytes_max: u32,
 
     /// Maximum receive message reconstruction bytes in memory
-    /// (across entire endpoint). Default 512 MiB.
+    /// (accross entire endpoint). Default 512 MiB.
     pub incoming_message_bytes_max: u32,
 
     /// Maximum size of an individual message. Default 16 MiB.
@@ -81,7 +80,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             signal_allow_plain_text: false,
-            initial_webrtc_config: WebRtcConfig::default(),
+            initial_webrtc_config: "{}".to_string(),
             connection_count_max: 4096,
             send_buffer_bytes_max: 64 * 1024,
             recv_buffer_bytes_max: 64 * 1024,
@@ -92,7 +91,7 @@ impl Default for Config {
             backoff_start: std::time::Duration::from_secs(5),
             backoff_max: std::time::Duration::from_secs(60),
             preflight: None,
-            backend_module: BackendModule::default(),
+            backend_module: crate::backend::BackendModule::default(),
             backend_module_config: None,
         }
     }

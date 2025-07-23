@@ -67,14 +67,20 @@ impl Conn {
     }
 
     pub(crate) fn priv_new(
-        webrtc_config: WebRtcConfig,
+        webrtc_config: Vec<u8>,
         is_polite: bool,
         pub_key: PubKey,
         client: Weak<tx5_signal::SignalConnection>,
         config: Arc<HubConfig>,
         hub_cmd_send: tokio::sync::mpsc::Sender<HubCmd>,
     ) -> (Arc<Self>, ConnRecv, CloseSend<ConnCmd>) {
-        netaudit!(DEBUG, ?webrtc_config, ?pub_key, ?is_polite, a = "open",);
+        netaudit!(
+            DEBUG,
+            webrtc_config = String::from_utf8_lossy(&webrtc_config).to_string(),
+            ?pub_key,
+            ?is_polite,
+            a = "open",
+        );
 
         let is_webrtc = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let send_msg_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -238,7 +244,7 @@ impl TaskCore {
 
 async fn con_task(
     is_polite: bool,
-    webrtc_config: WebRtcConfig,
+    webrtc_config: Vec<u8>,
     mut task_core: TaskCore,
 ) {
     // first process the handshake
@@ -375,7 +381,7 @@ enum AttemptWebrtcResult {
 
 async fn con_task_attempt_webrtc(
     is_polite: bool,
-    webrtc_config: WebRtcConfig,
+    webrtc_config: Vec<u8>,
     mut task_core: TaskCore,
 ) -> AttemptWebrtcResult {
     use AttemptWebrtcResult::*;
@@ -390,7 +396,7 @@ async fn con_task_attempt_webrtc(
     let (webrtc, webrtc_recv) = webrtc::new_backend_module(
         task_core.config.backend_module,
         is_polite,
-        webrtc_config,
+        webrtc_config.clone(),
         // MAYBE - make this configurable
         4096,
     );

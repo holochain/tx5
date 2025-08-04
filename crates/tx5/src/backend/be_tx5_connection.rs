@@ -115,7 +115,7 @@ pub fn default_config() -> serde_json::Value {
     serde_json::json!({})
 }
 
-/// Connect a new backend based on the tx5-go-pion backend.
+/// Connect a new backend based on the configured backend module.
 pub async fn connect(
     config: &Arc<Config>,
     url: &str,

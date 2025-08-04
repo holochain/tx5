@@ -38,7 +38,7 @@ impl Peer {
         peer_url: PeerUrl,
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ) -> Arc<Self> {
-        Arc::new_cyclic(|_this| {
+        Arc::new({
             let wait = Arc::new(tokio::sync::Semaphore::new(0));
             let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
             let pub_key = peer_url.pub_key().clone();
@@ -54,6 +54,8 @@ impl Peer {
 
             let opened_at_s = timestamp();
 
+            // This returns a new peer instance but the task is still working. The connection may
+            // fail to be set up here.
             Self {
                 ready,
                 task,
@@ -153,12 +155,13 @@ async fn connect(
         let connect_fut = async {
             let sig =
                 ep.lock()
-                    .unwrap()
+                    .expect("poisoned")
                     .assert_sig(peer_url.to_sig(), false, None);
             sig.ready().await;
             sig.connect(peer_url.pub_key().clone()).await
         };
 
+        // Try to get a connection to the remote peer, with a timeout.
         match tokio::time::timeout(config.timeout, connect_fut)
             .await
             .map_err(Error::other)
@@ -166,6 +169,8 @@ async fn connect(
             Ok(Ok(conn)) => Some(conn),
             Err(err) | Ok(Err(err)) => {
                 tracing::debug!(?err, "peer connect error");
+                // The connection to the remote peer failed or timed out, so we proceed without
+                // a connection.
                 None
             }
         }
@@ -188,15 +193,19 @@ impl Drop for DropPeer {
         tracing::debug!(?self.peer_url, "peer closed");
 
         if let Some(ep_inner) = self.ep.upgrade() {
-            ep_inner.lock().unwrap().drop_peer_url(&self.peer_url);
+            ep_inner.lock().expect("poisoned").drop_peer_url(&self.peer_url);
+        } else {
+            tracing::warn!("endpoint inner is gone, cannot drop peer");
         }
 
         let evt_send = self.evt_send.clone();
         let peer_url = self.peer_url.clone();
         tokio::task::spawn(async move {
-            let _ = evt_send
+            if let Err(err) = evt_send
                 .send(EndpointEvent::Disconnected { peer_url })
-                .await;
+                .await {
+                tracing::warn!(?err, "peer disconnected");
+            }
         });
     }
 }

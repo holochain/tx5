@@ -155,7 +155,7 @@ impl Conn {
         let _ = self.ready.acquire().await;
     }
 
-    /// Returns `true` if we sucessfully connected over webrtc.
+    /// Returns `true` if we successfully connected over webrtc.
     pub fn is_using_webrtc(&self) -> bool {
         self.is_webrtc.load(Ordering::SeqCst)
     }

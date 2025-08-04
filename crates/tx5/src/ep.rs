@@ -134,13 +134,11 @@ impl EpInner {
 
     /// Get an existing peer connection or create a new outgoing one.
     pub fn connect_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
-        if let Some(peer) = self.peer_map.get(&peer_url) {
-            return peer.clone();
-        }
-
+        // TODO - is the peer map cleaned up if the connection is invalid?
         self.peer_map
             .entry(peer_url.clone())
             .or_insert_with(|| {
+                // Connection is not valid yet here, it's still being established.
                 Peer::new_connect(
                     self.config.clone(),
                     self.recv_limit.clone(),
@@ -232,6 +230,7 @@ impl Endpoint {
     }
 
     /// Send data to a remote on this tx5 endpoint.
+    ///
     /// The future returned from this method will resolve when
     /// the data is handed off to our networking backend.
     pub async fn send(&self, peer_url: PeerUrl, data: Vec<u8>) -> Result<()> {
@@ -242,7 +241,8 @@ impl Endpoint {
             ));
         }
         tokio::time::timeout(self.config.timeout, async {
-            let peer = self.inner.lock().unwrap().connect_peer(peer_url);
+            let peer =
+                self.inner.lock().expect("poisoned").connect_peer(peer_url);
             peer.ready().await;
             peer.send(data).await
         })
@@ -250,6 +250,7 @@ impl Endpoint {
     }
 
     /// Broadcast data to all connections that happen to be open.
+    ///
     /// If no connections are open, no data will be broadcast.
     /// The future returned from this method will resolve when all
     /// broadcast messages have been handed off to our networking backend

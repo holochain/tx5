@@ -204,7 +204,14 @@ impl Hub {
                             // if this opened a new connection,
                             // send that event too
                             if let Some(recv) = recv {
-                                let _ = conn_send.send((conn, recv)).await;
+                                if let Err(err) =
+                                    conn_send.send((conn, recv)).await
+                                {
+                                    tracing::warn!(
+                                        ?err,
+                                        "Failed to send connection"
+                                    );
+                                }
                             }
                         } else {
                             break;

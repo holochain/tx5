@@ -154,6 +154,8 @@ impl Hub {
                 }
             }
 
+            tracing::debug!("hub recv task closed, closing hub");
+
             let _ = hub_cmd_send2.send(HubCmd::Close).await;
         }));
 
@@ -214,6 +216,7 @@ impl Hub {
                                 }
                             }
                         } else {
+                            tracing::warn!("hub client is gone, cannot accept connection");
                             break;
                         }
                     }
@@ -242,6 +245,7 @@ impl Hub {
                                 .map(|(recv, conn, _)| (recv, conn)),
                             );
                         } else {
+                            tracing::warn!("hub client is gone, cannot accept connection");
                             break;
                         }
                     }
@@ -251,11 +255,15 @@ impl Hub {
                         if let Some(client) = weak_client.upgrade() {
                             let _ = client.close_peer(&pub_key).await;
                         } else {
+                            tracing::warn!("hub client is gone, cannot disconnect peer");
                             break;
                         }
                         let _ = map.remove(&pub_key);
                     }
-                    HubCmd::Close => break,
+                    HubCmd::Close => {
+                        tracing::warn!("hub client is gone, cannot close peer");
+                        break;
+                    },
                 }
             }
 

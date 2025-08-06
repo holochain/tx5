@@ -57,6 +57,16 @@ pub struct Config {
 
     /// Test falling back to the signal relay by failing the WebRTC setup.
     pub danger_force_signal_relay: bool,
+
+    /// Deny using the signal server as a relay if direct connections fail.
+    ///
+    /// This is useful if you want to ensure that the signal server is only used for connection
+    /// establishment and not as a relay.
+    ///
+    /// Enabling the setting is dangerous though, as it will mean that if a peer fails to make a
+    /// direct connection, it will not be able to communicate at all. For some peers, this might
+    /// mean they can make no connections at all, and are entirely isolated from the network.
+    pub danger_deny_signal_relay: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -108,6 +118,7 @@ impl Default for Config {
             backend_module: BackendModule::default(),
             backend_module_config: None,
             danger_force_signal_relay: false,
+            danger_deny_signal_relay: false,
         }
     }
 }

@@ -15,15 +15,17 @@ fn init_tracing() {
 pub struct TestSrv {
     server: sbd_server::SbdServer,
     danger_force_signal_relay: bool,
+    danger_deny_signal_relay: bool,
 }
 
 impl TestSrv {
     pub async fn new() -> Self {
-        Self::new_force_signal_relay(false).await
+        Self::new_force_signal_relay(false, false).await
     }
 
     pub async fn new_force_signal_relay(
         danger_force_signal_relay: bool,
+        danger_deny_signal_relay: bool,
     ) -> Self {
         let config = Arc::new(sbd_server::Config {
             bind: vec!["127.0.0.1:0".to_string(), "[::1]:0".to_string()],
@@ -35,6 +37,7 @@ impl TestSrv {
         Self {
             server,
             danger_force_signal_relay,
+            danger_deny_signal_relay,
         }
     }
 
@@ -63,6 +66,7 @@ impl TestSrv {
                         ..Default::default()
                     }),
                     danger_force_signal_relay: self.danger_force_signal_relay,
+                    danger_deny_signal_relay: self.danger_deny_signal_relay,
                 }),
             )
             .await
@@ -125,7 +129,7 @@ async fn base_timeout() {
 async fn fallback_sanity() {
     init_tracing();
 
-    let srv = TestSrv::new_force_signal_relay(true).await;
+    let srv = TestSrv::new_force_signal_relay(true, false).await;
 
     let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();

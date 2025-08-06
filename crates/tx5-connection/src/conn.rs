@@ -155,7 +155,7 @@ impl Conn {
         let _ = self.ready.acquire().await;
     }
 
-    /// Returns `true` if we sucessfully connected over webrtc.
+    /// Returns `true` if we successfully connected over webrtc.
     pub fn is_using_webrtc(&self) -> bool {
         self.is_webrtc.load(Ordering::SeqCst)
     }
@@ -321,7 +321,18 @@ async fn con_task(
     .await
     {
         AttemptWebrtcResult::Abort => return,
-        AttemptWebrtcResult::Fallback(task_core) => task_core,
+        AttemptWebrtcResult::Fallback(task_core) => {
+            if task_core.config.danger_deny_signal_relay {
+                netaudit!(
+                    INFO,
+                    pub_key = ?task_core.pub_key,
+                    a = "webrtc fallback: denied signal relay",
+                );
+                return;
+            }
+
+            task_core
+        }
     };
 
     task_core.is_webrtc.store(false, Ordering::SeqCst);

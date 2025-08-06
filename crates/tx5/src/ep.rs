@@ -189,6 +189,11 @@ impl std::fmt::Debug for Endpoint {
 impl Endpoint {
     /// Construct a new tx5 endpoint.
     pub fn new(config: Arc<Config>) -> (Self, EndpointRecv) {
+        #[cfg(not(feature = "test-utils"))]
+        if config.danger_force_signal_relay && config.danger_deny_signal_relay {
+            tracing::warn!("Both `danger_force_signal_relay` and `danger_deny_signal_relay` are set to true. This is likely a misconfiguration, as these options are mutually exclusive.");
+        }
+
         let recv_limit = Arc::new(tokio::sync::Semaphore::new(
             config.incoming_message_bytes_max as usize,
         ));
@@ -232,6 +237,7 @@ impl Endpoint {
     }
 
     /// Send data to a remote on this tx5 endpoint.
+    ///
     /// The future returned from this method will resolve when
     /// the data is handed off to our networking backend.
     pub async fn send(&self, peer_url: PeerUrl, data: Vec<u8>) -> Result<()> {
@@ -250,6 +256,7 @@ impl Endpoint {
     }
 
     /// Broadcast data to all connections that happen to be open.
+    ///
     /// If no connections are open, no data will be broadcast.
     /// The future returned from this method will resolve when all
     /// broadcast messages have been handed off to our networking backend

@@ -34,6 +34,9 @@ pub struct HubConfig {
 
     /// Test falling back to the signal relay by failing the WebRTC setup.
     pub danger_force_signal_relay: bool,
+
+    /// Deny using the signal server as a relay if direct connections fail.
+    pub danger_deny_signal_relay: bool,
 }
 
 /// The type of credential to use for ICE servers.

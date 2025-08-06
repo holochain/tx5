@@ -40,6 +40,7 @@ struct GoWaitCon {
 impl BackWaitCon for GoWaitCon {
     fn wait(
         &mut self,
+        timeout: std::time::Duration,
         recv_limit: Arc<tokio::sync::Semaphore>,
     ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecvData)>> {
         let con = self.con.take();
@@ -50,7 +51,17 @@ impl BackWaitCon for GoWaitCon {
                 _ => return Err(std::io::Error::other("already awaited")),
             };
 
-            con.ready().await;
+            // This connection will only ready on a code path that successfully establishes either
+            // a WebRTC or a relayed connection. However, there are many exits from the code paths
+            // that attempt to set those up. In those cases, we own a semaphore permit that will
+            // never be released and we risk deadlocking here without this timeout.
+            tokio::time::timeout(timeout, con.ready())
+                .await
+                .map_err(|e| {
+                    std::io::Error::other(format!(
+                        "timed out waiting for connection to ready: {e}"
+                    ))
+                })?;
 
             let (con, con_recv) =
                 tx5_connection::FramedConn::new(con, con_recv, recv_limit)
@@ -115,7 +126,7 @@ pub fn default_config() -> serde_json::Value {
     serde_json::json!({})
 }
 
-/// Connect a new backend based on the tx5-go-pion backend.
+/// Connect a new backend based on the configured backend module.
 pub async fn connect(
     config: &Arc<Config>,
     url: &str,
@@ -152,6 +163,7 @@ pub async fn connect(
         backend_module,
         signal_config: Arc::new(sig_config),
         danger_force_signal_relay: config.danger_force_signal_relay,
+        danger_deny_signal_relay: config.danger_deny_signal_relay,
     });
     let (hub, hub_recv) =
         tx5_connection::Hub::new(webrtc_config, url, hub_config).await?;

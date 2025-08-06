@@ -229,6 +229,7 @@ impl Endpoint {
     }
 
     /// Send data to a remote on this tx5 endpoint.
+    ///
     /// The future returned from this method will resolve when
     /// the data is handed off to our networking backend.
     pub async fn send(&self, peer_url: PeerUrl, data: Vec<u8>) -> Result<()> {
@@ -241,6 +242,7 @@ impl Endpoint {
     }
 
     /// Broadcast data to all connections that happen to be open.
+    ///
     /// If no connections are open, no data will be broadcast.
     /// The future returned from this method will resolve when all
     /// broadcast messages have been handed off to our networking backend

@@ -79,6 +79,7 @@ struct WaitCon {
 impl BackWaitCon for WaitCon {
     fn wait(
         &mut self,
+        _timeout: std::time::Duration,
         _recv_limit: Arc<tokio::sync::Semaphore>,
     ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecvData)>> {
         let con = self.con.take().unwrap();
@@ -303,7 +304,10 @@ mod tests {
         assert_eq!(w1.pub_key(), e2.pub_key());
 
         let (c1, _cr1) = w1
-            .wait(Arc::new(tokio::sync::Semaphore::new(1)))
+            .wait(
+                std::time::Duration::from_secs(30),
+                Arc::new(tokio::sync::Semaphore::new(1)),
+            )
             .await
             .unwrap();
 
@@ -314,7 +318,10 @@ mod tests {
         assert_eq!(w2.pub_key(), e1.pub_key());
 
         let (c2, mut cr2) = w2
-            .wait(Arc::new(tokio::sync::Semaphore::new(1)))
+            .wait(
+                std::time::Duration::from_secs(30),
+                Arc::new(tokio::sync::Semaphore::new(1)),
+            )
             .await
             .unwrap();
 

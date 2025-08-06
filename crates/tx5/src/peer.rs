@@ -54,6 +54,8 @@ impl Peer {
 
             let opened_at_s = timestamp();
 
+            // This returns a new peer instance but the task is still working. The connection may
+            // fail to be set up here.
             Self {
                 ready,
                 task,
@@ -159,6 +161,7 @@ async fn connect(
             sig.connect(peer_url.pub_key().clone()).await
         };
 
+        // Try to initiate connection negotiation with the remote peer, with a timeout.
         match tokio::time::timeout(config.timeout, connect_fut)
             .await
             .map_err(Error::other)
@@ -166,6 +169,9 @@ async fn connect(
             Ok(Ok(conn)) => Some(conn),
             Err(err) | Ok(Err(err)) => {
                 tracing::debug!(?err, "peer connect error");
+
+                // The connection attempt to the remote peer failed or timed out, so we proceed
+                // without a connection.
                 None
             }
         }
@@ -225,7 +231,8 @@ async fn task(
     };
 
     // wait for the connection to actually be established
-    let (conn, mut conn_recv) = match wc.wait(recv_limit).await {
+    let (conn, mut conn_recv) = match wc.wait(config.timeout, recv_limit).await
+    {
         Ok((conn, conn_recv)) => (conn, conn_recv),
         Err(err) => {
             tracing::debug!(?err, "connection wait error");

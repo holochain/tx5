@@ -1,4 +1,6 @@
-use crate::tests::{enable_tracing, ep, receive_next_message_from, sbd};
+use crate::tests::{
+    enable_tracing, ep, ep_with_config, receive_next_message_from, sbd,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reconnect_on_webrtc_fail() {
@@ -55,4 +57,66 @@ async fn reconnect_on_webrtc_fail() {
 
     assert!(!e1.get_stats().connection_list.is_empty());
     assert!(e1.get_stats().connection_list.iter().all(|c| c.is_webrtc));
+}
+
+/// Related to reconnection, because if the connection setup fails, then it must be removed in order
+/// for the endpoint to be able to reconnect.
+#[tokio::test(flavor = "multi_thread")]
+async fn close_connections_on_setup_failure() {
+    enable_tracing();
+
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let sig = sbd().await;
+
+    let (p1, e1, _r1) = ep_with_config(
+        &sig,
+        tx5::Config {
+            // By enabling both of these, the connection setup is forced to fail because we aren't
+            // allowing it to use either of its options.
+            // In production this is a misconfiguration, but it is a useful situation for testing that
+            // the resources that get allocated on the way to discovering the misconfiguration are
+            // cleaned up.
+            danger_force_signal_relay: true,
+            danger_deny_signal_relay: true,
+            // Want to give up quickly on the connection setup, so we don't wait too long.
+            timeout: std::time::Duration::from_secs(3),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let (p2, e2, _r2) = ep_with_config(
+        &sig,
+        tx5::Config {
+            danger_force_signal_relay: true,
+            danger_deny_signal_relay: true,
+            timeout: std::time::Duration::from_secs(3),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // Each endpoint attempts to send a message to the other.
+    //
+    // We don't expect the messages to be received, but we do expect the endpoints to clean up
+    // any resources that were allocated during the connection setup.
+    e1.send(p2.clone(), b"hello".to_vec()).await.ok();
+    e2.send(p1.clone(), b"world".to_vec()).await.ok();
+
+    tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        loop {
+            // Wait for the endpoints to clean up their resources.
+            if e1.get_stats().connection_list.is_empty() && e2.get_stats().connection_list.is_empty() {
+                break;
+            } else {
+                tracing::debug!(
+                    "Waiting for endpoints to clean up resources: e1 connections: {}, e2 connections: {}",
+                    e1.get_stats().connection_list.len(),
+                    e2.get_stats().connection_list.len()
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }).await.unwrap();
 }

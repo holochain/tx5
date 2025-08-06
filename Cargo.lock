@@ -2300,8 +2300,6 @@ dependencies = [
 [[package]]
 name = "sbd-client"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d00f41338c3f61eb424696882b76128052fa5dd3db5d015ead03c785e637aa6"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -2323,8 +2321,6 @@ dependencies = [
 [[package]]
 name = "sbd-e2e-crypto-client"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d07b8f8a29790cc6024637c67337247f586c5db0ee4f9b6db3d4b5896e2a6d64"
 dependencies = [
  "bytes",
  "sbd-client",
@@ -2336,8 +2332,6 @@ dependencies = [
 [[package]]
 name = "sbd-server"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d038b96c91dd571e9b83c69725e55d8440fff3112448b82e10ef58d172e6ce67"
 dependencies = [
  "anstyle",
  "axum",

@@ -40,8 +40,10 @@ struct GoWaitCon {
 impl BackWaitCon for GoWaitCon {
     fn wait(
         &mut self,
+        timeout: std::time::Duration,
         recv_limit: Arc<tokio::sync::Semaphore>,
     ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecvData)>> {
+        let pub_key = self.pub_key.clone();
         let con = self.con.take();
         let con_recv = self.con_recv.take();
         Box::pin(async move {
@@ -50,7 +52,22 @@ impl BackWaitCon for GoWaitCon {
                 _ => return Err(std::io::Error::other("already awaited")),
             };
 
-            con.ready().await;
+            tracing::info!(
+                "Waiting for connection to be ready for pub_key: {:?}",
+                pub_key
+            );
+            // This connection will only ready on a code path that successfully establishes either
+            // a WebRTC or a relayed connection. However, there are many exits from the code paths
+            // that attempt to set those up. In those cases, we own a semaphore permit that will
+            // never be released and we risk deadlocking here without this timeout.
+            tokio::time::timeout(timeout, con.ready())
+                .await
+                .map_err(|e| {
+                    std::io::Error::other(format!(
+                        "timed out waiting for connection to ready: {e}"
+                    ))
+                })?;
+            tracing::info!("Connection ready for pub_key: {:?}", pub_key);
 
             let (con, con_recv) =
                 tx5_connection::FramedConn::new(con, con_recv, recv_limit)

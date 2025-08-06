@@ -46,7 +46,7 @@ url = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 futures = { workspace = true }
-sbd-server = { workspace = true }
+sbd-server = { workspace = true, features = ["test-utils"] }
 serde_json = { workspace = true }
 tracing-subscriber = { workspace = true }
 tx5 = { path = ".", features = [ "test-utils" ] }

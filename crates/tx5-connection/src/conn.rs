@@ -247,12 +247,15 @@ async fn con_task(
     // first process the handshake
     if let Some(client) = task_core.client.upgrade() {
         let handshake_fut = async {
+            tracing::info!("Sending handshake request");
             let nonce = client.send_handshake_req(&task_core.pub_key).await?;
+            tracing::info!("Got a handshake nonce: {nonce:?}");
 
             let mut got_peer_res = false;
             let mut sent_our_res = false;
 
             while let Some(cmd) = task_core.cmd_recv.recv().await {
+                tracing::info!("Got a handshake cmd");
                 match cmd {
                     ConnCmd::SigRecv(sig) => {
                         use tx5_signal::SignalMessage::*;
@@ -303,6 +306,9 @@ async fn con_task(
         .await
         {
             Err(_) | Ok(Err(_)) => {
+                tracing::info!(
+                    "Handshake timeout or error, closing connection"
+                );
                 client.close_peer(&task_core.pub_key).await;
                 return;
             }

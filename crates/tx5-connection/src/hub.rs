@@ -56,7 +56,7 @@ async fn hub_map_assert(
 
     client.assert(&pub_key).await?;
 
-    // we're connected to the peer, create a connection
+    // we're not connected to the peer, create a connection
 
     let (conn, recv, cmd_send) = Conn::priv_new(
         webrtc_config.lock().unwrap().clone(),
@@ -216,7 +216,9 @@ impl Hub {
                                 }
                             }
                         } else {
-                            tracing::warn!("hub client is gone, cannot accept connection");
+                            tracing::warn!(
+                                "hub client is gone, cannot accept connection"
+                            );
                             break;
                         }
                     }
@@ -245,7 +247,9 @@ impl Hub {
                                 .map(|(recv, conn, _)| (recv, conn)),
                             );
                         } else {
-                            tracing::warn!("hub client is gone, cannot accept connection");
+                            tracing::warn!(
+                                "hub client is gone, cannot accept connection"
+                            );
                             break;
                         }
                     }
@@ -255,7 +259,9 @@ impl Hub {
                         if let Some(client) = weak_client.upgrade() {
                             let _ = client.close_peer(&pub_key).await;
                         } else {
-                            tracing::warn!("hub client is gone, cannot disconnect peer");
+                            tracing::warn!(
+                                "hub client is gone, cannot disconnect peer"
+                            );
                             break;
                         }
                         let _ = map.remove(&pub_key);
@@ -263,7 +269,7 @@ impl Hub {
                     HubCmd::Close => {
                         tracing::warn!("hub client is gone, cannot close peer");
                         break;
-                    },
+                    }
                 }
             }
 
@@ -296,12 +302,21 @@ impl Hub {
         pub_key: PubKey,
     ) -> Result<(Arc<Conn>, ConnRecv)> {
         let (s, r) = tokio::sync::oneshot::channel();
+        tracing::info!("Sending connect request for pub_key: {:?}", pub_key);
         self.hub_cmd_send
-            .send(HubCmd::Connect { pub_key, resp: s })
+            .send(HubCmd::Connect {
+                pub_key: pub_key.clone(),
+                resp: s,
+            })
             .await
             .map_err(|_| Error::other("closed"))?;
+        tracing::info!(
+            "Waiting for connect response for pub_key: {:?}",
+            pub_key
+        );
         let (recv, conn) = r.await.map_err(|_| Error::other("closed"))??;
         if let Some(recv) = recv {
+            tracing::info!("Connected to peer: {:?}", conn.pub_key());
             Ok((conn, recv))
         } else {
             Err(Error::other("already connected"))

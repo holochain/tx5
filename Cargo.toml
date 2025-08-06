@@ -59,7 +59,7 @@ url = { version = "2.3.1", features = [ "serde" ] }
 zip = { version = "4.1", default-features = false, features = [ "deflate" ] }
 schemars = { version = "0.9", features = ["preserve_order"] }
 
-#[patch.crates-io]
-#sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
-#sbd-client = { path = "../sbd/rust/sbd-client" }
-#sbd-server = { path = "../sbd/rust/sbd-server" }
+[patch.crates-io]
+sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
+sbd-client = { path = "../sbd/rust/sbd-client" }
+sbd-server = { path = "../sbd/rust/sbd-server" }

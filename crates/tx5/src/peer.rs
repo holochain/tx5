@@ -153,12 +153,22 @@ async fn connect(
 
     let conn = if let Some(ep) = ep.upgrade() {
         let connect_fut = async {
-            let sig =
-                ep.lock()
-                    .expect("poisoned")
-                    .assert_sig(peer_url.to_sig(), false, None);
+            let sig = ep.lock().expect("poisoned").assert_sig(
+                peer_url.to_sig(),
+                false,
+                None,
+            );
+            tracing::info!("Waiting for signal ready");
+
+            // Waits for the signal server to be ready if we opened a new connection. If the
+            // connection has previously been marked ready, then this check passes immediately.
+            // That means that we can try to use the connection if it is marked ready, but the
+            // connection may not be valid.
             sig.ready().await;
-            sig.connect(peer_url.pub_key().clone()).await
+            tracing::info!("Signal ready, connecting to peer");
+            let conn = sig.connect(peer_url.pub_key().clone()).await;
+            tracing::info!("Connected to peer: {:?}", conn.is_ok());
+            conn
         };
 
         // Try to get a connection to the remote peer, with a timeout.
@@ -175,6 +185,7 @@ async fn connect(
             }
         }
     } else {
+        tracing::info!("endpoint is gone, cannot connect to peer");
         None
     };
 
@@ -193,7 +204,10 @@ impl Drop for DropPeer {
         tracing::debug!(?self.peer_url, "peer closed");
 
         if let Some(ep_inner) = self.ep.upgrade() {
-            ep_inner.lock().expect("poisoned").drop_peer_url(&self.peer_url);
+            ep_inner
+                .lock()
+                .expect("poisoned")
+                .drop_peer_url(&self.peer_url);
         } else {
             tracing::warn!("endpoint inner is gone, cannot drop peer");
         }
@@ -203,7 +217,8 @@ impl Drop for DropPeer {
         tokio::task::spawn(async move {
             if let Err(err) = evt_send
                 .send(EndpointEvent::Disconnected { peer_url })
-                .await {
+                .await
+            {
                 tracing::warn!(?err, "peer disconnected");
             }
         });
@@ -234,13 +249,17 @@ async fn task(
     };
 
     // wait for the connection to actually be established
-    let (conn, mut conn_recv) = match wc.wait(recv_limit).await {
+    tracing::info!("Waiting for the connection to be established");
+    let (conn, mut conn_recv) = match wc.wait(config.timeout, recv_limit).await
+    {
         Ok((conn, conn_recv)) => (conn, conn_recv),
         Err(err) => {
             tracing::debug!(?err, "connection wait error");
             return;
         }
     };
+
+    tracing::info!("Connection established with peer: {:?}", peer_url);
 
     // manage preflight if configured to do so
     if let Some((pf_send, pf_check)) = &config.preflight {

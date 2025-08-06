@@ -2,11 +2,11 @@ use std::sync::Arc;
 use tx5::{Endpoint, EndpointRecv, PeerUrl};
 
 mod events;
+mod investigate;
 mod multi_sig;
 mod reconnect;
 mod relay_over_sig;
 mod stress;
-mod investigate;
 
 async fn sbd() -> sbd_server::SbdServer {
     let config = sbd_server::Config {

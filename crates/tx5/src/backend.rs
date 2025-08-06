@@ -116,6 +116,7 @@ pub trait BackWaitCon: 'static + Send {
     /// Wait for the connection
     fn wait(
         &mut self,
+        timeout: std::time::Duration,
         // TODO - this isn't good encapsulation
         recv_limit: Arc<tokio::sync::Semaphore>,
     ) -> BoxFuture<'static, Result<(DynBackCon, DynBackConRecvData)>>;

@@ -19,7 +19,7 @@ pub struct Config {
     pub recv_buffer_bytes_max: u32,
 
     /// Maximum receive message reconstruction bytes in memory
-    /// (accross entire endpoint). Default 512 MiB.
+    /// (across entire endpoint). Default 512 MiB.
     pub incoming_message_bytes_max: u32,
 
     /// Maximum size of an individual message. Default 16 MiB.

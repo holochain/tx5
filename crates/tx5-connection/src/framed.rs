@@ -167,7 +167,7 @@ impl FramedConn {
         &self.pub_key
     }
 
-    /// Returns `true` if we sucessfully connected over webrtc.
+    /// Returns `true` if we successfully connected over webrtc.
     pub fn is_using_webrtc(&self) -> bool {
         if let Some(conn) = self.weak_conn.upgrade() {
             conn.is_using_webrtc()

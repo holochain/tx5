@@ -52,7 +52,7 @@ async fn hub_map_assert(
 
     client.assert(&pub_key).await?;
 
-    // we're connected to the peer, create a connection
+    // we're not connected to the peer, create a connection
 
     let (conn, recv, cmd_send) = Conn::priv_new(
         webrtc_config.lock().unwrap().clone(),

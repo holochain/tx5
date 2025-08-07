@@ -51,6 +51,7 @@ serde_json = { workspace = true }
 tracing-subscriber = { workspace = true }
 tx5 = { path = ".", features = [ "test-utils" ] }
 rustls = { workspace = true }
+rand = { workspace = true }
 
 [[bench]]
 name = "throughput"

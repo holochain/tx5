@@ -3046,6 +3046,7 @@ dependencies = [
  "criterion",
  "futures",
  "influxive-otel-atomic-obs",
+ "rand 0.9.1",
  "rustls",
  "sbd-server",
  "serde",

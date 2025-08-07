@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tx5::{Endpoint, EndpointRecv, PeerUrl};
 
 mod events;
+mod flaky_sig;
 mod multi_sig;
 mod reconnect;
 mod relay_over_sig;

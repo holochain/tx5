@@ -48,7 +48,7 @@ import (
 	"runtime/debug"
 
 	"github.com/pion/logging"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 )
 
 // Extract a cgo type from our cgo ffi interface.

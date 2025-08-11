@@ -1,8 +1,8 @@
 module github.com/holochain/tx5/crates/tx5-go-pion-turn
 
-go 1.23.0
+go 1.24
 
-toolchain go1.23.1
+toolchain go1.24.6
 
 require github.com/pion/turn/v4 v4.1.0
 

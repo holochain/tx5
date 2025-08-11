@@ -5,24 +5,28 @@ use tx5_go_pion_sys::Event as SysEvent;
 use tx5_go_pion_sys::API;
 
 /// PeerConnectionState events.
-#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerConnectionState {
-    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnectionState>
+    Unknown = 0x00,
+
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnectionState>
     New = 0x01,
 
-    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnectionState>
     Connecting = 0x02,
 
-    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnectionState>
     Connected = 0x03,
 
-    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnectionState>
     Disconnected = 0x04,
 
-    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnectionState>
     Failed = 0x05,
 
-    /// <https://pkg.go.dev/github.com/pion/webrtc/v3#PeerConnectionState>
+    /// <https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnectionState>
     Closed = 0x06,
 }
 
@@ -30,6 +34,7 @@ impl PeerConnectionState {
     /// Construct from a raw integer value.
     pub fn from_raw(raw: usize) -> Self {
         match raw {
+            0x00 => PeerConnectionState::Unknown,
             0x01 => PeerConnectionState::New,
             0x02 => PeerConnectionState::Connecting,
             0x03 => PeerConnectionState::Connected,

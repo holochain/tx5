@@ -45,7 +45,7 @@ import (
 	"runtime/debug"
 
 	"github.com/pion/logging"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 )
 
 type UintPtrT = C.uintptr_t

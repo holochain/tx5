@@ -285,7 +285,8 @@ async fn task(
                 return;
             }
             Err(err) => {
-                tracing::info!(?err, ?peer_url, "preflight timed out")
+                tracing::info!(?err, ?peer_url, "preflight timed out");
+                return;
             }
         }
     }

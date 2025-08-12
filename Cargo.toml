@@ -13,7 +13,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 
 [workspace.dependencies]
@@ -48,13 +48,13 @@ tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.16", features = [ "env-filter" ] }
 trust-dns-resolver = "0.23"
 rustls = "0.23"
-tx5-connection = { version = "0.6.0", default-features = false, path = "crates/tx5-connection" }
-tx5-core = { version = "0.6.0", default-features = false, path = "crates/tx5-core" }
-tx5-go-pion-turn = { version = "0.6.0", path = "crates/tx5-go-pion-turn" }
-tx5-go-pion-sys = { version = "0.6.0", path = "crates/tx5-go-pion-sys" }
-tx5-go-pion = { version = "0.6.0", path = "crates/tx5-go-pion" }
-tx5-signal = { version = "0.6.0", path = "crates/tx5-signal" }
-tx5 = { version = "0.6.0", path = "crates/tx5" }
+tx5-connection = { version = "0.7.0", default-features = false, path = "crates/tx5-connection" }
+tx5-core = { version = "0.7.0", default-features = false, path = "crates/tx5-core" }
+tx5-go-pion-turn = { version = "0.7.0", path = "crates/tx5-go-pion-turn" }
+tx5-go-pion-sys = { version = "0.7.0", path = "crates/tx5-go-pion-sys" }
+tx5-go-pion = { version = "0.7.0", path = "crates/tx5-go-pion" }
+tx5-signal = { version = "0.7.0", path = "crates/tx5-signal" }
+tx5 = { version = "0.7.0", path = "crates/tx5" }
 url = { version = "2.3.1", features = [ "serde" ] }
 zip = { version = "4.1", default-features = false, features = [ "deflate" ] }
 schemars = { version = "0.9", features = ["preserve_order"] }

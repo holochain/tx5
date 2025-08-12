@@ -207,7 +207,17 @@ impl Drop for DropPeer {
     }
 }
 
-/// This is the main event-loop task for a connection.
+/// The main event-loop task for a connection.
+///
+/// This function is responsible for managing the connection lifecycle, including sending and
+/// receiving messages, handling preflight checks, and notifying the endpoint of connection
+/// events (connected, disconnected).
+///
+/// Crucially, the function is also responsible for closing the connection using the [`DropPeer`]
+/// guard when the task is dropped or exits. This means that the task *must not* stall or block
+/// indefinitely, as that would leave a dead connection in state that the endpoint doesn't know
+/// it should replace. That is the reason for the `tokio::time::timeout` calls in this function,
+/// and any new code added here should also respect that requirement to avoid stalling the task.
 #[allow(clippy::too_many_arguments)]
 async fn task(
     config: Arc<Config>,
@@ -235,37 +245,62 @@ async fn task(
     {
         Ok((conn, conn_recv)) => (conn, conn_recv),
         Err(err) => {
-            tracing::debug!(?err, "connection wait error");
+            tracing::debug!(?err, ?peer_url, "connection wait error");
             return;
         }
     };
 
     // manage preflight if configured to do so
     if let Some((pf_send, pf_check)) = &config.preflight {
-        let pf_data = match pf_send(&peer_url).await {
-            Ok(pf_data) => pf_data,
+        match tokio::time::timeout(config.timeout, async {
+            let pf_data = match pf_send(&peer_url).await {
+                Ok(pf_data) => pf_data,
+                Err(err) => {
+                    tracing::debug!(
+                        ?err,
+                        ?peer_url,
+                        "preflight get send error"
+                    );
+                    return Err(());
+                }
+            };
+
+            if let Err(err) = conn.send(pf_data).await {
+                tracing::debug!(?err, ?peer_url, "preflight send error");
+                return Err(());
+            }
+
+            let pf_data = match conn_recv.recv().await {
+                Some(pf_data) => pf_data,
+                None => {
+                    tracing::debug!(
+                        ?peer_url,
+                        "closed awaiting preflight data"
+                    );
+                    return Err(());
+                }
+            };
+
+            if let Err(err) = pf_check(&peer_url, pf_data).await {
+                tracing::debug!(?err, ?peer_url, "preflight check error");
+                return Err(());
+            }
+
+            Ok(())
+        })
+        .await
+        {
+            Ok(Ok(())) => {
+                tracing::debug!(?peer_url, "preflight check passed");
+            }
+            Ok(Err(_)) => {
+                // Error already logged in the preflight check
+                return;
+            }
             Err(err) => {
-                tracing::debug!(?err, "preflight get send error");
+                tracing::info!(?err, ?peer_url, "preflight timed out");
                 return;
             }
-        };
-
-        if let Err(err) = conn.send(pf_data).await {
-            tracing::debug!(?err, "preflight send error");
-            return;
-        }
-
-        let pf_data = match conn_recv.recv().await {
-            Some(pf_data) => pf_data,
-            None => {
-                tracing::debug!("closed awaiting preflight data");
-                return;
-            }
-        };
-
-        if let Err(err) = pf_check(&peer_url, pf_data).await {
-            tracing::debug!(?err, "preflight check error");
-            return;
         }
     }
 
@@ -282,15 +317,34 @@ async fn task(
     drop(ready);
 
     // send an event saying there is a new connection
-    let _ = evt_send
-        .send(EndpointEvent::Connected {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        evt_send.send(EndpointEvent::Connected {
             peer_url: peer_url.clone(),
-        })
-        .await;
+        }),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            tracing::debug!(?peer_url, "failed to send connected event");
+        }
+        Err(_) => {
+            tracing::debug!(?peer_url, "timed out sending connected event");
+            // Note that a failure to notify the endpoint of a new connection isn't really fatal
+            // because the connection is still established and valid. It should just mean that the
+            // application using this library isn't consuming events fast enough.
+        }
+    }
 
     tracing::info!(?peer_url, "peer connected");
 
     // main event loop handling incoming messages
+    //
+    // It is acceptable for this loop to block the task while waiting for an incoming message. If
+    // the application isn't using the connection or isn't getting responses from the remote peer
+    // then it is free to close the connection. Here, we don't know whether the connection is
+    // in use or not, so we'll just wait for messages.
     while let Some(msg) = conn_recv.recv().await {
         let _ = evt_send
             .send(EndpointEvent::Message {
@@ -301,11 +355,22 @@ async fn task(
     }
 
     // the above loop ended, notify of disconnect
-    let _ = evt_send
-        .send(EndpointEvent::Disconnected {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        evt_send.send(EndpointEvent::Disconnected {
             peer_url: peer_url.clone(),
-        })
-        .await;
+        }),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            tracing::debug!(?peer_url, "failed to send disconnected event");
+        }
+        Err(_) => {
+            tracing::debug!(?peer_url, "timed out sending disconnected event");
+        }
+    }
 
     // all other cleanup is handled by the drop guard
 }

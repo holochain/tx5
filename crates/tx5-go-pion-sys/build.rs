@@ -111,6 +111,14 @@ fn go_check_version() {
         .arg("version")
         .output()
         .expect("error checking go version");
+
+    if !go_version.stderr.is_empty() {
+        panic!(
+            "error checking go version: {}",
+            String::from_utf8_lossy(&go_version.stderr)
+        );
+    }
+
     assert_eq!(b"go version go", &go_version.stdout[0..13]);
     let ver: f64 = String::from_utf8_lossy(&go_version.stdout[13..17])
         .parse()

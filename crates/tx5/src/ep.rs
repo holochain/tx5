@@ -134,10 +134,6 @@ impl EpInner {
 
     /// Get an existing peer connection or create a new outgoing one.
     pub fn connect_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
-        if let Some(peer) = self.peer_map.get(&peer_url) {
-            return peer.clone();
-        }
-
         self.peer_map
             .entry(peer_url.clone())
             .or_insert_with(|| {
@@ -238,8 +234,8 @@ impl Endpoint {
 
     /// Send data to a remote on this tx5 endpoint.
     ///
-    /// The future returned from this method will resolve when
-    /// the data is handed off to our networking backend.
+    /// The future returned from this method will resolve when the data is handed off to the
+    /// networking backend or the connection attempt to the peer has failed.
     pub async fn send(&self, peer_url: PeerUrl, data: Vec<u8>) -> Result<()> {
         let listening_addresses = self.get_listening_addresses();
         if listening_addresses.contains(&peer_url) {
@@ -248,9 +244,13 @@ impl Endpoint {
             ));
         }
         tokio::time::timeout(self.config.timeout, async {
-            let peer = self.inner.lock().unwrap().connect_peer(peer_url);
-            peer.ready().await;
-            peer.send(data).await
+            let peer = self.inner.lock().unwrap().connect_peer(peer_url.clone());
+            if let Some(conn) = peer.wait_for_ready().await {
+                conn.send(data).await
+            } else {
+                tracing::debug!(?peer_url, "Dropping outgoing message to peer because the connection failed to establish");
+                Err(Error::other("Peer connection failed"))
+            }
         })
         .await?
     }
@@ -272,8 +272,9 @@ impl Endpoint {
                 let data = data.to_vec();
                 tokio::task::spawn(async move {
                     let _ = tokio::time::timeout(timeout, async {
-                        peer.ready().await;
-                        let _ = peer.send(data).await;
+                        if let Some(conn) = peer.wait_for_ready().await {
+                            let _ = conn.send(data).await;
+                        }
                     })
                     .await;
                 })

@@ -1,14 +1,12 @@
 use crate::*;
 
+use crate::peer::maybe_ready::MaybeReady;
 use tx5_connection::*;
 
-enum MaybeReady {
-    Ready(Arc<DynBackCon>),
-    Wait(Arc<tokio::sync::Semaphore>),
-}
+mod maybe_ready;
 
 pub(crate) struct Peer {
-    ready: Arc<Mutex<MaybeReady>>,
+    ready: MaybeReady,
     task: tokio::task::JoinHandle<()>,
     pub(crate) pub_key: PubKey,
     pub(crate) opened_at_s: u64,
@@ -36,8 +34,7 @@ impl Peer {
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|_this| {
-            let wait = Arc::new(tokio::sync::Semaphore::new(0));
-            let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
+            let ready = MaybeReady::new();
             let pub_key = peer_url.pub_key().clone();
 
             let task = tokio::task::spawn(connect(
@@ -71,8 +68,7 @@ impl Peer {
         evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|_this| {
-            let wait = Arc::new(tokio::sync::Semaphore::new(0));
-            let ready = Arc::new(Mutex::new(MaybeReady::Wait(wait)));
+            let ready = MaybeReady::new();
             let pub_key = peer_url.pub_key().clone();
 
             let task = tokio::task::spawn(task(
@@ -96,37 +92,27 @@ impl Peer {
         })
     }
 
+    /// This is initially false, but can transition into true.
+    ///
+    /// If establishing a webrtc connection fails, it will remain false.
     pub fn is_using_webrtc(&self) -> bool {
-        if let MaybeReady::Ready(r) = &*self.ready.lock().unwrap() {
-            r.is_using_webrtc()
-        } else {
-            false
-        }
+        self.ready
+            .query_ready(|c| c.is_using_webrtc())
+            .unwrap_or_default()
     }
 
+    /// Get connection statistics.
     pub fn get_stats(&self) -> ConnStats {
-        if let MaybeReady::Ready(r) = &*self.ready.lock().unwrap() {
-            r.get_stats()
-        } else {
-            ConnStats::default()
-        }
+        self.ready
+            .query_ready(|c| c.get_stats())
+            .unwrap_or_default()
     }
 
-    pub async fn ready(&self) {
-        let w = match &*self.ready.lock().unwrap() {
-            MaybeReady::Ready(_) => return,
-            MaybeReady::Wait(w) => w.clone(),
-        };
-
-        let _ = w.acquire().await;
-    }
-
-    pub async fn send(&self, msg: Vec<u8>) -> Result<()> {
-        let conn = match &*self.ready.lock().unwrap() {
-            MaybeReady::Ready(c) => c.clone(),
-            _ => return Err(Error::other("not ready")),
-        };
-        conn.send(msg).await
+    /// This future resolves when the connection is ready to use or has failed to connect.
+    ///
+    /// If the connection is not usable, it will return `None`.
+    pub async fn wait_for_ready(&self) -> Option<DynBackCon> {
+        self.ready.wait_for_ready().await
     }
 }
 
@@ -136,7 +122,7 @@ async fn connect(
     ep: Weak<Mutex<EpInner>>,
     peer_url: PeerUrl,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
-    ready: Arc<Mutex<MaybeReady>>,
+    ready: MaybeReady,
 ) {
     tracing::trace!(?peer_url, "peer try connect");
 
@@ -175,6 +161,7 @@ struct DropPeer {
     ep: Weak<Mutex<EpInner>>,
     peer_url: PeerUrl,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
+    ready: MaybeReady,
 }
 
 impl Drop for DropPeer {
@@ -184,6 +171,9 @@ impl Drop for DropPeer {
         if let Some(ep_inner) = self.ep.upgrade() {
             ep_inner.lock().unwrap().drop_peer_url(&self.peer_url);
         }
+
+        // Mark the connection as failed so that the `ready` future resolves for all waiters.
+        self.ready.set_failed();
 
         let evt_send = self.evt_send.clone();
         let peer_url = self.peer_url.clone();
@@ -214,12 +204,13 @@ async fn task(
     conn: Option<DynBackWaitCon>,
     peer_url: PeerUrl,
     evt_send: tokio::sync::mpsc::Sender<EndpointEvent>,
-    ready: Arc<Mutex<MaybeReady>>,
+    ready: MaybeReady,
 ) {
     let _drop = DropPeer {
         ep,
         peer_url: peer_url.clone(),
         evt_send: evt_send.clone(),
+        ready: ready.clone(),
     };
 
     let mut wc = match conn {
@@ -292,13 +283,7 @@ async fn task(
     }
 
     // store a handle for use sending outgoing data
-    {
-        let mut lock = ready.lock().unwrap();
-        if let MaybeReady::Wait(w) = &*lock {
-            w.close();
-        }
-        *lock = MaybeReady::Ready(Arc::new(conn));
-    }
+    ready.set_ready(conn);
 
     // send the notification that the connection is ready
     drop(ready);

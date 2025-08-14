@@ -19,6 +19,7 @@ fn main() {
 fn go_check_version() {
     let go_version = Command::new("go")
         .arg("version")
+        .env("GOTOOLCHAIN", "local")
         .output()
         .expect("error checking go version");
     assert_eq!(b"go version go", &go_version.stdout[0..13]);
@@ -26,8 +27,8 @@ fn go_check_version() {
         .parse()
         .expect("error parsing go version");
     assert!(
-        ver >= 1.18,
-        "go executable version must be >= 1.18, got: {ver}",
+        ver >= 1.24,
+        "go executable version must be >= 1.24, got: {ver}",
     );
 }
 
@@ -75,6 +76,8 @@ fn go_build(path: &std::path::Path) {
     cp("go.mod");
 
     let mut cmd = Command::new("go");
+
+    cmd.env("GOTOOLCHAIN", "local");
 
     // add some cross-compilation translators:
     match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {

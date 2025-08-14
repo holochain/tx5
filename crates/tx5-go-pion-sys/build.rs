@@ -108,6 +108,7 @@ fn go_check_version() {
 
     let go_version = Command::new("go")
         .arg("version")
+        .env("GOTOOLCHAIN", "local")
         .output()
         .expect("error checking go version");
 
@@ -126,8 +127,8 @@ fn go_check_version() {
     // Only check the go version if this is NOT a DOCS_RS build.
     if std::env::var("DOCS_RS").is_err() {
         assert!(
-            ver >= 1.20,
-            "go executable version must be >= 1.20, got: {ver}",
+            ver >= 1.24,
+            "go executable version must be >= 1.24, got: {ver}",
         );
     }
 }
@@ -163,8 +164,8 @@ fn go_build_cmd(
 
     let mut cmd = Command::new("go");
 
+    cmd.env("GOTOOLCHAIN", "local");
     cmd.env("GOARCH", TARGET.go_arch);
-
     cmd.env("GOOS", TARGET.go_os);
 
     if let Ok(linker) = std::env::var("RUSTC_LINKER") {

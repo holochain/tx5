@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2025-08-14
+
+### Changed
+
+- Drop outbound messages when the connection closes without waiting for a timeout by @ThetaSinner in [#173](https://github.com/holochain/tx5/pull/173)
+- Warn on message send fail by @ThetaSinner in [#175](https://github.com/holochain/tx5/pull/175)
+
+### Fixed
+
+- Avoid downloading Go toolchain on build by @ThetaSinner in [#177](https://github.com/holochain/tx5/pull/177)
+- Fail the build if the `go version` commands prints anything to stderr by @ThetaSinner
+- More places where the receiver task might block and leave an unusable connection in the endpoint's state by @ThetaSinner in [#171](https://github.com/holochain/tx5/pull/171)
+
 ## [0.7.0] - 2025-08-12
 
 ### Changed

@@ -95,6 +95,7 @@ impl<T: 'static + Send> CloseSend<T> {
             if sender.try_send(t).is_ok() {
                 Ok(())
             } else {
+                tracing::warn!("Failed to send message, closing channel");
                 sender.close_channel();
                 *lock = None;
                 Err(ErrorKind::BrokenPipe.into())
@@ -129,6 +130,10 @@ impl<T: 'static + Send> CloseSend<T> {
             Err(_) | Ok(Err(_)) => {
                 let mut lock = self.sender.lock().unwrap();
                 if let Some(sender) = &mut *lock {
+                    tracing::warn!(
+                        ?res,
+                        "Failed to send message, closing channel"
+                    );
                     sender.close_channel();
                 }
                 *lock = None;

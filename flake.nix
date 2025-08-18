@@ -32,7 +32,7 @@
           llvmPackages.libclang
         ];
 
-        LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+        LIBCLANG_PATH = "${lib.getLib llvmPackages.libclang}/lib";
       };
     };
   };

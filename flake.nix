@@ -28,7 +28,7 @@
           go
           cmake
           openssl
-          clang
+          llvmPackages.clang
           llvmPackages.libclang
         ];
 

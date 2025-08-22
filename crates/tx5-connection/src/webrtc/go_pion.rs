@@ -1,5 +1,6 @@
 use super::*;
 use crate::{AbortTask, CloseRecv, CloseSend};
+use futures::TryFutureExt;
 use std::io::{Error, Result};
 
 enum Cmd {
@@ -33,14 +34,24 @@ impl Webrtc {
         let (mut cmd_send, cmd_recv) = CloseSend::sized_channel(1024);
         let (mut evt_send, evt_recv) = CloseSend::sized_channel(1024);
 
-        let task = tokio::task::spawn(task(
-            is_polite,
-            config,
-            send_buffer,
-            evt_send.clone(),
-            cmd_send.clone(),
-            cmd_recv,
-        ));
+        let task = tokio::task::spawn({
+            let evt_send = evt_send.clone();
+            let cmd_send = cmd_send.clone();
+            async move {
+                task(
+                    is_polite,
+                    config,
+                    send_buffer,
+                    evt_send,
+                    cmd_send,
+                    cmd_recv,
+                )
+                .await
+                .inspect_err(|err| {
+                    tracing::error!(?err, "WebRTC task failed");
+                })
+            }
+        });
 
         cmd_send.set_close_on_drop(true);
         evt_send.set_close_on_drop(true);
@@ -106,8 +117,8 @@ async fn task(
     let (peer, mut peer_evt) = tx5_go_pion::PeerConnection::new(config).await?;
 
     let mut cmd_send2 = cmd_send.clone();
-    let _peer_task: AbortTask<Result<()>> =
-        AbortTask(tokio::task::spawn(async move {
+    let _peer_task: AbortTask<Result<()>> = AbortTask(tokio::task::spawn(
+        async move {
             cmd_send2.set_close_on_drop(true);
 
             use tx5_go_pion::PeerConnectionEvent as Evt;
@@ -125,7 +136,11 @@ async fn task(
                 }
             }
             Ok(())
-        }));
+        }
+        .inspect_err(|err| {
+            tracing::error!(?err, "Peer connection task failed");
+        }),
+    ));
 
     let mut offer = None;
     let mut data = None;
@@ -223,28 +238,34 @@ fn spawn_data_chan(
     >,
 ) -> Option<AbortTask<Result<()>>> {
     use tx5_go_pion::DataChannelEvent as Evt;
-    Some(AbortTask(tokio::task::spawn(async move {
-        cmd_send.set_close_on_drop(true);
+    Some(AbortTask(tokio::task::spawn(
+        async move {
+            cmd_send.set_close_on_drop(true);
 
-        // Receiving on the unbounded data channel receiver has a real
-        // chance to fill our memory with message data.
-        // We give a small chance for the app to catch up, otherwise
-        // error so the connection will close.
-        while let Some(evt) = data_recv.recv().await {
-            match evt {
-                Evt::Error(_) => break,
-                Evt::Open => {
-                    cmd_send.send_or_close(Cmd::DataChanOpen)?;
-                }
-                Evt::Close => break,
-                Evt::Message(mut msg) => {
-                    cmd_send.send_or_close(Cmd::RecvMessage(msg.to_vec()?))?;
-                }
-                Evt::BufferedAmountLow => {
-                    cmd_send.send_or_close(Cmd::BufferedAmountLow)?;
+            // Receiving on the unbounded data channel receiver has a real
+            // chance to fill our memory with message data.
+            // We give a small chance for the app to catch up, otherwise
+            // error so the connection will close.
+            while let Some(evt) = data_recv.recv().await {
+                match evt {
+                    Evt::Error(_) => break,
+                    Evt::Open => {
+                        cmd_send.send_or_close(Cmd::DataChanOpen)?;
+                    }
+                    Evt::Close => break,
+                    Evt::Message(mut msg) => {
+                        cmd_send
+                            .send_or_close(Cmd::RecvMessage(msg.to_vec()?))?;
+                    }
+                    Evt::BufferedAmountLow => {
+                        cmd_send.send_or_close(Cmd::BufferedAmountLow)?;
+                    }
                 }
             }
+            Ok(())
         }
-        Ok(())
-    })))
+        .inspect_err(|err| {
+            tracing::error!(?err, "Data channel task failed");
+        }),
+    )))
 }

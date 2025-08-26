@@ -48,6 +48,7 @@ criterion = { workspace = true }
 futures = { workspace = true }
 sbd-server = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true, features = [ "full", "test-util" ] }
 tracing-subscriber = { workspace = true }
 tx5 = { path = ".", features = [ "test-utils" ] }
 rustls = { workspace = true }

@@ -93,6 +93,38 @@ async fn connection_dropped_when_receive_flooded() {
     assert!(e1.get_stats().connection_list.is_empty());
 }
 
+#[tokio::test]
+async fn connection_dropped_when_send_flooded() {
+    enable_tracing();
+
+    let sig = sbd().await;
+    let (p1, e1, mut r1) = ep(&sig).await;
+    let (p2, e2, mut r2) = ep(&sig).await;
+
+    // Both endpoints can successfully send
+    e1.send(p2.clone(), b"hello".to_vec()).await.unwrap();
+    e2.send(p1.clone(), b"world".to_vec()).await.unwrap();
+
+    // Both endpoints can successfully receive
+    let msg = receive_next_message_from(&mut r1, p2.clone()).await;
+    assert_eq!("world", String::from_utf8_lossy(&msg));
+
+    let msg = receive_next_message_from(&mut r2, p1.clone()).await;
+    assert_eq!("hello", String::from_utf8_lossy(&msg));
+
+    // Now pause time and flood the send channel with messages
+    tokio::time::pause();
+    while e1.send(p2.clone(), b"hello".to_vec()).await.is_ok() {
+        tokio::time::advance(Duration::from_millis(1)).await;
+    }
+    tokio::time::resume();
+
+    // Can no longer send due to being backed-up so the connection should have been dropped on both
+    // sides
+    assert!(e1.get_stats().connection_list.is_empty());
+    assert!(e2.get_stats().connection_list.is_empty());
+}
+
 /// Related to reconnection, because if the connection setup fails, then it must be removed in order
 /// for the endpoint to be able to reconnect.
 #[tokio::test(flavor = "multi_thread")]

@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## \[[0.7.2](https://github.com/holochain/tx5/compare/v0.7.1...v0.7.2)\] - 2025-08-26
+
+### Bug Fixes
+
+- Incompatible WebRtcConfig for go-pion by @ThetaSinner in [#184](https://github.com/holochain/tx5/pull/184)
+- Log errors when tasks fail by @ThetaSinner in [#183](https://github.com/holochain/tx5/pull/183)
+
+### Miscellaneous Tasks
+
+- Add rust-analyzer and rust-src as toolchain components by @cdunster in [#180](https://github.com/holochain/tx5/pull/180)
+- Use `getLib` for `LIBCLANG_PATH` instead of `.lib` by @cdunster
+- Use `clang` from `llvmPackages` in Nix flake by @cdunster
+  - This will make sure that `clang` and `libclang` are on the same version.
+- Use systems list from `nixpkgs` for all supported systems by @cdunster
+- Use github instead of local registry for flake-parts Nix input by @cdunster
+  - They should be the same but this makes sure that they are if someone changes their local registry.
+- Add direnv support with Nix and watching rust-toolchian by @cdunster in [#179](https://github.com/holochain/tx5/pull/179)
+- Add Nix flake devShell by @cdunster
+
+### Testing
+
+- Add tests for connectivity resilience when the connection to the signal server is flaky by @ThetaSinner in [#167](https://github.com/holochain/tx5/pull/167)
+
+### First-time Contributors
+
+- @cdunster made their first contribution in [#180](https://github.com/holochain/tx5/pull/180)
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 

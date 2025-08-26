@@ -57,21 +57,22 @@ pub struct IceServers {
     pub urls: Vec<String>,
 
     /// The username to use for authentication.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
 
     /// The credential to use for authentication.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
 
     /// The credential type to use for authentication.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_type: Option<CredentialType>,
 }
 
 /// ICE transport policy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
 pub enum TransportPolicy {
     /// Any type of candidate can be used.
     #[default]

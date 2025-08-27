@@ -386,7 +386,7 @@ async fn con_task_attempt_webrtc(
 ) -> AttemptWebrtcResult {
     use AttemptWebrtcResult::*;
 
-    let timeout_dur = task_core.config.signal_config.max_idle;
+    let timeout_dur = task_core.config.signal_config.max_idle / 2;
     let timeout_cmd_send = task_core.cmd_send.clone();
     tokio::task::spawn(async move {
         tokio::time::sleep(timeout_dur).await;

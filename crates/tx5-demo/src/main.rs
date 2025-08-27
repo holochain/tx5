@@ -331,10 +331,9 @@ async fn main_err() -> Result<()> {
 
     let sig_url = tx5::SigUrl::parse(sig_url)?;
 
-    let (ep, mut evt) = tx5::Endpoint::new(Arc::new(Config {
-        signal_allow_plain_text: true,
-        ..Default::default()
-    }));
+    let (ep, mut evt) = tx5::Endpoint::new(Arc::new(
+        Config::new().with_signal_allow_plain_text(true),
+    ));
     let ep = Arc::new(ep);
 
     d!(info, "LISTEN", "{sig_url}");

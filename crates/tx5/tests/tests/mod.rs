@@ -27,10 +27,9 @@ async fn sbd_with_config(
 }
 
 async fn ep(s: &sbd_server::SbdServer) -> (PeerUrl, Endpoint, EndpointRecv) {
-    let config = tx5::Config {
-        signal_allow_plain_text: true, // Always allow plain text for tests
-        ..Default::default()
-    };
+    let config = tx5::Config::new()
+        // Always allow plain text for tests
+        .with_signal_allow_plain_text(true);
 
     ep_with_config(s, config).await
 }

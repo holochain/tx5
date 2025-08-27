@@ -140,7 +140,6 @@ pub async fn connect(
             ..Default::default()
         },
         listener,
-        //max_connections: config.connection_count_max as usize,
         max_idle: config.timeout,
         ..Default::default()
     };
@@ -159,9 +158,23 @@ pub async fn connect(
         }
     };
 
+    // Ensure that the WebRTC connect timeout is set to a non-zero value and that it is less than
+    // the overall timeout to allow for the WebRTC setup to complete before the overall timeout
+    // elapses.
+    let diff_to_timeout = std::time::Duration::from_millis(250);
+    let webrtc_connect_timeout = if config.webrtc_connect_timeout.is_zero() {
+        tracing::warn!("webrtc_connect_timeout is zero, setting to (timeout - 250ms) to allow for webrtc setup");
+        config.timeout.saturating_sub(diff_to_timeout)
+    } else {
+        config
+            .webrtc_connect_timeout
+            .min(config.timeout.saturating_sub(diff_to_timeout))
+    };
+
     let hub_config = Arc::new(tx5_connection::HubConfig {
         backend_module,
         signal_config: Arc::new(sig_config),
+        webrtc_connect_timeout,
         danger_force_signal_relay: config.danger_force_signal_relay,
         danger_deny_signal_relay: config.danger_deny_signal_relay,
     });

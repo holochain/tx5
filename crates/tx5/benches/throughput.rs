@@ -34,10 +34,7 @@ impl Test {
         ))
         .unwrap();
 
-        let config = Arc::new(Config {
-            signal_allow_plain_text: true,
-            ..Default::default()
-        });
+        let config = Arc::new(Config::new().with_signal_allow_plain_text(true));
 
         let (ep1, mut ep_rcv1) = Endpoint::new(config.clone());
         ep1.listen(sig_url.clone()).await;

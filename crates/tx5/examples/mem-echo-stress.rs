@@ -14,10 +14,8 @@ use tx5::{backend::*, *};
 async fn main() {
     let fake_sig = SigUrl::parse("wss://fake.fake").unwrap();
 
-    let config = Arc::new(Config {
-        backend_module: BackendModule::Mem,
-        ..Default::default()
-    });
+    let config =
+        Arc::new(Config::new().with_backend_module(BackendModule::Mem));
 
     let (listen_ep, mut listen_recv) = Endpoint::new(config.clone());
     let listen_ep = Arc::new(listen_ep);

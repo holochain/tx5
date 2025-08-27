@@ -32,6 +32,14 @@ pub struct HubConfig {
     /// The signal config to use.
     pub signal_config: Arc<tx5_signal::SignalConfig>,
 
+    /// The timeout for establishing a WebRTC connection to a peer.
+    ///
+    /// After this time has elapsed, if a WebRTC connection has not been established, the connection
+    /// will fall back to using the signal server as a relay. Any timeout applied to the
+    /// [`Conn::ready`] or [`Conn::send`] futures should allow enough time for this timeout to
+    /// elapse and for the message to be sent over the relay.
+    pub webrtc_connect_timeout: std::time::Duration,
+
     /// Test falling back to the signal relay by failing the WebRTC setup.
     pub danger_force_signal_relay: bool,
 

@@ -203,11 +203,9 @@ impl FlakyRelay {
 async fn ep_for_relay(
     bound_addr: std::net::SocketAddr,
 ) -> (PeerUrl, Endpoint, EndpointRecv) {
-    let config = tx5::Config {
-        signal_allow_plain_text: true,
-        timeout: std::time::Duration::from_secs(5),
-        ..Default::default()
-    };
+    let config = tx5::Config::new()
+        .with_signal_allow_plain_text(true)
+        .with_timeout(std::time::Duration::from_secs(5));
 
     let (ep, recv) = Endpoint::new(Arc::new(config));
     let sig = format!("ws://{}", bound_addr);

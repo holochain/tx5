@@ -138,10 +138,7 @@ impl Test {
     }
 
     pub async fn ep(&self) -> TestEp {
-        let config = Arc::new(Config {
-            signal_allow_plain_text: true,
-            ..Default::default()
-        });
+        let config = Arc::new(Config::new().with_signal_allow_plain_text(true));
         let (ep, ep_recv) = Endpoint::new(config);
         let peer_url = ep.listen(self.sig_url.clone()).await.unwrap();
 

@@ -65,6 +65,7 @@ impl TestSrv {
                         max_idle: std::time::Duration::from_secs(max_idle_secs),
                         ..Default::default()
                     }),
+                    webrtc_connect_timeout: std::time::Duration::from_secs(15),
                     danger_force_signal_relay: self.danger_force_signal_relay,
                     danger_deny_signal_relay: self.danger_deny_signal_relay,
                 }),

@@ -37,22 +37,12 @@ async fn connected_event_is_consistent() {
 #[tokio::test(flavor = "multi_thread")]
 async fn connected_event_is_consistent_fail_webrtc() {
     let sig = sbd().await;
-    let (_p1, e1, mut r1) = ep_with_config(
-        &sig,
-        tx5::Config {
-            danger_force_signal_relay: true,
-            ..Default::default()
-        },
-    )
-    .await;
-    let (p2, e2, mut r2) = ep_with_config(
-        &sig,
-        tx5::Config {
-            danger_force_signal_relay: true,
-            ..Default::default()
-        },
-    )
-    .await;
+
+    let mut config = tx5::Config::new();
+    config.danger_force_signal_relay = true;
+
+    let (_p1, e1, mut r1) = ep_with_config(&sig, config.clone()).await;
+    let (p2, e2, mut r2) = ep_with_config(&sig, config).await;
 
     e1.send(p2.clone(), b"hello".to_vec()).await.unwrap();
 
@@ -143,22 +133,12 @@ async fn disconnected_event_is_consistent() {
 #[ignore = "TODO - this test doesn't pass (https://github.com/holochain/tx5/issues/130)"]
 async fn disconnected_event_is_consistent_fail_webrtc() {
     let sig = sbd().await;
-    let (_p1, e1, mut r1) = ep_with_config(
-        &sig,
-        tx5::Config {
-            danger_force_signal_relay: true,
-            ..Default::default()
-        },
-    )
-    .await;
-    let (p2, _e2, mut r2) = ep_with_config(
-        &sig,
-        tx5::Config {
-            danger_force_signal_relay: true,
-            ..Default::default()
-        },
-    )
-    .await;
+
+    let mut config = tx5::Config::new();
+    config.danger_force_signal_relay = true;
+
+    let (_p1, e1, mut r1) = ep_with_config(&sig, config.clone()).await;
+    let (p2, _e2, mut r2) = ep_with_config(&sig, config).await;
 
     e1.send(p2.clone(), b"hello".to_vec()).await.unwrap();
 

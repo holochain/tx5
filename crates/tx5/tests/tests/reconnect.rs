@@ -69,33 +69,19 @@ async fn close_connections_on_setup_failure() {
 
     let sig = sbd().await;
 
-    let (p1, e1, _r1) = ep_with_config(
-        &sig,
-        tx5::Config {
-            // By enabling both of these, the connection setup is forced to fail because we aren't
-            // allowing it to use either of its options.
-            // In production this is a misconfiguration, but it is a useful situation for testing that
-            // the resources that get allocated on the way to discovering the misconfiguration are
-            // cleaned up.
-            danger_force_signal_relay: true,
-            danger_deny_signal_relay: true,
-            // Want to give up quickly on the connection setup, so we don't wait too long.
-            timeout: std::time::Duration::from_secs(3),
-            ..Default::default()
-        },
-    )
-    .await;
+    let mut config = tx5::Config::new();
+    // By enabling both of these, the connection setup is forced to fail because we aren't
+    // allowing it to use either of its options.
+    // In production this is a misconfiguration, but it is a useful situation for testing that
+    // the resources that get allocated on the way to discovering the misconfiguration are
+    // cleaned up.
+    config.danger_deny_signal_relay = true;
+    config.danger_force_signal_relay = true;
+    config.timeout = std::time::Duration::from_secs(3);
 
-    let (p2, e2, _r2) = ep_with_config(
-        &sig,
-        tx5::Config {
-            danger_force_signal_relay: true,
-            danger_deny_signal_relay: true,
-            timeout: std::time::Duration::from_secs(3),
-            ..Default::default()
-        },
-    )
-    .await;
+    let (p1, e1, _r1) = ep_with_config(&sig, config.clone()).await;
+
+    let (p2, e2, _r2) = ep_with_config(&sig, config).await;
 
     // Each endpoint attempts to send a message to the other.
     //

@@ -20,17 +20,16 @@ pub struct TestSrv {
 
 impl TestSrv {
     pub async fn new() -> Self {
-        Self::new_force_signal_relay(false, false).await
+        Self::new_with_config(sbd_server::Config::default(), false, false).await
     }
 
-    pub async fn new_force_signal_relay(
+    pub async fn new_with_config(
+        mut config: sbd_server::Config,
         danger_force_signal_relay: bool,
         danger_deny_signal_relay: bool,
     ) -> Self {
-        let config = Arc::new(sbd_server::Config {
-            bind: vec!["127.0.0.1:0".to_string(), "[::1]:0".to_string()],
-            ..Default::default()
-        });
+        config.bind = vec!["127.0.0.1:0".to_string(), "[::1]:0".to_string()];
+        let config = Arc::new(config);
 
         let server = sbd_server::SbdServer::new(config).await.unwrap();
 
@@ -81,11 +80,20 @@ impl TestSrv {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(not(target_os = "linux"), ignore = "flaky on non-linux")]
 async fn base_timeout() {
     init_tracing();
 
-    let srv = TestSrv::new().await;
+    let config = sbd_server::Config {
+        limit_idle_millis: 1000, // 1 second
+        ..Default::default()
+    };
+    let srv = TestSrv::new_with_config(
+        config.clone(),
+        // Want to be sending messages over the relay to test the signal connection timeout.
+        true,
+        false,
+    )
+    .await;
 
     let (hub1, _hubr1) = srv.hub(Some(1)).await;
     let pk1 = hub1.pub_key().clone();
@@ -95,10 +103,9 @@ async fn base_timeout() {
 
     println!("connect");
     let (c1, mut r1) = hub1.connect(pk2).await.unwrap();
-    c1.test_kill_keepalive_task();
+
     println!("accept");
     let (c2, mut r2) = hubr2.accept().await.unwrap();
-    c2.test_kill_keepalive_task();
 
     assert_eq!(&pk1, c2.pub_key());
 
@@ -106,11 +113,20 @@ async fn base_timeout() {
     tokio::join!(c1.ready(), c2.ready());
     println!("ready");
 
+    c1.test_kill_keepalive_task();
+    c2.test_kill_keepalive_task();
+
     c1.send(b"hello".to_vec()).await.unwrap();
     assert_eq!(b"hello", r2.recv().await.unwrap().as_slice());
 
     c2.send(b"world".to_vec()).await.unwrap();
     assert_eq!(b"world", r1.recv().await.unwrap().as_slice());
+
+    // Wait for the idle duration to let the signal server drop the connections.
+    tokio::time::sleep(std::time::Duration::from_millis(
+        2 * config.limit_idle_millis as u64,
+    ))
+    .await;
 
     match tokio::time::timeout(std::time::Duration::from_secs(3), async {
         tokio::join!(r1.recv(), r2.recv())
@@ -130,7 +146,9 @@ async fn base_timeout() {
 async fn fallback_sanity() {
     init_tracing();
 
-    let srv = TestSrv::new_force_signal_relay(true, false).await;
+    let srv =
+        TestSrv::new_with_config(sbd_server::Config::default(), true, false)
+            .await;
 
     let (hub1, _hubr1) = srv.hub(None).await;
     let pk1 = hub1.pub_key().clone();

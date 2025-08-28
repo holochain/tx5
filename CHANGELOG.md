@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## \[[0.8.0](https://github.com/holochain/tx5/compare/v0.7.2...v0.8.0)\] - 2025-08-28
+
+### Bug Fixes
+
+- Time out the WebRTC connection before timing out the connection attempt by @ThetaSinner in [#186](https://github.com/holochain/tx5/pull/186)
+
+### Testing
+
+- Make `base_timeout` test less flaky by @ThetaSinner in [#189](https://github.com/holochain/tx5/pull/189)
+  - The test is currently blocking builds because it's stalling at some point in the test and preventing CI from making progress
+
 ## \[[0.7.2](https://github.com/holochain/tx5/compare/v0.7.1...v0.7.2)\] - 2025-08-26
 
 ### Bug Fixes

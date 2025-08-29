@@ -429,3 +429,67 @@ async fn framed_con_drop_disconnects() {
     println!("check r1");
     assert!(r1.recv().await.is_none());
 }
+
+#[tokio::test(start_paused = true)]
+async fn channel_is_closed_on_send_when_flooded() {
+    init_tracing();
+
+    // The actual channel size is the passed-in buffer size plus number of senders.
+    let (tx, mut rx) = CloseSend::sized_channel(1);
+
+    // First send works okay
+    tx.send(b"hello".to_vec()).await.unwrap();
+
+    // Second send will send to the channel but timeout when flushing so it fails with a
+    // broken-pipe error.
+    let res = tx.send(b"hello".to_vec()).await;
+    assert!(
+        matches!(res, Err(ref e) if e.kind() == ErrorKind::BrokenPipe),
+        "Expected BrokenPipe error, got: {res:?}"
+    );
+
+    // Sender is now none because the channel is closed.
+    assert!(tx.sender.lock().unwrap().is_none());
+
+    // Can still receive the messages in the channel.
+    assert!(rx.recv().await.is_some());
+    assert!(rx.recv().await.is_some());
+
+    // Sending now always fails because the channel is closed.
+    tx.send(b"hello".to_vec()).await.unwrap_err();
+
+    // Can no longer receive because the sender closed the channel.
+    assert!(rx.recv().await.is_none());
+}
+
+#[tokio::test]
+async fn channel_is_closed_on_send_or_close_when_flooded() {
+    init_tracing();
+
+    // The actual channel size is the passed-in buffer size plus number of senders.
+    let (tx, mut rx) = CloseSend::sized_channel(1);
+
+    // First and second sends works okay
+    tx.send_or_close(b"hello".to_vec()).unwrap();
+    tx.send_or_close(b"world".to_vec()).unwrap();
+
+    // Third send is too much for the channel so fails to send and returns a broken pipe error.
+    let res = tx.send_or_close(b"hello".to_vec());
+    assert!(
+        matches!(res, Err(ref e) if e.kind() == ErrorKind::BrokenPipe),
+        "Expected BrokenPipe error, got: {res:?}"
+    );
+
+    // Sender is now none because the channel is closed.
+    assert!(tx.sender.lock().unwrap().is_none());
+
+    // Can still receive the messages in the channel.
+    assert!(rx.recv().await.is_some());
+    assert!(rx.recv().await.is_some());
+
+    // Sending now always fails because the channel is closed.
+    tx.send_or_close(b"hello".to_vec()).unwrap_err();
+
+    // Can no longer receive because the sender closed the channel.
+    assert!(rx.recv().await.is_none());
+}

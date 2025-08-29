@@ -214,13 +214,14 @@ fn go_build_cmd(
     }
 
     // grr, clippy, the debug symbols belong in one arg
+    // NOTE: -checklinkname=0 is required => <https://github.com/wlynxg/anet?tab=readme-ov-file#how-to-build-with-go-1230-or-later>
     #[allow(clippy::suspicious_command_arg_space)]
     {
         cmd.current_dir(out_dir)
             .env("GOCACHE", cache)
             .arg("build")
             .arg("-ldflags") // strip debug symbols
-            .arg("-s -w ".to_string() + &extra_linker_flags) // strip debug symbols
+            .arg("-checklinkname=0 -s -w ".to_string() + &extra_linker_flags) // strip debug symbols
             .arg("-buildvcs=false") // disable version control stamping binary
             .arg("-o")
             .arg(lib_path)

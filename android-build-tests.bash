@@ -21,11 +21,30 @@ else
   fi
 fi
 
-
 if [[ "${ANDROID_SDK_ROOT:-x}" == "x" ]]; then
   echo "ANDROID_SDK_ROOT required"
   exit 127
 fi
+
+if [[ "${TX5_BACKEND:-x}" == "x" ]]; then
+  echo "TX5_BACKEND required. Supported values are: go-pion, datachannel"
+  exit 127
+fi
+
+# Get rust features for tx5 backend
+TX5_BACKEND_FEATURES=""
+case "$TX5_BACKEND" in
+  "go-pion")
+    TX5_BACKEND_FEATURES="backend-go-pion"
+    ;;
+  "datachannel")
+    TX5_BACKEND_FEATURES="backend-libdatachannel,datachannel-vendored"
+    ;;
+  *)
+    echo "Unsupported TX5_BACKEND: $TX5_BACKEND. Supported values are: go-pion, datachannel"
+    exit 1
+    ;;
+esac
 
 export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION"
 
@@ -78,7 +97,7 @@ export CFLAGS_x86_64_linux_android="${BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_andr
 
 cargo test -p tx5 \
   --no-default-features \
-  --features backend-go-pion \
+  --features ${TX5_BACKEND_FEATURES} \
   --no-run \
   --target ${ANDROID_ARCH}-linux-android \
   --config target.${ANDROID_ARCH}-linux-android.linker="\"${NDK_ROOT}/bin/${ANDROID_ARCH}-linux-android34-clang\"" \

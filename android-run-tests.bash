@@ -30,21 +30,26 @@ fi
 export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION"
 
 ndk_root_folder=""
+case "$(uname -m)" in
+  x86_64) ndk_root_folder="linux-x86_64" ;;
+  aarch64) ndk_root_folder="linux-aarch64" ;;
+  *)
+    echo "Unsupported build host arch: $(uname -m)"
+    exit 1
+    ;;
+esac
+
 case "$ANDROID_ARCH" in
   "arm64-v8a")
-    ndk_root_folder="linux-aarch64"
     export ANDROID_ARCH="aarch64"
     ;;
   "armeabi-v7a")
-    ndk_root_folder="linux-arm"
     export ANDROID_ARCH="arm"
     ;;
   "x86")
-    ndk_root_folder="linux-x86"
     export ANDROID_ARCH="i686"
     ;;
   "x86_64")
-    ndk_root_folder="linux-x86_64"
     export ANDROID_ARCH="x86_64"
     ;;
   *)

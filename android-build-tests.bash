@@ -27,26 +27,59 @@ if [[ "${ANDROID_SDK_ROOT:-x}" == "x" ]]; then
   exit 127
 fi
 
-_ndk_root=(${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/*)
+export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION"
 
-# This workaround may be needed if upgrading android api level
-#cat << EOF > ${_ndk_root}/lib/clang/17/lib/linux/${ANDROID_ARCH}/libgcc.a
-#INPUT(-lunwind)
-#EOF
+ndk_root_folder=""
+case "$ANDROID_ARCH" in
+  "arm64-v8a")
+    ndk_root_folder="linux-aarch64"
+    export ANDROID_ARCH="aarch64"
+    ;;
+  "armeabi-v7a")
+    ndk_root_folder="linux-arm"
+    export ANDROID_ARCH="arm"
+    ;;
+  "x86")
+    ndk_root_folder="linux-x86"
+    export ANDROID_ARCH="i686"
+    ;;
+  "x86_64")
+    ndk_root_folder="linux-x86_64"
+    export ANDROID_ARCH="x86_64"
+    ;;
+  *)
+    echo "Unsupported ANDROID_ARCH: $ANDROID_ARCH"
+    exit 1
+    ;;
+esac
 
-export PKG_CONFIG_SYSROOT_DIR="${_ndk_root}/sysroot"
-export TARGET_CC="${_ndk_root}/bin/${ANDROID_ARCH}-linux-android${ANDROID_API_LEVEL}-clang"
-export TARGET_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
-export TARGET_AR="${_ndk_root}/bin/llvm-ar"
-export TARGET_RANLIB="${_ndk_root}/bin/llvm-ranlib"
-export CGO_CFLAGS="-I${_ndk_root}/sysroot/usr/include -I${_ndk_root}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
+NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/${ndk_root_folder}"
+if [ ! -d "$NDK_ROOT" ]; then
+  echo "NDK_ROOT does not exist: $NDK_ROOT"
+  exit 1
+fi
+
+export PATH="$NDK_ROOT/bin:$PATH"
+export PKG_CONFIG_SYSROOT_DIR="${NDK_ROOT}/sysroot"
+export TARGET_CC="${NDK_ROOT}/bin/${ANDROID_ARCH}-linux-android${ANDROID_API_LEVEL}-clang"
+export TARGET_CFLAGS="-I${NDK_ROOT}/sysroot/usr/include -I${NDK_ROOT}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
+export TARGET_AR="${NDK_ROOT}/bin/llvm-ar"
+export TARGET_RANLIB="${NDK_ROOT}/bin/llvm-ranlib"
+export CGO_CFLAGS="-I${NDK_ROOT}/sysroot/usr/include -I${NDK_ROOT}/sysroot/usr/include/${ANDROID_ARCH}-linux-android"
 
 # https://github.com/aws/aws-lc-rs/issues/751
-export BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android="--sysroot=${_ndk_root}/sysroot"
+export BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android="--sysroot=${NDK_ROOT}/sysroot"
 export CFLAGS_x86_64_linux_android="${BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android}"
 
+cargo test -p tx5 \
+  --no-default-features \
+  --features backend-go-pion \
+  --no-run \
+  --target ${ANDROID_ARCH}-linux-android \
+  --config target.${ANDROID_ARCH}-linux-android.linker="\"${NDK_ROOT}/bin/${ANDROID_ARCH}-linux-android34-clang\"" \
+  --config target.${ANDROID_ARCH}-linux-android.ar="\"${NDK_ROOT}/bin/llvm-ar\"" \
+  2>&1 | tee output-cargo-test
 
-cargo test --manifest-path crates/tx5/Cargo.toml --no-default-features --features backend-go-pion --no-run --target ${ANDROID_ARCH}-linux-android --config target.${ANDROID_ARCH}-linux-android.linker="\"${_ndk_root}/bin/${ANDROID_ARCH}-linux-android34-clang\"" --config target.${ANDROID_ARCH}-linux-android.ar="\"${_ndk_root}/bin/llvm-ar\"" 2>&1 | tee output-cargo-test
 cat output-cargo-test | grep Executable | sed -E 's/[^(]*\(([^)]*)\)/\1/' > output-test-executables
 echo "BUILD TESTS:"
 cat output-test-executables

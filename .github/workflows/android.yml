@@ -18,6 +18,7 @@ jobs:
         android-arch: ["x86_64"]
         android-api-level: [29, 33]
         android-ndk-version: ["26.0.10792818"]
+        backend: [go-pion, datachannel]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,7 +32,7 @@ jobs:
       - name: Go Toolchain
         uses: actions/setup-go@v5
         with:
-          go-version: '=1.24.6'
+          go-version: "=1.24.6"
 
       - name: Rust Toolchain
         run: |
@@ -74,6 +75,7 @@ jobs:
           ANDROID_API_LEVEL: ${{ matrix.android-api-level }}
           ANDROID_NDK_VERSION: ${{ matrix.android-ndk-version }}
           ANDROID_ARCH: ${{ matrix.android-arch }}
+          TX5_BACKEND: ${{ matrix.backend }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.android-api-level }}

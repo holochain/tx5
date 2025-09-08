@@ -62,8 +62,31 @@ async fn receive_next_message_from(
                 return message;
             }
             Some(evt) => {
-                tracing::info!("Received unexpected event: {evt:?}");
+                tracing::info!(
+                    "Received event of type we're not waiting for: {evt:?}"
+                );
+                continue; // Ignore other events
+            }
+            None => panic!("Unexpected end of receiver"),
+        }
+    }
+}
 
+async fn wait_for_disconnect_message(r: &mut EndpointRecv, url: PeerUrl) -> () {
+    loop {
+        let evt = r.recv().await;
+        match evt {
+            Some(tx5::EndpointEvent::Disconnected { peer_url }) => {
+                if peer_url != url {
+                    panic!("Received disconnect event associated with unexpected peer: {peer_url}");
+                }
+
+                return;
+            }
+            Some(evt) => {
+                tracing::info!(
+                    "Received event of type we're not waiting for: {evt:?}"
+                );
                 continue; // Ignore other events
             }
             None => panic!("Unexpected end of receiver"),
@@ -74,7 +97,9 @@ async fn receive_next_message_from(
 fn enable_tracing() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(
-            tracing_subscriber::filter::EnvFilter::from_default_env(),
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing::Level::DEBUG.into())
+                .from_env_lossy(),
         )
         .with_file(true)
         .with_line_number(true)

@@ -1,6 +1,70 @@
 use crate::tests::{
     enable_tracing, ep, ep_with_config, receive_next_message_from, sbd,
+    wait_for_disconnect_message,
 };
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sending_second_message_after_remote_disconnect_succeeds_after_disconnect_event(
+) {
+    enable_tracing();
+
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let sbd_server = sbd().await;
+
+    let (peer_url_1, endpoint_1, mut endpoint_recv_1) = ep(&sbd_server).await;
+    let (peer_url_2, endpoint_2, mut endpoint_recv_2) = ep(&sbd_server).await;
+
+    tracing::error!(?peer_url_1);
+    tracing::error!(?peer_url_2);
+
+    endpoint_1
+        .send(peer_url_2.clone(), b"hello".to_vec())
+        .await
+        .unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_millis(5_000), async {
+        let msg_1 =
+            receive_next_message_from(&mut endpoint_recv_2, peer_url_1.clone())
+                .await;
+        assert_eq!("hello", String::from_utf8_lossy(&msg_1));
+    })
+    .await
+    .unwrap();
+
+    endpoint_2.close(&peer_url_1);
+
+    // We need to wait until peer 1 learns about the fact that peer 2 has
+    // disconnected before sending the next message. Otherwise we unknowingly
+    // send it over a WebRTC connection at which peer 2 is not listening
+    // anymore.
+    tokio::time::timeout(std::time::Duration::from_millis(5_000), async {
+        wait_for_disconnect_message(&mut endpoint_recv_1, peer_url_2.clone())
+            .await;
+    })
+    .await
+    .unwrap();
+
+    endpoint_1
+        .send(
+            peer_url_2.clone(),
+            b"hello after remote disconnect".to_vec(),
+        )
+        .await
+        .unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_millis(5_000), async {
+        let msg_2 =
+            receive_next_message_from(&mut endpoint_recv_2, peer_url_1.clone())
+                .await;
+        assert_eq!(
+            "hello after remote disconnect",
+            String::from_utf8_lossy(&msg_2)
+        );
+    })
+    .await
+    .unwrap();
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reconnect_on_webrtc_fail() {

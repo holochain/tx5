@@ -16,6 +16,8 @@ enum Cmd {
     RecvMessage(Vec<u8>),
     DataChanOpen,
     BufferedAmountLow,
+    Close,
+    Error(std::io::Error),
 }
 
 pub struct Webrtc {
@@ -107,14 +109,36 @@ async fn task(
     is_polite: bool,
     config: WebRtcConfig,
     send_buffer: usize,
+    evt_send: CloseSend<WebrtcEvt>,
+    cmd_send: CloseSend<Cmd>,
+    cmd_recv: CloseRecv<Cmd>,
+) -> Result<()> {
+    let config = config.to_go_buf()?;
+    let (peer, peer_evt) = tx5_go_pion::PeerConnection::new(config).await?;
+    task_inner(
+        is_polite,
+        send_buffer,
+        evt_send,
+        cmd_send,
+        cmd_recv,
+        peer,
+        peer_evt,
+    )
+    .await
+}
+
+async fn task_inner(
+    is_polite: bool,
+    send_buffer: usize,
     mut evt_send: CloseSend<WebrtcEvt>,
     cmd_send: CloseSend<Cmd>,
     mut cmd_recv: CloseRecv<Cmd>,
+    peer: tx5_go_pion::PeerConnection,
+    mut peer_evt: tokio::sync::mpsc::UnboundedReceiver<
+        tx5_go_pion::PeerConnectionEvent,
+    >,
 ) -> Result<()> {
     evt_send.set_close_on_drop(true);
-
-    let config = config.to_go_buf()?;
-    let (peer, mut peer_evt) = tx5_go_pion::PeerConnection::new(config).await?;
 
     let mut cmd_send2 = cmd_send.clone();
     let _peer_task: AbortTask<Result<()>> = AbortTask(tokio::task::spawn(
@@ -124,8 +148,33 @@ async fn task(
             use tx5_go_pion::PeerConnectionEvent as Evt;
             while let Some(evt) = peer_evt.recv().await {
                 match evt {
-                    Evt::Error(_) => break,
-                    Evt::State(_) => (),
+                    Evt::Error(err) => {
+                        cmd_send2.send_or_close(Cmd::Error(
+                            std::io::Error::other(format!(
+                                "Pion error event: {err}"
+                            )),
+                        ))?;
+                        break;
+                    }
+                    Evt::State(state) => match state {
+                        tx5_go_pion::PeerConnectionState::Disconnected => {
+                            cmd_send2.send_or_close(Cmd::Close)?;
+                            break;
+                        }
+                        tx5_go_pion::PeerConnectionState::Closed => {
+                            cmd_send2.send_or_close(Cmd::Close)?;
+                            break;
+                        }
+                        tx5_go_pion::PeerConnectionState::Failed => {
+                            cmd_send2.send_or_close(Cmd::Error(
+                                std::io::Error::other(
+                                    "PeerConnectionState changed to Failed",
+                                ),
+                            ))?;
+                            break;
+                        }
+                        _ => (),
+                    },
                     Evt::ICECandidate(mut ice) => {
                         cmd_send2
                             .send_or_close(Cmd::GeneratedIce(ice.to_vec()?))?;
@@ -225,6 +274,11 @@ async fn task(
             Cmd::BufferedAmountLow => {
                 pend_buffer.clear();
             }
+            Cmd::Close => {
+                evt_send.send_or_close(WebrtcEvt::Closed)?;
+                break;
+            }
+            Cmd::Error(err) => return Err(err),
         }
     }
 
@@ -268,4 +322,98 @@ fn spawn_data_chan(
             tracing::error!(?err, "Data channel task failed");
         }),
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn peer_connection_state_change_task_result(
+        state: tx5_go_pion::PeerConnectionState,
+    ) -> Result<()> {
+        let (cmd_send, cmd_recv) = CloseSend::sized_channel(1024);
+        let (evt_send, _evt_recv) = CloseSend::sized_channel(1024);
+        let (peer_evt_send, peer_evt_recv) =
+            tokio::sync::mpsc::unbounded_channel();
+
+        // Create PeerConnection
+        let config = tx5_go_pion::PeerConnectionConfig::default();
+        let (peer, _real_peer_events) =
+            tx5_go_pion::PeerConnection::new(config).await.unwrap();
+
+        // Spawn the task_inner
+        let task_handle = tokio::spawn({
+            let cmd_send_clone = cmd_send.clone();
+            async move {
+                task_inner(
+                    true,
+                    1024,
+                    evt_send,
+                    cmd_send_clone,
+                    cmd_recv,
+                    peer,
+                    peer_evt_recv,
+                )
+                .await
+            }
+        });
+
+        // Send connected state
+        peer_evt_send
+            .send(tx5_go_pion::PeerConnectionEvent::State(
+                tx5_go_pion::PeerConnectionState::Connected,
+            ))
+            .unwrap();
+
+        // Send new state that we expect to end the task
+        peer_evt_send
+            .send(tx5_go_pion::PeerConnectionEvent::State(state))
+            .unwrap();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            async move {
+                loop {
+                    if task_handle.is_finished() {
+                        return task_handle.await.unwrap();
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(100))
+                        .await;
+                }
+            },
+        )
+        .await
+        .expect("Timed out");
+
+        result
+    }
+
+    #[tokio::test]
+    async fn conn_dropped_on_peer_connection_state_closed_and_returns_ok() {
+        let res = peer_connection_state_change_task_result(
+            tx5_go_pion::PeerConnectionState::Closed,
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn conn_dropped_on_peer_connection_state_disconnected_and_returns_ok()
+    {
+        let res = peer_connection_state_change_task_result(
+            tx5_go_pion::PeerConnectionState::Disconnected,
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn conn_dropped_on_peer_connection_state_failed_and_returns_err() {
+        let res = peer_connection_state_change_task_result(
+            tx5_go_pion::PeerConnectionState::Failed,
+        )
+        .await;
+        assert!(res.is_err());
+    }
 }

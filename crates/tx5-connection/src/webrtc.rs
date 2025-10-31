@@ -9,6 +9,7 @@ pub enum WebrtcEvt {
     GeneratedIce(Vec<u8>),
     Message(Vec<u8>),
     Ready,
+    Closed,
 }
 
 pub trait Webrtc: 'static + Send + Sync {

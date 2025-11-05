@@ -201,6 +201,33 @@ async fn ep_sanity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ep_double_connect_crossover_works() {
+    let config = Arc::new(Config {
+        signal_allow_plain_text: true,
+        ..Default::default()
+    });
+    let test = Test::new().await;
+
+    let mut ep1 = test.ep(config.clone()).await;
+    let mut ep2 = test.ep(config).await;
+
+    let f1 = ep1.send(ep2.peer_url(), b"hello".to_vec());
+    let f2 = ep2.send(ep1.peer_url(), b"world".to_vec());
+
+    let (r1, r2) = tokio::join!(f1, f2);
+    r1.unwrap();
+    r2.unwrap();
+
+    let (f1, m1) = ep1.recv().await.unwrap();
+    let (f2, m2) = ep2.recv().await.unwrap();
+
+    assert_eq!(ep1.peer_url(), f2);
+    assert_eq!(&b"hello"[..], &m2);
+    assert_eq!(ep2.peer_url(), f1);
+    assert_eq!(&b"world"[..], &m1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(
     windows,
     ignore = "windows is too slow to pass this test reliably, and we don't want to set the times slower for other platforms"

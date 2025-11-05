@@ -132,6 +132,11 @@ impl EpInner {
         self.peer_map.remove(peer_url);
     }
 
+    /// Get an existing peer connection if already established.
+    pub fn peer_if_ready(&self, peer_url: &PeerUrl) -> Option<DynBackCon> {
+        self.peer_map.get(peer_url).and_then(|p| p.get_if_ready())
+    }
+
     /// Get an existing peer connection or create a new outgoing one.
     pub fn connect_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
         self.peer_map
@@ -248,8 +253,17 @@ impl Endpoint {
             if let Some(conn) = peer.wait_for_ready().await {
                 conn.send(data).await
             } else {
-                tracing::debug!(?peer_url, "Dropping outgoing message to peer because the connection failed to establish");
-                Err(Error::other("Peer connection failed"))
+                // Check to see if a new incoming connection was established
+                // in the mean time. If so, we can send over that.
+                let maybe_peer = self.inner.lock().unwrap().peer_if_ready(
+                    &peer_url
+                );
+                if let Some(conn) = maybe_peer {
+                    conn.send(data).await
+                } else {
+                    tracing::debug!(?peer_url, "Dropping outgoing message to peer because the connection failed to establish");
+                    Err(Error::other("Peer connection failed"))
+                }
             }
         })
         .await?

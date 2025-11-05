@@ -112,6 +112,11 @@ impl Peer {
             .unwrap_or_default()
     }
 
+    /// If this connection is already ready, return it.
+    pub fn get_if_ready(&self) -> Option<DynBackCon> {
+        self.ready.query_ready(|c| c.clone())
+    }
+
     /// This future resolves when the connection is ready to use or has failed to connect.
     ///
     /// If the connection is not usable, it will return `None`.

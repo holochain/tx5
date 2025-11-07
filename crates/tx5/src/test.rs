@@ -200,6 +200,10 @@ async fn ep_sanity() {
     println!("ep2 STATS: {ep2_stats:#?}");
 }
 
+/// Note that this test, although introduced together with logic to check for an
+/// existing connection if sending fails, does not actually trigger that case.
+///
+/// https://github.com/neonphog/tx5/blob/3ce2fffa779245c71c0c58942bb9827b2d55b03f/crates/tx5/src/ep.rs#L256-L262
 #[tokio::test(flavor = "multi_thread")]
 async fn ep_double_connect_crossover_works() {
     let config = Arc::new(Config {

@@ -337,6 +337,9 @@ async fn con_task(
 
     task_core.is_webrtc.store(false, Ordering::SeqCst);
 
+    // Closing the semaphore causes all the acquire awaits to end
+    task_core.ready.close();
+
     // if webrtc failed in a way that allows us to fall back to sbd,
     // use the fallback sbd messaging system
     con_task_fallback_use_signal(task_core).await;
@@ -644,9 +647,6 @@ async fn con_task_attempt_webrtc(
 }
 
 async fn con_task_fallback_use_signal(mut task_core: TaskCore) {
-    // closing the semaphore causes all the acquire awaits to end
-    task_core.ready.close();
-
     while let Some(cmd) = recv_cmd(&mut task_core).await {
         match cmd {
             ConnCmd::SigRecv(tx5_signal::SignalMessage::Message(msg)) => {

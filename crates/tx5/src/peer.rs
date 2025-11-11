@@ -189,10 +189,31 @@ impl Drop for DropPeer {
 
         let evt_send = self.evt_send.clone();
         let peer_url = self.peer_url.clone();
+
+        // Notify the endpoint of disconnect
         tokio::task::spawn(async move {
-            let _ = evt_send
-                .send(EndpointEvent::Disconnected { peer_url })
-                .await;
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                evt_send.send(EndpointEvent::Disconnected {
+                    peer_url: peer_url.clone(),
+                }),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => {
+                    tracing::debug!(
+                        ?peer_url,
+                        "failed to send disconnected event"
+                    );
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        ?peer_url,
+                        "timed out sending disconnected event"
+                    );
+                }
+            }
         });
     }
 }
@@ -219,7 +240,7 @@ async fn task(
     ready: MaybeReady,
 ) {
     // establish our cleanup drop guard
-    let _drop = DropPeer {
+    let drop_guard = DropPeer {
         ep,
         peer_url: peer_url.clone(),
         evt_send: evt_send.clone(),
@@ -339,23 +360,15 @@ async fn task(
             .await;
     }
 
-    // the above loop ended, notify of disconnect
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        evt_send.send(EndpointEvent::Disconnected {
-            peer_url: peer_url.clone(),
-        }),
-    )
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(_)) => {
-            tracing::debug!(?peer_url, "failed to send disconnected event");
-        }
-        Err(_) => {
-            tracing::debug!(?peer_url, "timed out sending disconnected event");
-        }
-    }
-
-    // all other cleanup is handled by the drop guard
+    // Drop the drop guard to run cleanup tasks.
+    //
+    // If the Peer is dropped early, then the DropPeer guard will be dropped with it.
+    // Otherwise if the above loop ends before the Peer is dropped,
+    // we drop the DropPeer guard manually to run cleanup tasks.
+    //
+    // I can't explain why dropping the DropPeer guard manually makes any difference,
+    // since it will be dropped when this block ends anyway. But it significantly reduces
+    // failures of the test `sending_second_message_after_remote_disconnect_succeeds_after_disconnect_event`
+    // due to the error "already connected".
+    drop(drop_guard);
 }

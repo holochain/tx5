@@ -49,7 +49,7 @@ futures = { workspace = true }
 sbd-server = { workspace = true }
 serde_json = { workspace = true }
 tracing-subscriber = { workspace = true }
-tx5 = { path = ".", features = [ "test-utils" ] }
+tx5 = { path = ".", default-features = false, features = [ "test-utils" ] }
 rustls = { workspace = true }
 rand = { workspace = true }
 

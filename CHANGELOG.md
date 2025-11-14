@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## \[[0.8.1](https://github.com/holochain/tx5/compare/v0.8.0...v0.8.1)\] - 2025-11-14
+
+### Bug Fixes
+
+- #193 new incoming interupts new outgoing by @neonphog
+
+### Build System
+
+- *(android)* Android build for libdatachannel (#191) by @veeso in [#191](https://github.com/holochain/tx5/pull/191)
+  - Build(android): Android build for libdatachannel
+- Bump sbd crates to 0.4.0 (#203) by @mattyg in [#203](https://github.com/holochain/tx5/pull/203)
+- Bump datachannel to 0.16.0 (libdatachannel 0.23.2) (#202) by @mattyg in [#202](https://github.com/holochain/tx5/pull/202)
+  - Build: bump datachannel to 0.16.0 (libdatachannel 0.23.2)
+  - Build: bump sbd crates to 0.3.4
+- Ensure tests are run with backend-go-pion feature on ci (#198) by @mattyg in [#198](https://github.com/holochain/tx5/pull/198)
+- Bump rust to 1.91, ensure we are using same version in CI (#195) by @mattyg in [#195](https://github.com/holochain/tx5/pull/195)
+
+### CI
+
+- Bump release actions (#204) by @mattyg in [#204](https://github.com/holochain/tx5/pull/204)
+
+### Testing
+
+- Add test that a second message can be sent successfully to a peer that has disconnected (#192) by @matthme in [#192](https://github.com/holochain/tx5/pull/192)
+
+### First-time Contributors
+
+- @veeso made their first contribution in [#191](https://github.com/holochain/tx5/pull/191)
 ## \[[0.8.0](https://github.com/holochain/tx5/compare/v0.7.2...v0.8.0)\] - 2025-08-28
 
 ### Bug Fixes

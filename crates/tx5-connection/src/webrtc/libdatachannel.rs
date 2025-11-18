@@ -19,6 +19,7 @@ enum Cmd {
     RecvDescription(Box<datachannel::SessionDescription>),
     DataChanOpen,
     BufferedAmountLow,
+    Close,
     Error(std::io::Error),
 }
 
@@ -31,9 +32,7 @@ impl datachannel::DataChannelHandler for Dch {
     }
 
     fn on_closed(&mut self) {
-        let _ = self
-            .0
-            .send_or_close(Cmd::Error(std::io::Error::other("DataChanClosed")));
+        let _ = self.0.send_or_close(Cmd::Close);
     }
 
     fn on_error(&mut self, err: &str) {
@@ -219,14 +218,14 @@ async fn task(
     cmd_recv: CloseRecv<Cmd>,
 ) {
     if let Err(err) =
-        task_err(is_polite, config, send_buffer, evt_send, cmd_send, cmd_recv)
+        task_inner(is_polite, config, send_buffer, evt_send, cmd_send, cmd_recv)
             .await
     {
         tracing::warn!(?err, "webrtc task error");
     }
 }
 
-async fn task_err(
+async fn task_inner(
     is_polite: bool,
     config: WebRtcConfig,
     send_buffer: usize,
@@ -406,6 +405,10 @@ async fn task_err(
                 // notify any pending sends that their data has been sent
                 // (or at least handed off to the backend)
                 pend_buffer.clear();
+            }
+            Cmd::Close => {
+                evt_send.send_or_close(WebrtcEvt::Closed)?;
+                break;
             }
             Cmd::Error(err) => return Err(err),
         }

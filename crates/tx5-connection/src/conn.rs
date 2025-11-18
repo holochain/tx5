@@ -374,6 +374,9 @@ async fn webrtc_task(
     cmd_send: CloseSend<ConnCmd>,
 ) {
     while let Some(evt) = webrtc_recv.recv().await {
+        if matches!(evt, webrtc::WebrtcEvt::Closed) {
+            break;
+        }
         if cmd_send.send(ConnCmd::WebrtcRecv(evt)).await.is_err() {
             break;
         }
@@ -597,6 +600,9 @@ async fn con_task_attempt_webrtc(
                 is_ready = true;
                 task_core.is_webrtc.store(true, Ordering::SeqCst);
                 task_core.ready.close();
+            }
+            WebrtcRecv(webrtc::WebrtcEvt::Closed) => {
+                // no-op
             }
             SendMessage(msg) => {
                 let len = msg.len();

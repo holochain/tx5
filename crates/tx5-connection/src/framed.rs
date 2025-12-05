@@ -61,8 +61,8 @@ impl FramedConn {
         let (a, b, c, d) = crate::proto::PROTO_VER_2.encode()?;
         conn.send(vec![a, b, c, d]).await?;
 
-        let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
-        let (msg_send, msg_recv) = tokio::sync::mpsc::channel(32);
+        let (cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(256);
+        let (msg_send, msg_recv) = tokio::sync::mpsc::channel(256);
 
         // set up the receive to just feed straight into the cmd task
         let cmd_send2 = cmd_send.clone();

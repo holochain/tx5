@@ -199,7 +199,9 @@ impl Endpoint {
             config.incoming_message_bytes_max as usize,
         ));
 
-        let (evt_send, evt_recv) = tokio::sync::mpsc::channel(32);
+        let (evt_send, evt_recv) = tokio::sync::mpsc::channel(
+            config.internal_event_channel_size as usize,
+        );
 
         (
             Self {

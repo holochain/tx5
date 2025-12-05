@@ -139,7 +139,7 @@ impl Hub {
 
         let mut task_list = Vec::new();
 
-        let (hub_cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(32);
+        let (hub_cmd_send, mut cmd_recv) = tokio::sync::mpsc::channel(256);
 
         // forward received messages to the cmd task
         let hub_cmd_send2 = hub_cmd_send.clone();

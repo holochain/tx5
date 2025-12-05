@@ -117,6 +117,11 @@ impl Peer {
         self.ready.query_ready(|c| c.clone())
     }
 
+    /// Check if this peer connection has failed
+    pub(crate) fn is_failed(&self) -> bool {
+        self.ready.is_failed()
+    }
+
     /// This future resolves when the connection is ready to use or has failed to connect.
     ///
     /// If the connection is not usable, it will return `None`.

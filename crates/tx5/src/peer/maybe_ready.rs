@@ -73,7 +73,12 @@ impl MaybeReady {
         *lock = MaybeReadyState::Failed;
     }
 
-    pub(super) async fn wait_for_ready(&self) -> Option<DynBackCon> {
+    /// Check if the connection is in a failed state
+    pub(super) fn is_failed(&self) -> bool {
+        let lock = self.0.lock().expect("poisoned");
+        matches!(*lock, MaybeReadyState::Failed)
+    }
+
     pub(super) async fn wait_for_ready(
         &self,
         timeout: std::time::Duration,

@@ -249,14 +249,22 @@ async fn task(
 ) {
     // establish our cleanup drop guard
     let drop_guard = DropPeer {
-        ep,
+        ep: ep.clone(),
         peer_url: peer_url.clone(),
         evt_send: evt_send.clone(),
         ready: ready.clone(),
     };
 
     let mut wc = match conn {
-        None => return,
+        None => {
+            // Connection failed during negotiation - clean up immediately
+            // to prevent zombie connection reuse
+            if let Some(ep_inner) = ep.upgrade() {
+                ep_inner.lock().unwrap().drop_peer_url(&peer_url);
+            }
+            ready.set_failed();
+            return;
+        }
         Some(wc) => wc,
     };
 

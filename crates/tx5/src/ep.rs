@@ -139,6 +139,12 @@ impl EpInner {
 
     /// Get an existing peer connection or create a new outgoing one.
     pub fn connect_peer(&mut self, peer_url: PeerUrl) -> Arc<Peer> {
+        // Check for stale failed peers before attempting reuse
+        if let Some(existing_peer) = self.peer_map.get(&peer_url) {
+            if existing_peer.is_failed() {
+                self.peer_map.remove(&peer_url);
+            }
+        }
         self.peer_map
             .entry(peer_url.clone())
             .or_insert_with(|| {
@@ -252,9 +258,11 @@ impl Endpoint {
         }
         tokio::time::timeout(self.config.timeout, async {
             let peer = self.inner.lock().unwrap().connect_peer(peer_url.clone());
-            if let Some(conn) = peer.wait_for_ready().await {
+            if let Some(conn) = peer.wait_for_ready(self.config.timeout).await {
                 conn.send(data).await
             } else {
+                // Remove the failed peer from peer_map to prevent reuse of zombie connections
+                self.inner.lock().unwrap().drop_peer_url(&peer_url);
                 // Check to see if a new incoming connection was established
                 // in the mean time. If so, we can send over that.
                 let maybe_peer = self.inner.lock().unwrap().peer_if_ready(

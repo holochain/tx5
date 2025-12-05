@@ -120,8 +120,11 @@ impl Peer {
     /// This future resolves when the connection is ready to use or has failed to connect.
     ///
     /// If the connection is not usable, it will return `None`.
-    pub async fn wait_for_ready(&self) -> Option<DynBackCon> {
-        self.ready.wait_for_ready().await
+    pub async fn wait_for_ready(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Option<DynBackCon> {
+        self.ready.wait_for_ready(timeout).await
     }
 }
 

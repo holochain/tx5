@@ -74,6 +74,10 @@ impl MaybeReady {
     }
 
     pub(super) async fn wait_for_ready(&self) -> Option<DynBackCon> {
+    pub(super) async fn wait_for_ready(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Option<DynBackCon> {
         let wait = {
             let lock = self.0.lock().expect("poisoned");
             match &*lock {
@@ -83,15 +87,29 @@ impl MaybeReady {
             }
         };
 
-        let _ = wait.acquire().await;
+        // Add timeout wrapper to prevent indefinite blocking
+        let result = tokio::time::timeout(timeout, async {
+            let _ = wait.acquire().await;
+        })
+        .await;
 
-        let lock = self.0.lock().expect("poisoned");
-        match &*lock {
-            MaybeReadyState::Ready(back) => Some(back.clone()),
-            MaybeReadyState::Failed => None,
-            MaybeReadyState::Wait(_) => {
-                // Unexpected state, this struct is supposed to prevent this being possible.
-                tracing::warn!("Waited for ready but still in a wait state");
+        match result {
+            Ok(_) => {
+                // Semaphore acquired, check final state
+                let lock = self.0.lock().expect("poisoned");
+                match &*lock {
+                    MaybeReadyState::Ready(back) => Some(back.clone()),
+                    MaybeReadyState::Failed => None,
+                    MaybeReadyState::Wait(_) => {
+                        // Unexpected state, this struct is supposed to prevent this being possible.
+                        tracing::warn!("Waited for ready but still in a wait state");
+                        None
+                    }
+                }
+            }
+            Err(_) => {
+                // Timeout - connection failed to become ready in time
+                tracing::debug!("wait_for_ready timed out after {:?}", timeout);
                 None
             }
         }
@@ -136,8 +154,13 @@ mod tests {
         tokio::spawn({
             let maybe_ready = maybe_ready.clone();
             async move {
-                tx.send(maybe_ready.wait_for_ready().await.is_some())
-                    .unwrap();
+                tx.send(
+                    maybe_ready
+                        .wait_for_ready(std::time::Duration::from_secs(60))
+                        .await
+                        .is_some(),
+                )
+                .unwrap();
             }
         });
 
@@ -178,8 +201,13 @@ mod tests {
         tokio::spawn({
             let maybe_ready = maybe_ready.clone();
             async move {
-                tx.send(maybe_ready.wait_for_ready().await.is_none())
-                    .unwrap();
+                tx.send(
+                    maybe_ready
+                        .wait_for_ready(std::time::Duration::from_secs(60))
+                        .await
+                        .is_none(),
+                )
+                .unwrap();
             }
         });
 

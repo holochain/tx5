@@ -286,7 +286,7 @@ impl Endpoint {
                 let data = data.to_vec();
                 tokio::task::spawn(async move {
                     let _ = tokio::time::timeout(timeout, async {
-                        if let Some(conn) = peer.wait_for_ready().await {
+                        if let Some(conn) = peer.wait_for_ready(timeout).await {
                             let _ = conn.send(data).await;
                         }
                     })

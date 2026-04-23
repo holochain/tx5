@@ -117,11 +117,19 @@ impl Peer {
         self.ready.query_ready(|c| c.clone())
     }
 
+    /// Check if this peer connection has failed
+    pub(crate) fn is_failed(&self) -> bool {
+        self.ready.is_failed()
+    }
+
     /// This future resolves when the connection is ready to use or has failed to connect.
     ///
     /// If the connection is not usable, it will return `None`.
-    pub async fn wait_for_ready(&self) -> Option<DynBackCon> {
-        self.ready.wait_for_ready().await
+    pub async fn wait_for_ready(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Option<DynBackCon> {
+        self.ready.wait_for_ready(timeout).await
     }
 }
 
@@ -241,14 +249,22 @@ async fn task(
 ) {
     // establish our cleanup drop guard
     let drop_guard = DropPeer {
-        ep,
+        ep: ep.clone(),
         peer_url: peer_url.clone(),
         evt_send: evt_send.clone(),
         ready: ready.clone(),
     };
 
     let mut wc = match conn {
-        None => return,
+        None => {
+            // Connection failed during negotiation - clean up immediately
+            // to prevent zombie connection reuse
+            if let Some(ep_inner) = ep.upgrade() {
+                ep_inner.lock().unwrap().drop_peer_url(&peer_url);
+            }
+            ready.set_failed();
+            return;
+        }
         Some(wc) => wc,
     };
 
